@@ -1,0 +1,19 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="doubao_mcp_server" type="PythonConfigurationType" factoryName="Python">
+    <module name="Main module" value="src/api/routes" />
+    <option name="INTERPRETER_OPTIONS" value="" />
+    <option name="PARENT_ENVS" value="Source" />
+    <envs>
+      <env name="PYTHONUNBUFFERED" value="1" />
+      <env name="NO_PROXY" value="*" />
+      <env name="HTTP_PROXY" value="" />
+      <env name="HTTPS_PROXY" value="" />
+    </envs>
+    <method>
+      <option name="ScriptParameters" value="" />
+      <option name="Parameters" value="" />
+    </method>
+    <extension name="PythonCoverageOptions" />
+    <method v="2" />
+  </configuration>
+</component>
