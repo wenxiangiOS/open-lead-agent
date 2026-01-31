@@ -299,3 +299,48 @@ class InputAnalyzer:
             # Use a random suggestion
             import random
             return random.choice(suggestions) if suggestions else "让我想想怎么回答你。"
+
+    def is_confirmation_response(self, text: str) -> bool:
+        """
+        检测用户输入是否为确认性回复
+
+        Args:
+            text: 用户输入文本
+
+        Returns:
+            bool: 是否为确认性回复
+        """
+        text = text.strip().lower()
+
+        # 确认性关键词
+        confirmation_keywords = [
+            '好', '嗯', '可以', '行', 'ok', '好的', '嗯嗯', '好的呢',
+            '行呢', '可以呢', '好呢', '嗯呢', '好哒', '嗯哒', '行哒',
+            '可以哒', '好呀', '嗯呀', '可以呀', '行呀', '好哦', '嗯哦',
+            '可以哦', '行哦', '好哈', '嗯哈', '可以哈', '行哈', '好的~',
+            '嗯~', '可以~', '行~', '好的～', '嗯～', '可以～', '行～',
+            '好滴', '嗯滴', '可以滴', '行滴', '好的!', '嗯!', '可以!',
+            '行!', '好！', '嗯！', '可以！', '行！', 'ok', 'ok的', 'ok呢',
+            'ok哈', 'ok呀', 'ok哦', 'ok~', 'ok～', '没问题', '没问题呢',
+            '没问题哈', '没问题呀', '没问题哦', '没问题~', '没问题～',
+            '没问题哒', '没问题滴', '没问题!', '没问题！', '没问题哒',
+            '没问题呢', '没问题哈', '没问题呀', '没问题哦', '没问题~',
+            '没问题～', '没问题滴', '没问题!', '没问题！', '没问题哒',
+            '没问题呢', '没问题哈', '没问题呀', '没问题哦', '没问题~',
+            '没问题～', '没问题滴', '没问题!', '没问题！', '没问题哒',
+            '没问题呢', '没问题哈', '没问题呀', '没问题哦', '没问题~',
+            '没问题～', '没问题滴', '没问题!', '没问题！', '没问题哒',
+        ]
+
+        # 检查是否是纯确认性回复（排除包含其他内容的情况）
+        for keyword in confirmation_keywords:
+            if text == keyword or text == keyword + '~' or text == keyword + '～':
+                return True
+
+        # 检查是否是确认性回复（可能带表情）
+        # 移除表情符号后检查
+        text_without_emoji = re.sub(r'[^\w\s\u4e00-\u9fff]', '', text)
+        if text_without_emoji in ['好', '嗯', '可以', '行', 'ok']:
+            return True
+
+        return False

@@ -58,8 +58,6 @@ class ChatService:
                 self.personality_profile.set_target_gender(target_gender)
                 logger.info(f"Detected target gender: {target_gender}, inferred user as: {self.personality_profile.user_sex}")
 
-            self._update_personality_with_user_sex(user_profile)
-
             can_understand, error_response = self.info_collector.check_input_understandability(
                 request.question, account_id
             )
@@ -70,8 +68,72 @@ class ChatService:
             analysis = await self.ai_service.analyze_sentiment(request.question)
             context = self.user_service.get_conversation_context(account_id)
 
+            # 检测用户输入是否为确认性回复（如"好"、"嗯"、"可以"等）
+            is_confirmation = self.input_analyzer.is_confirmation_response(request.question)
+
+            # 检查是否所有信息已收集完成
+            is_collection_complete = user_profile.get_progress() >= 1.0
+
+            # 检查联系方式是否已收集（包括phone/wechat标识类型）
+            contact_collected = user_profile.collection_progress.get('contact', False)
+
+            # 如果联系方式已收集且用户回复确认性内容，真人应该简短回应（结束话题）
+            # 信息收集完成后，真人不会一直主动发起新话题
+            if is_confirmation and (is_collection_complete or contact_collected):
+                # 模拟真人行为：简短回应或不回复
+                # 70%概率简短回应，30%概率不回复
+                import random
+                if random.random() < 0.3:
+                    # 不回复或极简短
+                    short_responses = ["[愉快]", "[爱心]", "嗯嗯", "好哒"]
+                    enhanced_response = random.choice(short_responses)
+                    self.user_service.record_interaction(
+                        account_id,
+                        request.question,
+                        enhanced_response,
+                        {
+                            "intent": analysis.get("intent", "chat"),
+                            "confidence": analysis.get("confidence", 0.0),
+                            "collected_field": None,
+                            "collection_progress": user_profile.get_progress(),
+                            "is_confirmation": True
+                        }
+                    )
+                    return self._success_response(enhanced_response, request.dialogId)
+                else:
+                    # 简短回应，不重复"已记下情况"这类话
+                    short_responses = ["嗯嗯～", "好哒～", "收到啦～", "嗯嗯～[愉快]"]
+                    enhanced_response = random.choice(short_responses)
+                    self.user_service.record_interaction(
+                        account_id,
+                        request.question,
+                        enhanced_response,
+                        {
+                            "intent": analysis.get("intent", "chat"),
+                            "confidence": analysis.get("confidence", 0.0),
+                            "collected_field": None,
+                            "collection_progress": user_profile.get_progress(),
+                            "is_confirmation": True
+                        }
+                    )
+                    return self._success_response(enhanced_response, request.dialogId)
+
+            # 先尝试收集信息
+            collection_result = self._try_collect_user_info(
+                account_id, user_profile, request.question, context
+            )
+
+            # 如果收集到性别，立即更新人设
+            if collection_result["collected"] and collection_result["field"] == "sex":
+                self._update_personality_with_user_sex(user_profile)
+
+            # 重新获取最新的用户档案（可能已更新）
+            user_profile = self.user_service.get_user_profile(account_id)
+
             user_greeting = self.user_service.get_user_greeting(account_id)
-            system_prompt = self.personality_profile.get_conversation_context_prompt(user_greeting)
+            # 获取已收集的用户信息摘要
+            collected_info = self._get_collected_info_summary(user_profile)
+            system_prompt = self.personality_profile.get_conversation_context_prompt(user_greeting, collected_info)
 
             ai_response = await self.ai_service.generate_response(
                 request.question,
@@ -81,19 +143,23 @@ class ChatService:
 
             enhanced_response = self.personality_profile.enhance_response(ai_response)
 
-            collection_result = self._try_collect_user_info(
-                account_id, user_profile, request.question, context
-            )
-
             if collection_result["collected"]:
                 if collection_result["field"] == "contact":
-                    is_valid, phone_error = self.info_collector.is_valid_phone(collection_result["value"])
-                    if not is_valid:
-                        field_state = self.info_collector._get_field_state(account_id, "contact")
-                        if field_state["error_count"] < 2:
-                            enhanced_response = phone_error
-                        else:
-                            enhanced_response = "嗯嗯，咱们聊点别的吧～😊"
+                    # 检查收集到的联系方式类型
+                    contact_value = collection_result["value"]
+                    # 如果是标识类型（phone/wechat），不是实际号码，不需要验证
+                    if contact_value in ['phone', 'wechat']:
+                        # 标记为已收集，但不作为有效联系方式
+                        pass
+                    else:
+                        # 是实际号码，需要验证
+                        is_valid, phone_error = self.info_collector.is_valid_phone(contact_value)
+                        if not is_valid:
+                            field_state = self.info_collector._get_field_state(account_id, "contact")
+                            if field_state["error_count"] < 2:
+                                enhanced_response = phone_error
+                            else:
+                                enhanced_response = "嗯嗯，咱们聊点别的吧～😊"
 
             self.user_service.record_interaction(
                 account_id,
@@ -107,9 +173,6 @@ class ChatService:
                 }
             )
 
-            if collection_result["field"] == "sex" and collection_result["collected"]:
-                self._update_personality_with_user_sex(user_profile)
-
             return self._success_response(enhanced_response, request.dialogId)
 
         except Exception as e:
@@ -118,26 +181,97 @@ class ChatService:
             traceback.print_exc()
             return self._error_response(str(e))
 
+    def _get_collected_info_summary(self, user_profile: UserProfile) -> str:
+        """获取已收集信息的摘要"""
+        info_parts = []
+        if user_profile.sex:
+            info_parts.append(f"性别：{user_profile.sex}")
+        if user_profile.last_name:
+            # 姓氏信息已收集，但只用于知晓，不在称呼中使用，也不重复询问
+            info_parts.append(f"用户已提供过姓氏信息（在称呼时只能用'小哥哥'或'小姐姐'，严禁加姓氏）")
+        if user_profile.birth_year:
+            info_parts.append(f"出生年：{user_profile.birth_year}年")
+        if user_profile.height:
+            info_parts.append(f"身高：{user_profile.height}")
+        if user_profile.weight:
+            info_parts.append(f"体重：{user_profile.weight}")
+        if user_profile.location:
+            info_parts.append(f"坐标：{user_profile.location}")
+        if user_profile.education:
+            info_parts.append(f"学历：{user_profile.education}")
+        if user_profile.marital_status:
+            info_parts.append(f"婚况：{user_profile.marital_status}")
+        if user_profile.monthly_income:
+            info_parts.append(f"月薪：{user_profile.monthly_income}")
+        if user_profile.occupation:
+            info_parts.append(f"职业：{user_profile.occupation}")
+        if user_profile.contact:
+            contact_info = user_profile.contact
+            if contact_info in ['phone', 'wechat']:
+                contact_info = 'phone' if contact_info == 'phone' else 'wechat'
+            info_parts.append(f"联系方式：{contact_info}")
+
+        if info_parts:
+            return "【用户已知信息】" + "，".join(info_parts)
+        return "【用户已知信息】暂无信息"
+
     def _try_collect_user_info(self, account_id: str, user_profile: UserProfile, user_message: str, conversation_context: Dict[str, Any]) -> Dict[str, Any]:
         """尝试从用户消息中收集信息"""
         conversation_history = conversation_context.get("recent_messages", [])
-        next_field = user_profile.get_next_field_to_collect()
 
-        if next_field:
-            extractor = self._get_field_extractor(next_field)
+        # 按收集优先级排序字段
+        priority_order = [
+            'sex',
+            'last_name',
+            'birth_year',
+            'height',
+            'weight',
+            'location',
+            'education',
+            'marital_status',
+            'monthly_income',
+            'occupation',
+            'contact'
+        ]
+
+        # 获取所有未收集的字段，并按优先级排序
+        uncollected_fields = [
+            field for field in priority_order
+            if not user_profile.collection_progress.get(field, False)
+        ]
+
+        if not uncollected_fields:
+            return {"collected": False, "field": None, "value": None, "progress": user_profile.get_progress(), "all_fields": []}
+
+        # 尝试从用户消息中提取所有未收集的字段
+        collected_fields = []
+        for field_name in uncollected_fields:
+            extractor = self._get_field_extractor(field_name)
             if extractor:
                 extracted_value = extractor(user_message)
                 if extracted_value is not None:
-                    success = self.user_service.update_user_profile_field(account_id, next_field, extracted_value)
+                    success = self.user_service.update_user_profile_field(account_id, field_name, extracted_value)
                     if success:
-                        return {"collected": True, "field": next_field, "value": extracted_value, "progress": user_profile.get_progress()}
+                        collected_fields.append({"field": field_name, "value": extracted_value})
 
-        return {"collected": False, "field": None, "value": None, "progress": user_profile.get_progress()}
+        if collected_fields:
+            # 更新profile以反映最新的收集进度
+            user_profile = self.user_service.get_user_profile(account_id)
+            return {
+                "collected": True,
+                "field": collected_fields[0]["field"],  # 返回第一个字段用于兼容
+                "value": collected_fields[0]["value"],
+                "progress": user_profile.get_progress(),
+                "all_fields": collected_fields
+            }
+
+        return {"collected": False, "field": None, "value": None, "progress": user_profile.get_progress(), "all_fields": []}
 
     def _get_field_extractor(self, field_name: str):
         """获取字段提取器"""
         extractors = {
             "sex": self.info_collector.extract_sex,
+            "last_name": self.info_collector.extract_last_name,
             "birth_year": self.info_collector.extract_birth_year,
             "height": self.info_collector.extract_height,
             "weight": self.info_collector.extract_weight,
@@ -146,7 +280,6 @@ class ChatService:
             "marital_status": self.info_collector.extract_marital_status,
             "monthly_income": self.info_collector.extract_monthly_income,
             "occupation": self.info_collector.extract_occupation,
-            "preferred_call": self.info_collector.extract_preferred_call,
             "contact": self.info_collector.extract_contact
         }
         return extractors.get(field_name)

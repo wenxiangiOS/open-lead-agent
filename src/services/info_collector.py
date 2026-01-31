@@ -31,8 +31,8 @@ class InfoCollector:
         'marital_status': '婚况',
         'monthly_income': '月薪',
         'occupation': '职业',
-        'preferred_call': '称呼',
         'contact': '联系方式',
+        # 注意：last_name已包含称呼信息，不再单独收集preferred_call
     }
 
     # 常见城市
@@ -75,7 +75,8 @@ class InfoCollector:
     def __init__(self):
         """初始化信息收集器"""
         self.collection_state: Dict[str, Dict[str, Any]] = {}
-        # 每个字段跟踪：错误次数、尝试次数、上次提醒时间
+        # 每个字段跟踪：错误次数、尝试次数、上次提醒时间、是否跳过
+        # 每个字段最多尝试2次收集，失败后永久跳过
 
     def _init_field_state(self, account_id: str, field_name: str) -> None:
         """初始化字段状态"""
@@ -84,7 +85,8 @@ class InfoCollector:
             self.collection_state[key] = {
                 'error_count': 0,
                 'attempt_count': 0,
-                'last_reminded': False
+                'last_reminded': False,
+                'skipped': False  # 新增：标记是否已跳过该字段
             }
 
     def _get_field_state(self, account_id: str, field_name: str) -> Dict[str, Any]:
@@ -93,8 +95,30 @@ class InfoCollector:
         return self.collection_state.get(key, {
             'error_count': 0,
             'attempt_count': 0,
-            'last_reminded': False
+            'last_reminded': False,
+            'skipped': False
         })
+
+    def _skip_field(self, account_id: str, field_name: str) -> None:
+        """永久跳过某个字段"""
+        key = f"{account_id}_{field_name}"
+        if key in self.collection_state:
+            self.collection_state[key]['skipped'] = True
+            self.collection_state[key]['attempt_count'] = 999  # 设置为高值确保不再尝试
+        else:
+            self.collection_state[key] = {
+                'error_count': 0,
+                'attempt_count': 999,
+                'last_reminded': False,
+                'skipped': True
+            }
+        logger.info(f"字段 {field_name} 已跳过，不再收集")
+
+    def _is_field_skipped(self, account_id: str, field_name: str) -> bool:
+        """检查字段是否已被跳过"""
+        key = f"{account_id}_{field_name}"
+        state = self.collection_state.get(key, {})
+        return state.get('skipped', False)
 
     def extract_sex(self, text: str) -> Optional[str]:
         """
@@ -107,16 +131,29 @@ class InfoCollector:
         """
         text = text.strip()
 
-        # 男性关键词
-        male_keywords = ['男', '男的', '我是男生', '我是男生', '哥哥', '帅哥', '先生', 'M']
+        # 优先检测：用户说"找男生/找女生" -> 可以反推用户性别
+        # 如果用户找男生 -> 用户是女生
+        # 如果用户找女生 -> 用户是男生
+        if '找男生' in text:
+            return '女'
+        if '找女生' in text:
+            return '男'
+        # 匹配"找一个男的"、"给我找个男"等模式
+        if re.search(r'找.*个.*男[^生]', text):
+            return '女'
+        if re.search(r'找.*个.*女[^生]', text):
+            return '男'
+
+        # 男性关键词（必须是自称，不是找对象）
+        male_keywords = ['我是男', '我是男生', '我是男宝', '我是帅哥']
         for keyword in male_keywords:
-            if keyword in text and '女' not in text:
+            if keyword in text:
                 return '男'
 
-        # 女性关键词
-        female_keywords = ['女', '女的', '我是女生', '我是女生', '姐姐', '妹妹', '美女', '女士', 'F']
+        # 女性关键词（必须是自称，不是找对象）
+        female_keywords = ['我是女', '我是女生', '我是女宝', '我是美女']
         for keyword in female_keywords:
-            if keyword in text and '男' not in text:
+            if keyword in text:
                 return '女'
 
         return None
@@ -128,11 +165,15 @@ class InfoCollector:
         Returns:
             Optional[int]: 出生年份
         """
-        # 模式1: "95年"、"1995年"
-        pattern1 = r'(\d{4})年'
+        # 模式1: "95年"、"1995年年"、"90的"（口语）
+        pattern1 = r'(\d{2,4})[年的]'
         match1 = re.search(pattern1, text)
         if match1:
-            year = int(match1.group(1))
+            year_str = match1.group(1)
+            year = int(year_str)
+            # 如果是2位数，补全为19XX
+            if year < 100:
+                year = 1900 + year
             current_year = datetime.now().year
             if 1960 <= year <= current_year:
                 return year
@@ -195,6 +236,14 @@ class InfoCollector:
             if 140 <= height_val <= 220:
                 return f"{height_val}cm"
 
+        # 模式4: 3位数字且不是年份（140-220之间）
+        # 优先级：如果有明确身高范围数字，返回它
+        all_numbers = re.findall(r'\d+', text)
+        for num_str in all_numbers:
+            num = int(num_str)
+            if 140 <= num <= 220:
+                return f"{num}cm"
+
         return None
 
     def extract_weight(self, text: str) -> Optional[str]:
@@ -226,13 +275,33 @@ class InfoCollector:
             if 30 <= weight_val <= 200:
                 return f"{weight_val}kg"
 
-        # 模式3: "一百二十斤"等
+        # 模式3: "XX斤"格式（优先处理）
         pattern3 = r'(\d{2,3})斤'
         match3 = re.search(pattern3, text)
         if match3:
             weight_val = int(match3.group(1)) // 2
             if 30 <= weight_val <= 200:
                 return f"{weight_val}kg"
+
+        # 模式4: 纯数字（2-3位），排除身高范围
+        # 优先级：如果有明确体重范围数字且不是身高范围，返回它
+        # 注意：
+        # 1. 如果文本中有"年"字，优先认为是年份，不匹配为体重
+        # 2. 如果文本是"XX的"格式（如"90的"），且数字是2位数，优先认为是年份（如90年），不匹配为体重
+        # 3. 如果文本以"呢"、"哈"、"呀"、"哒"等语气词结尾，且前面是"XX的"格式，很可能是年份回答
+        if '年' in text:
+            return None
+
+        # 检查"XX的+语气词"格式，很可能是年份回答（如"90的呢"、"90的呀"）
+        if re.search(r'(\d{2})[的][呢哈呀哒~！？，。]*$', text.strip()):
+            return None
+
+        all_numbers = re.findall(r'\d+', text)
+        for num_str in all_numbers:
+            num = int(num_str)
+            # 体重范围：30-200，且不是身高范围（140-220）
+            if 30 <= num <= 200 and not (140 <= num <= 220):
+                return f"{num}kg"
 
         return None
 
@@ -243,8 +312,13 @@ class InfoCollector:
         Returns:
             Optional[str]: 所在地
         """
+        # 支持更多表达方式
         for city in self.CITIES:
+            # 匹配：深圳、深圳的、在深圳、深圳男生、深圳女生等
             if city in text:
+                return city
+            # 匹配：找深圳的、给我找一个深圳的
+            if f'找{city}' in text or f'找一个{city}' in text or f'给我找一个{city}' in text:
                 return city
         return None
 
@@ -274,6 +348,79 @@ class InfoCollector:
                     return status
         return None
 
+    def extract_last_name(self, text: str) -> Optional[str]:
+        """
+        从文本中提取姓氏
+
+        Returns:
+            Optional[str]: 姓氏（中文单字姓氏）
+        """
+        # 常见中文姓氏（覆盖95%以上人口）
+        common_surnames = [
+            '王', '李', '张', '刘', '陈', '杨', '黄', '赵', '吴', '周',
+            '徐', '孙', '马', '朱', '胡', '郭', '何', '高', '林', '罗',
+            '郑', '梁', '谢', '宋', '唐', '许', '韩', '冯', '邓', '曹',
+            '彭', '曾', '萧', '田', '董', '袁', '潘', '于', '蒋', '蔡',
+            '余', '杜', '叶', '程', '苏', '魏', '吕', '丁', '任', '沈',
+            '姚', '卢', '姜', '崔', '钟', '谭', '陆', '汪', '范', '金',
+            '石', '廖', '贾', '韦', '夏', '付', '方', '白', '邹', '孟',
+            '熊', '秦', '邱', '江', '尹', '薛', '闫', '段', '雷', '侯',
+            '龙', '陶', '史', '黎', '贺', '顾', '毛', '郝', '龚', '邵'
+        ]
+
+        text = text.strip()
+
+        # 模式0: 直接回答姓氏/称呼，如"小张"、"张三"、"张小美"
+        # 匹配"小+姓氏"、"姓氏+字"、"姓氏+名字"
+        pattern0 = r'小([王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾萧田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾韦夏付方白邹孟熊秦邱江尹薛闫段雷侯龙陶史黎贺顾毛郝龚邵])'
+        match0 = re.search(pattern0, text)
+        if match0:
+            return match0.group(1)
+
+        # 模式0.5: 姓氏开头的名字，如"张三"、"张小美"、"王建国"
+        # 模式1: 姓氏后接一个字（如张三）
+        pattern1 = r'([王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾萧田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾韦夏付方白邹孟熊秦邱江尹薛闫段雷侯龙陶史黎贺顾毛郝龚邵])[\s]*[一-十a-zA-Z]'
+        match1 = re.search(pattern1, text)
+        if match1:
+            return match1.group(1)
+
+        # 模式0.5_2: 姓氏后接任何字符（如张小美、王建国、李小明）
+        pattern1_2 = r'([王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾萧田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾韦夏付方白邹孟熊秦邱江尹薛闫段雷侯龙陶史黎贺顾毛郝龚邵]).'
+        match1_2 = re.search(pattern1_2, text)
+        if match1_2:
+            return match1_2.group(1)
+
+        # 模式2: "叫我X"、"可以叫我X"、"你叫我X"
+        pattern2 = r'(?:叫我|可以叫我|你叫我|称呼我为)([^\s，。！？、]{1,2})'
+        match2 = re.search(pattern2, text)
+        if match2:
+            name = match2.group(1)
+            # 检查是否是常见姓氏
+            if any(name.startswith(s) for s in common_surnames):
+                return name[0]  # 返回姓氏
+            # 如果是两个字且第一个字是姓氏
+            elif len(name) >= 2 and name[0] in common_surnames:
+                return name[0]
+            # 单字直接返回
+            elif name in common_surnames:
+                return name
+
+        # 模式3: "我姓X"、"我是X姓"
+        pattern3 = r'(?:我姓|我是.*姓)([^\s，。！？、]{1,2})'
+        match3 = re.search(pattern3, text)
+        if match3:
+            name = match3.group(1)
+            if name in common_surnames:
+                return name
+
+        # 模式4: "X小姐"、"X先生"、"X美女"、"X哥哥"中的姓氏
+        pattern4 = r'([王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾萧田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾韦夏付方白邹孟熊秦邱江尹薛闫段雷侯龙陶史黎贺顾毛郝龚邵]+)(?:小姐|先生|美女|哥哥|姐姐|女士)'
+        match4 = re.search(pattern4, text)
+        if match4:
+            return match4.group(1)
+
+        return None
+
     def extract_monthly_income(self, text: str) -> Optional[str]:
         """
         从文本中提取月收入
@@ -281,12 +428,42 @@ class InfoCollector:
         Returns:
             Optional[str]: 月收入
         """
-        # 模式1: "月薪1.5万"、"月薪15000"
-        pattern1 = r'月\s*(薪|收|入)\s*(\d+\.?\d*)[万千]?'
+        # 模式0: "30左右吧"、"30左右"、"20左右呢" - 默认单位是k
+        # 这种口语表达通常指k（千）
+        pattern0 = r'(\d{1,3})\s*(?:左右吧|左右|左右呢|左右哈|左右呀|左右哒|左右~|呢|吧|哈|呀|哒|~)'
+        match0 = re.search(pattern0, text)
+        if match0:
+            income = float(match0.group(1))
+            # 只有当数字在合理薪资范围内（5-100之间）才匹配
+            if 5 <= income <= 100:
+                return f"{income:g}k"
+
+        # 模式1: "20k"、"20K"、"30k左右"、"30左右k"
+        pattern1 = r'(\d+\.?\d*)\s*[kK](?:左右吧|左右|吗|的)?(?:元|月|收入|工资|薪)?'
         match1 = re.search(pattern1, text)
         if match1:
-            income = float(match1.group(2))
-            unit = match1.group(0)[-1] if match1.group(0)[-1] in ['万', '千'] else ''
+            income = float(match1.group(1))
+            return f"{income:g}k"
+
+        # 模式2: "20k月"、"30k左右"、"月薪30左右吧"
+        pattern2 = r'(?:月\s*(?:薪|收|入)\s*)?(\d+\.?\d*)\s*(?:kK|万|千)(?:左右吧|左右|吗|的)?'
+        match2 = re.search(pattern2, text)
+        if match2:
+            income = float(match2.group(1))
+            unit = match2.group(0).lower()[-1]  # 取最后一个字符作为单位
+            if 'k' in match2.group(0).lower():
+                return f"{income:g}k"
+            elif '万' in match2.group(0).lower():
+                return f"{income}万"
+            elif '千' in match2.group(0).lower():
+                return f"{income}千"
+
+        # 模式3: "月薪1.5万"、"月薪15000"
+        pattern3 = r'月\s*(薪|收|入)\s*(\d+\.?\d*)[万千]?'
+        match3 = re.search(pattern3, text)
+        if match3:
+            income = float(match3.group(2))
+            unit = match3.group(0)[-1] if match3.group(0)[-1] in ['万', '千'] else ''
             if unit == '万':
                 return f"{income}万"
             elif unit == '千':
@@ -296,18 +473,18 @@ class InfoCollector:
             else:
                 return f"{income}万"
 
-        # 模式2: "工资1万"、"收入1.5w"
-        pattern2 = r'(工资|薪|收入|挣|赚|钱)\s*(\d+\.?\d*)[万wk]?'
-        match2 = re.search(pattern2, text, re.IGNORECASE)
-        if match2:
-            income = float(match2.group(2))
+        # 模式4: "工资1万"、"收入1.5w"
+        pattern4 = r'(工资|薪|收入|挣|赚|钱)\s*(\d+\.?\d*)[万wk]?'
+        match4 = re.search(pattern4, text, re.IGNORECASE)
+        if match4:
+            income = float(match4.group(2))
             return f"{income}万"
 
-        # 模式3: "一万五"、"两万"
-        pattern3 = r'(一|二|三|四|五|六|七|八|九|十)(万|万五|万五)'
-        match3 = re.search(pattern3, text)
-        if match3:
-            return match3.group(0)
+        # 模式5: "一万五"、"两万"
+        pattern5 = r'(一|二|三|四|五|六|七|八|九|十)(万|万五|万五)'
+        match5 = re.search(pattern5, text)
+        if match5:
+            return match5.group(0)
 
         return None
 
@@ -316,13 +493,18 @@ class InfoCollector:
         从文本中提取联系方式（主要是电话号码）
 
         Returns:
-            Optional[str]: 提取的电话号码
+            Optional[str]: 提取的电话号码或联系方式类型
         """
         # 模式1: 11位手机号
         pattern1 = r'1[3-9]\d{9}'
         match1 = re.search(pattern1, text)
         if match1:
             return match1.group(0)
+
+        # 模式1.5: "电话"、"电话吧"、"用电话" - 返回标识类型
+        if '电话' in text or '手机' in text:
+            # 只是没有号码的情况，返回标识
+            return 'phone'
 
         # 模式2: 带区号的座机
         pattern2 = r'(0\d{2,3}-?\d{7,8})'
@@ -335,6 +517,10 @@ class InfoCollector:
         match3 = re.search(pattern3, text.lower())
         if match3:
             return match3.group(0)
+
+        # 模式3.5: "微信"、"微信吧"、"用微信" - 返回标识类型
+        if '微信' in text or '微同' in text:
+            return 'wechat'
 
         return None
 
@@ -362,30 +548,7 @@ class InfoCollector:
 
         return None
 
-    def extract_preferred_call(self, text: str) -> Optional[str]:
-        """
-        从文本中提取对方希望的称呼
-
-        Returns:
-            Optional[str]: 称呼
-        """
-        # 模式1: "叫我XX"、"叫我XX"
-        pattern1 = r'叫我[是]*([^\s，。！？]{1,4})'
-        match1 = re.search(pattern1, text)
-        if match1:
-            call = match1.group(1)
-            if len(call) <= 4 and call not in ['他', '她']:
-                return call
-
-        # 模式2: "叫XX"后面跟"就行"、"可以"等
-        pattern2 = r'叫([^\s，。！？]{1,3})[就]行[可]以'
-        match2 = re.search(pattern2, text)
-        if match2:
-            call = match2.group(1)
-            if len(call) <= 3 and call not in ['他', '她']:
-                return call
-
-        return None
+    # 注意：preferred_call 已移除，称呼信息通过 last_name 收集
 
     def is_valid_phone(self, phone: str) -> Tuple[bool, str]:
         """
@@ -415,7 +578,8 @@ class InfoCollector:
         account_id: str,
         profile: UserProfile,
         user_message: str,
-        conversation_history: List[Dict[str, Any]]
+        conversation_history: List[Dict[str, Any]],
+        _depth: int = 0  # 内部参数，防止无限递归
     ) -> Tuple[str, Optional[str], Optional[Dict[str, Any]]]:
         """
         生成隐晦的信息收集提示
@@ -429,21 +593,39 @@ class InfoCollector:
         Returns:
             Tuple[str, Optional[str], Optional[Dict[str, Any]]: (系统提示, 提取到的信息)
         """
+        # 安全检查：防止无限递归
+        if _depth > 20:  # 最大20个字段，超过说明有异常
+            logger.warning(f"递归深度超过限制 (account: {account_id}, depth: {_depth})")
+            return "嗯嗯～", None
+
         # 获取下一个需要收集的字段
         next_field = profile.get_next_field_to_collect()
         if not next_field:
-            # 所有信息已收集
-            collection_summary = profile.get_collection_summary()
-            return f"{collection_summary}想聊点什么呢～", None
+            # 所有信息已收集 - 返回简短回应，不暴露收集意图
+            # 模拟真人：信息收集完成后，简短回应或不回应
+            import random
+            if random.random() < 0.4:
+                # 40%概率不返回任何内容（模拟真人不再回复）
+                return "", None
+            else:
+                # 60%概率返回极简短的回应
+                short_responses = ["嗯嗯～", "好哒～", "收到啦～", "嗯嗯", "好哒"]
+                return random.choice(short_responses), None
+
+        # 检查该字段是否已被跳过
+        if self._is_field_skipped(account_id, next_field):
+            # 递归获取下一个未跳过的字段
+            return self.generate_collection_prompt(account_id, profile, user_message, conversation_history, _depth + 1)
 
         self._init_field_state(account_id, next_field)
         field_state = self._get_field_state(account_id, next_field)
 
-        # 检查是否达到错误次数限制
-        if field_state['error_count'] >= 2:
-            # 跳过这个字段，收集下一个
-            profile.collection_progress[next_field] = False  # 标记为不收集
-            return self.generate_collection_prompt(account_id, profile, user_message, conversation_history)
+        # 检查是否达到尝试次数限制（最多2次）
+        if field_state['attempt_count'] >= 2:
+            # 跳过这个字段
+            self._skip_field(account_id, next_field)
+            # 递归获取下一个字段
+            return self.generate_collection_prompt(account_id, profile, user_message, conversation_history, _depth + 1)
 
         # 尝试从用户消息中提取信息
         field_name_chinese = self.FIELD_NAMES.get(next_field, next_field)
@@ -453,29 +635,30 @@ class InfoCollector:
             # 提取成功
             success = profile.update_field(next_field, extracted_info)
             if success:
-                # 重置错误计数
+                # 重置错误计数和尝试次数
                 self.collection_state[f"{account_id}_{next_field}"]['error_count'] = 0
+                self.collection_state[f"{account_id}_{next_field}"]['attempt_count'] = 0
                 return f"嗯嗯，记下来啦～", {next_field: extracted_info}
             else:
                 # 提取了但验证失败
                 return f"好的呢～", None
         else:
-            # 没有提取到，尝试提示
+            # 没有提取到，增加尝试次数
             field_state['attempt_count'] += 1
+            self.collection_state[f"{account_id}_{next_field}"]['attempt_count'] = field_state['attempt_count']
 
-            # 第一次尝试
+            # 第一次尝试 - 返回提示
             if field_state['attempt_count'] == 1:
                 prompt = self._generate_subtle_prompt(next_field, conversation_history)
                 return prompt, None
-            # 第二次尝试，仍然没有提取
+            # 第二次尝试 - 跳过这个字段
             elif field_state['attempt_count'] == 2:
-                # 跳过这个字段
-                profile.collection_progress[next_field] = False
-                return self.generate_collection_prompt(account_id, profile, user_message, conversation_history)
-            # 尝试次数太多，跳过
-            else:
-                profile.collection_progress[next_field] = False
-                return self.generate_collection_prompt(account_id, profile, user_message, conversation_history)
+                self._skip_field(account_id, next_field)
+                # 递归获取下一个字段
+                return self.generate_collection_prompt(account_id, profile, user_message, conversation_history, _depth + 1)
+
+        # 默认返回
+        return "嗯嗯～", None
 
     def _extract_field(self, field_name: str, text: str) -> Optional[Any]:
         """提取指定字段"""
@@ -489,7 +672,7 @@ class InfoCollector:
             'marital_status': self.extract_marital_status,
             'monthly_income': self.extract_monthly_income,
             'occupation': self.extract_occupation,
-            'preferred_call': self.extract_preferred_call,
+            # 注意：preferred_call 已移除，称呼信息通过 last_name 收集
             'contact': self.extract_contact
         }
 
@@ -501,7 +684,8 @@ class InfoCollector:
     def _generate_subtle_prompt(
         self,
         field_name: str,
-        conversation_history: List[Dict[str, Any]]
+        conversation_history: List[Dict[str, Any]],
+        _depth: int = 0  # 内部参数，防止无限递归
     ) -> str:
         """
         生成隐晦的信息收集提示
@@ -532,7 +716,7 @@ class InfoCollector:
             'marital_status': self._prompt_marital(history_length),
             'monthly_income': self._prompt_income(history_length),
             'occupation': self._prompt_occupation(history_length),
-            'preferred_call': self._prompt_preferred_call(history_length),
+            # 注意：preferred_call 已移除，称呼信息通过 last_name 收集
             'contact': self._prompt_contact(history_length, recent_user_messages)
         }
 
@@ -592,11 +776,7 @@ class InfoCollector:
             return "平时做什么工作呀？"
         return "在哪里工作呢~"
 
-    def _prompt_preferred_call(self, history_length: int) -> str:
-        """生成称呼收集提示（隐晦）"""
-        if history_length < 15:
-            return "希望对方怎么称呼你呀？"
-        return "有什么特别想说的吗~"
+    # 注意：_prompt_preferred_call 已移除，称呼信息通过 last_name 收集
 
     def _prompt_contact(self, history_length: int, recent_messages: List[str]) -> str:
         """生成联系方式收集提示（隐晦）"""
@@ -618,19 +798,23 @@ class InfoCollector:
         # 检查是否完全是乱码/不可理解的内容
         text = text.strip()
 
-        # 检查1: 只有特殊字符
-        if not re.search(r'[\u4e00-\u9fff]', text):
-            return False, "抱歉，没看懂你说什么呢～"
+        # 检查1: 包含数字（可能是身高、体重、年龄等信息）
+        if re.search(r'\d+', text):
+            return True, ""
 
-        # 检查2: 过多的重复字符
+        # 检查2: 只要包含中文就是可理解的
+        if re.search(r'[\u4e00-\u9fff]', text):
+            return True, ""
+
+        # 检查3: 过多的重复字符
         if len(set(text)) < 3 and len(text) > 10:
             return False, "这是什么意思呢～没太理解～"
 
-        # 检查3: 纯英文字母但不符合常见模式
+        # 检查4: 纯英文字母但不符合常见模式
         if re.match(r'^[a-zA-Z]+$', text) and len(text) > 15:
             return False, "没太理解呢，能换种方式说吗～"
 
-        # 检查4: 检查错误次数
+        # 检查5: 检查错误次数
         self._init_field_state(account_id, 'general')
         field_state = self._get_field_state(account_id, 'general')
 

@@ -73,6 +73,38 @@ class AIService:
             logger.error(f"Error generating AI response: {e}")
             raise Exception(f"AI服务错误: {str(e)}")
 
+    async def generate_response_with_messages(
+        self,
+        messages: list,
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> str:
+        """Generate response from AI model with full message history"""
+        try:
+            # Make API call
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
+                model=self.model_name,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=0.9,
+                frequency_penalty=0.0,
+                presence_penalty=0.0
+            )
+
+            # Extract response
+            content = response.choices[0].message.content
+            if not content:
+                logger.warning("Empty response from AI model")
+                return "抱歉，我暂时无法回答这个问题。"
+
+            return content.strip()
+
+        except Exception as e:
+            logger.error(f"Error generating AI response: {e}")
+            raise Exception(f"AI服务错误: {str(e)}")
+
     async def generate_embedding(self, text: str) -> List[float]:
         """Generate text embedding"""
         try:

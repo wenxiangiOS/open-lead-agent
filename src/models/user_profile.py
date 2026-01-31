@@ -29,6 +29,7 @@ class UserProfile(BaseModel):
 
     # 待收集的信息（初始为 None）- 按优先级顺序
     sex: Optional[str] = Field(None, description="性别（男/女）- 首要收集")
+    last_name: Optional[str] = Field(None, description="姓氏（对方希望怎么称呼自己）")
     birth_year: Optional[int] = Field(None, description="出生年份")
     height: Optional[str] = Field(None, description="身高（例如：165cm）")
     weight: Optional[str] = Field(None, description="体重（例如：55kg）")
@@ -37,13 +38,13 @@ class UserProfile(BaseModel):
     marital_status: Optional[str] = Field(None, description="婚况（单身/离异）")
     monthly_income: Optional[str] = Field(None, description="月薪（月收入范围）")
     occupation: Optional[str] = Field(None, description="职业（做什么工作）")
-    preferred_call: Optional[str] = Field(None, description="称呼（对方希望怎么称呼自己）")
     contact: Optional[str] = Field(None, description="联系方式（电话/微信）")
 
     # 收集状态跟踪
     collection_progress: Dict[str, bool] = Field(
         default_factory=lambda: {
             "sex": False,
+            "last_name": False,
             "birth_year": False,
             "height": False,
             "weight": False,
@@ -52,7 +53,6 @@ class UserProfile(BaseModel):
             "marital_status": False,
             "monthly_income": False,
             "occupation": False,
-            "preferred_call": False,
             "contact": False,
         },
         description="各字段收集状态"
@@ -155,6 +155,9 @@ class UserProfile(BaseModel):
                 validated = self.validate_height(value)
             elif field_name == 'weight':
                 validated = self.validate_weight(value)
+            elif field_name == 'last_name':
+                # 姓氏字段直接使用提取的值，不经过额外验证
+                validated = value
             else:
                 validated = value
 
@@ -204,9 +207,10 @@ class UserProfile(BaseModel):
         Returns:
             Optional[str]: 下一个要收集的字段名
         """
-        # 新的优先级顺序：性别优先
+        # 新的优先级顺序：姓氏优先
         priority_order = [
             'sex',  # 性别 - 首要
+            'last_name',  # 姓氏 - 对方希望怎么称呼
             'birth_year',  # 出生年
             'height',  # 身高
             'weight',  # 体重
@@ -215,7 +219,6 @@ class UserProfile(BaseModel):
             'marital_status',  # 婚况
             'monthly_income',  # 月薪
             'occupation',  # 职业
-            'preferred_call',  # 称呼
             'contact',  # 联系方式
         ]
 
@@ -269,6 +272,7 @@ class UserProfile(BaseModel):
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "sex": self.sex,
+            "last_name": self.last_name,
             "birth_year": self.birth_year,
             "height": self.height,
             "weight": self.weight,
@@ -277,7 +281,6 @@ class UserProfile(BaseModel):
             "marital_status": self.marital_status,
             "monthly_income": self.monthly_income,
             "occupation": self.occupation,
-            "preferred_call": self.preferred_call,
             "contact": self.contact,
             "collection_progress": self.collection_progress,
             "progress_percentage": round(self.get_progress() * 100, 2),
@@ -302,7 +305,6 @@ class UserProfile(BaseModel):
             return f"嗯嗯，还需要了解{missing}"
         else:
             return "刚认识你，想多了解一些基本信息呀～"
-
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserProfile":
         """从字典创建 UserProfile"""

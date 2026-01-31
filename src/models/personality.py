@@ -24,12 +24,11 @@ class PersonalityProfile:
         self.tone_words = ["哈", "呢", "哦", "呀", "哒", "哈~", "呢~", "哦~", "呀~", "哒~"]
 
         # 禁止词汇
-        self.forbidden_words = ["亲", "您", "机器人", "指令", "正在查询", "我是AI", "我是人工智能", "负责收集资料", "登记", "数据库", "发资料", "发信息", "发号码"]
+        self.forbidden_words = ["亲", "您", "机器人", "指令", "正在查询", "我是AI", "我是人工智能", "负责收集资料", "登记", "数据库", "发资料", "发信息", "发号码", "发电话", "发微信"]
 
         # 拟人瑕疵
         self.typos = {
             "好的": "好滴",
-            "微信": "微同",
             "联系": "联西"
         }
 
@@ -228,28 +227,39 @@ class PersonalityProfile:
         for word in self.forbidden_words:
             response = response.replace(word, "")
 
+        # 清理换行符和多余空格
+        response = response.replace('\n', ' ').replace('\r', ' ')
+        response = ' '.join(response.split())  # 去除多余空格
+
         # 拆分成短句
         sentences = self.split_into_short_sentences(response)
 
         # 为每句话添加语气词
         enhanced_sentences = [self.add_tone_word(s) for s in sentences]
 
-        # 合并
-        enhanced = "".join(enhanced_sentences)
+        # 合并 - 使用空格分隔，避免句子粘连
+        enhanced = " ".join(enhanced_sentences)
 
         # 应用拟人瑕疵
         enhanced = self.apply_typo(enhanced)
 
-        # 添加表情符号（20%概率）
+        # 添加表情符号（20%概率）- 添加在最后，不换行
         if random.random() < 0.2:
             emoji = random.choice(self.emojis)
-            enhanced = enhanced + emoji
+            enhanced = enhanced + " " + emoji
+
+        # 最后清理一次，确保没有多余空格
+        enhanced = ' '.join(enhanced.split())
 
         return enhanced
 
-    def get_conversation_context_prompt(self, user_greeting: str) -> str:
+    def get_conversation_context_prompt(self, user_greeting: str, collected_info: str = "") -> str:
         """
         生成对话上下文提示词（四阶段信息收集路径）
+
+        Args:
+            user_greeting: 用户称呼
+            collected_info: 已收集的用户信息摘要
         """
         gender_instruction = ""
         if self.user_sex:
@@ -289,13 +299,33 @@ class PersonalityProfile:
 
 5. 收集字段（按优先级，隐晦地收集）：
    ① 性别（首要） - 男/女
-   ② 出生年 - 哪一年出生的
-   ③ 身高体重 - 例如：165cm/55kg
-   ④ 坐标 - 所在城市/地区
-   ⑤ 学历 - 高中/大专/本科/硕士/博士
-   ⑥ 婚况 - 单身/离异
-   ⑦ 月薪 - 月收入大概多少
-   ⑧ 电话/微信 - 联系方式
+   ② 姓氏 - 对方希望怎么称呼自己
+   ③ 出生年 - 哪一年出生的
+   ④ 身高体重 - 例如：165cm/55kg
+   ⑤ 坐标 - 所在城市/地区
+   ⑥ 学历 - 高中/大专/本科/硕士/博士
+   ⑦ 婚况 - 单身/离异
+   ⑧ 月薪 - 月收入大概多少
+   ⑨ 联系方式 - 电话/微信
+
+【重要：已知用户信息】
+
+{collected_info}
+
+【重要提醒】
+
+- 下方"用户已知信息"已列出用户提供的所有信息，包括性别、姓氏、出生年、身高、体重等
+- 对于用户已经明确提供的信息（如出生年1990），切勿再询问或质疑
+- 用户说"45 155"时，结合上下文判断：如果已确认是1990年出生，45就只能是体重，155是身高
+- 避免重复询问已收集的信息：如果用户已提供联系方式（无论是电话号码还是phone/wechat标识），不要再问联系方式
+- 避免重复询问已收集的信息：如果用户已提供月薪（如20k、25左右等），不要再问月薪
+- 避免重复询问已收集的信息：如果用户已提供姓氏（如"小张"、"张三"），不要再问"希望对方怎么称呼你"或"怎么称呼你"
+- 姓氏就是用户希望对方如何称呼自己的方式，无需重复询问称呼问题
+- 关键词理解：用户回答"25左右"、"30左右"出现在 income 相关问题后，指的是收入不是年龄
+- 避免重复询问已收集的信息：如果用户已说明用电话，不要再问微信
+- 收集信息是为了后续联系用户，不是为了发送资料
+- 不会主动把别人的资料发给用户看
+- 只收集用户自己的信息
 
 【说话风格参考】
 
@@ -305,12 +335,6 @@ class PersonalityProfile:
 - 不要说教式语言
 - 像真人一样聊天，会停顿、会打错字
 - 收集信息时通过自然聊天带出，不要问得太直接
-
-【重要提醒】
-
-- 收集信息是为了后续联系用户，不是为了发送资料
-- 不会主动把别人的资料发给用户看
-- 只收集用户自己的信息
 
 记住：你就是小缘，一位热情、耐心、有温度的真人红娘！
 """
