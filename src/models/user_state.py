@@ -17,6 +17,12 @@ class UserState:
         self.preferences: Dict[str, Any] = {}
         self.session_start: datetime = datetime.now()
         self.active_dialog_id: Optional[str] = None
+        # 联系方式错误次数跟踪
+        self.contact_error_count: int = 0
+        self.last_contact_error_time: Optional[datetime] = None
+        # 用户连续回确认词但没有提供信息的次数跟踪
+        self.non_response_count: int = 0
+        self.last_non_response_time: Optional[datetime] = None
 
     def record_interaction(
         self,
@@ -201,6 +207,36 @@ class UserState:
         self.last_interaction = None
         self.active_dialog_id = None
 
+    def increment_contact_error(self) -> int:
+        """增加联系方式错误次数，返回当前错误次数"""
+        self.contact_error_count += 1
+        self.last_contact_error_time = datetime.now()
+        return self.contact_error_count
+
+    def get_contact_error_count(self) -> int:
+        """获取联系方式错误次数"""
+        return self.contact_error_count
+
+    def reset_contact_error_count(self) -> None:
+        """重置联系方式错误次数（当用户成功提供联系方式后）"""
+        self.contact_error_count = 0
+        self.last_contact_error_time = None
+
+    def increment_non_response(self) -> int:
+        """增加用户连续回确认词的次数，返回当前次数"""
+        self.non_response_count += 1
+        self.last_non_response_time = datetime.now()
+        return self.non_response_count
+
+    def reset_non_response_count(self) -> None:
+        """重置用户连续回确认词的次数（当用户提供了有效信息后）"""
+        self.non_response_count = 0
+        self.last_non_response_time = None
+
+    def get_non_response_count(self) -> int:
+        """获取用户连续回确认词的次数"""
+        return self.non_response_count
+
     def export_state(self) -> Dict[str, Any]:
         """Export user state for persistence"""
         return {
@@ -210,13 +246,24 @@ class UserState:
             "last_interaction": self.last_interaction.isoformat() if self.last_interaction else None,
             "preferences": self.preferences,
             "session_start": self.session_start.isoformat(),
-            "active_dialog_id": self.active_dialog_id
+            "active_dialog_id": self.active_dialog_id,
+            "contact_error_count": self.contact_error_count,
+            "last_contact_error_time": self.last_contact_error_time.isoformat() if self.last_contact_error_time else None,
+            "non_response_count": self.non_response_count,
+            "last_non_response_time": self.last_non_response_time.isoformat() if self.last_non_response_time else None
         }
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Alias for export_state"""
+        return self.export_state()
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "UserState":
+    def from_dict(cls, data: Dict[str, Any], user_id: Optional[str] = None) -> "UserState":
         """Create user state from dictionary"""
-        state = cls(data["user_id"])
+        uid = user_id or data.get("user_id")
+        if not uid:
+            raise ValueError("user_id is required")
+        state = cls(uid)
         state.dialog_count = data.get("dialog_count", 0)
         state.conversation_history = data.get("conversation_history", [])
 
@@ -224,7 +271,13 @@ class UserState:
             state.last_interaction = datetime.fromisoformat(data["last_interaction"])
 
         state.preferences = data.get("preferences", {})
-        state.session_start = datetime.fromisoformat(data["session_start"])
+        state.session_start = datetime.fromisoformat(data["session_start"]) if data.get("session_start") else datetime.now()
         state.active_dialog_id = data.get("active_dialog_id")
+        state.contact_error_count = data.get("contact_error_count", 0)
+        if data.get("last_contact_error_time"):
+            state.last_contact_error_time = datetime.fromisoformat(data["last_contact_error_time"])
+        state.non_response_count = data.get("non_response_count", 0)
+        if data.get("last_non_response_time"):
+            state.last_non_response_time = datetime.fromisoformat(data["last_non_response_time"])
 
         return state

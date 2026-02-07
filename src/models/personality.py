@@ -35,8 +35,16 @@ class PersonalityProfile:
         # 表情符号
         self.emojis = ["[玫瑰]", "[爱心]", "[愉快]", "[愉快]", "[玫瑰]", "[爱心]"]
 
-        # 聊天阶段状态
-        self.collection_stage = 0  # 0:未开始, 1:性别与意向, 2:夸奖共情, 3:建立防线, 4:收网索要
+        # 【对话阶段】对话情感阶段
+        # 0: 破冰阶段（建立轻松感）
+        # 1: 了解阶段（自然获取信息）
+        # 2: 信任阶段（用户愿意多说）
+        # 3: 任务完成阶段（已获取联系方式或核心信息）
+        self.conversation_stage = 0
+        self.last_user_message = None  # 用户上一句话
+        self.last_user_emotion = None  # 用户上一句话的情绪
+        self.has_given_confirmation = False  # 是否已给出确认性回复（用于任务完成后判断是否结束对话）
+        self.has_given_closing = False  # 是否已给出过收尾语（收尾后保持沉默）
         self.no_response_count = 0  # 无响应计数
 
         # 行为模拟：延迟时间（秒）
@@ -95,7 +103,7 @@ class PersonalityProfile:
 
         return None
 
-    def get_appropriate_greeting(self) -> str:
+    def get_appropriate_greeting(self, last_name: Optional[str] = None) -> str:
         """
         获取合适的称呼
 
@@ -103,6 +111,9 @@ class PersonalityProfile:
         - 确认性别前：使用"你好呀"、"你好呢"
         - 确认为男性后：使用"小哥哥"
         - 确认为女性后：使用"小姐姐"
+
+        Args:
+            last_name: 用户姓氏/称呼（可选，仅用于建档，不影响对话称呼）
         """
         if self.user_sex == '男':
             return "小哥哥"
@@ -129,19 +140,6 @@ class PersonalityProfile:
             # 用户是男生，目标是女生
             return "她"
         return "对方"
-
-    def get_gender_confirmation_message(self, target_gender: str) -> str:
-        """
-        生成性别确认话术（已废弃，改用get_stage_prompt的stage 1）
-
-        Args:
-            target_gender: 目标性别
-
-        Returns:
-            str: 确认话术
-        """
-        # 直接返回简单的问候语，不暴露收集意图
-        return "你好呀~ 我是同城脱单联盟的小缘，很高兴认识你呢~"
 
     def split_into_short_sentences(self, text: str) -> List[str]:
         """
@@ -253,136 +251,147 @@ class PersonalityProfile:
 
         return enhanced
 
-    def get_conversation_context_prompt(self, user_greeting: str, collected_info: str = "") -> str:
+    def should_request_contact(self, user_profile: UserProfile) -> bool:
         """
-        生成对话上下文提示词（四阶段信息收集路径）
+        判断是否应该询问联系方式
+
+        当10个核心字段（除联系方式外）都收集完时，应该询问联系方式
 
         Args:
-            user_greeting: 用户称呼
-            collected_info: 已收集的用户信息摘要
-        """
-        gender_instruction = ""
-        if self.user_sex:
-            gender_instruction = f"用户已确认为{self.user_sex}性，后续所有称呼必须严格使用{'小哥哥' if self.user_sex == '男' else '小姐姐'}，严禁叫错。"
-        else:
-            gender_instruction = "用户性别未确认，严禁使用'小姐姐'、'小哥哥'等称呼，统一使用'你好呀'、'你好呢'等模糊称呼。"
-
-        return f"""
-你是小缘，一位热情、耐心、有温度的真人红娘，{self.age}岁。
-
-你正在和用户聊天，想帮对方介绍合适的对象。
-
-【核心要求】
-
-1. 身份坚持：全程代入真人身份，绝不承认是AI、机器人、人工智能、虚构程序。
-
-2. 禁止词汇（严格禁止）：
-   - 严禁说"亲"、"您"
-   - 严禁说"机器人"、"指令"、"正在查询"
-   - 严禁说"我是AI"、"我是人工智能"
-   - 严禁说"负责收集资料"、"登记"、"数据库"（暴露收集意图）
-   - 严禁说"发资料"、"发信息"、"发号码"（不会主动发送资料给用户）
-
-3. 拟人化聊天规范：
-   - 短句连发：模拟真人，一件事拆成2-3条发
-   - 语气助词：末尾必带"哈、呢、哦、呀、哒、哈~"
-   - 拟人瑕疵：极小概率（5%）将"好的"打成"好滴"，将"微信"打成"微同"
-   - 表情符号：适当使用[玫瑰]、[爱心]、[愉快]
-
-4. 性别识别与动态称呼逻辑（重要）：
-   {gender_instruction}
-
-   - 确认性别的方式：
-     * 用户自己说明是男生或女生
-     * 自然对话中了解："你是男生还是女生呀？"
-   - 一旦确认，终身锁定，严禁改口
-
-5. 收集字段（按优先级，隐晦地收集）：
-   ① 性别（首要） - 男/女
-   ② 姓氏 - 对方希望怎么称呼自己
-   ③ 出生年 - 哪一年出生的
-   ④ 身高体重 - 例如：165cm/55kg
-   ⑤ 坐标 - 所在城市/地区
-   ⑥ 学历 - 高中/大专/本科/硕士/博士
-   ⑦ 婚况 - 单身/离异
-   ⑧ 月薪 - 月收入大概多少
-   ⑨ 联系方式 - 电话/微信
-
-【重要：已知用户信息】
-
-{collected_info}
-
-【重要提醒】
-
-- 下方"用户已知信息"已列出用户提供的所有信息，包括性别、姓氏、出生年、身高、体重等
-- 对于用户已经明确提供的信息（如出生年1990），切勿再询问或质疑
-- 用户说"45 155"时，结合上下文判断：如果已确认是1990年出生，45就只能是体重，155是身高
-- 避免重复询问已收集的信息：如果用户已提供联系方式（无论是电话号码还是phone/wechat标识），不要再问联系方式
-- 避免重复询问已收集的信息：如果用户已提供月薪（如20k、25左右等），不要再问月薪
-- 避免重复询问已收集的信息：如果用户已提供姓氏（如"小张"、"张三"），不要再问"希望对方怎么称呼你"或"怎么称呼你"
-- 姓氏就是用户希望对方如何称呼自己的方式，无需重复询问称呼问题
-- 关键词理解：用户回答"25左右"、"30左右"出现在 income 相关问题后，指的是收入不是年龄
-- 避免重复询问已收集的信息：如果用户已说明用电话，不要再问微信
-- 收集信息是为了后续联系用户，不是为了发送资料
-- 不会主动把别人的资料发给用户看
-- 只收集用户自己的信息
-
-【说话风格参考】
-
-- 回复简洁，不要长篇大论
-- 一次只说一件事，说完等用户回复再继续
-- 语气轻松自然
-- 不要说教式语言
-- 像真人一样聊天，会停顿、会打错字
-- 收集信息时通过自然聊天带出，不要问得太直接
-
-记住：你就是小缘，一位热情、耐心、有温度的真人红娘！
-"""
-
-    def get_stage_prompt(self, stage: int, user_profile: Dict[str, Any]) -> str:
-        """
-        根据收集阶段获取对应的提示话术
-
-        Args:
-            stage: 收集阶段 (1-4)
-            user_profile: 用户信息
+            user_profile: 用户档案
 
         Returns:
-            str: 对应阶段的提示话术
+            bool: 是否应该询问联系方式
         """
-        target_pronoun = self.get_target_reference()
-        user_pronoun = self.get_appropriate_greeting()
+        # 10个核心字段（包括身高、体重）
+        core_fields = ['last_name', 'sex', 'location', 'age', 'education', 'occupation', 'height', 'weight', 'monthly_income', 'marital_status']
 
-        if stage == 1:
-            # 第一阶段：性别与意向确认（隐晦，不暴露收集意图）
-            return f"你好呀~ 我是同城脱单联盟的小缘，很高兴认识你呢~"
+        # 检查所有核心字段是否都已收集
+        for field in core_fields:
+            value = getattr(user_profile, field, None)
+            if value is None or value == '':
+                return False
 
-        elif stage == 2:
-            # 第二阶段：夸奖共情 + 收集基础信息
-            birth_year = user_profile.get('birth_year', '')
-            height = user_profile.get('height', '')
-            weight = user_profile.get('weight', '')
+        # 检查联系方式是否还未收集
+        if user_profile.contact:
+            return False
 
-            if self.user_sex == '女':
-                if birth_year:
-                    return f"哇，{birth_year}年的呀，{height}/{weight}那身材一定很匀称哦，{user_pronoun}平时在哪里工作的呀？"
-                else:
-                    return f"{user_pronoun}是哪一年的呀？好奇你的年龄呢~"
-            else:
-                if birth_year:
-                    return f"{birth_year}年的呀，那刚好成熟稳重呢，{user_pronoun}目前是在哪里呀？做什么职业哒？"
-                else:
-                    return f"{user_pronoun}是哪一年的呀？想多了解你一些呢~"
+        return True
 
-        elif stage == 3:
-            # 第三阶段：建立防线（隐晦说明）
-            return "因为恋爱是双向选择的嘛，想帮你匹配更合适的对象呢~"
+    def is_task_completed(self) -> bool:
+        """检查任务是否完成（已进入任务完成阶段）"""
+        return self.conversation_stage == 3
 
-        elif stage == 4:
-            # 第四阶段：收网索要（隐晦）
-            return f"方便留个联系方式吗？微信或者电话都行~ 方便后续联系你哒 [玫瑰]"
+    def update_conversation_stage(self, user_message: str, collection_progress: float, contact_collected: bool) -> int:
+        """
+        更新对话阶段
 
-        return "嗯嗯～"
+        Args:
+            user_message: 用户当前消息
+            collection_progress: 信息收集进度 (0.0-1.0)
+            contact_collected: 联系方式是否已收集
+
+        Returns:
+            int: 当前对话阶段 (0:破冰, 1:了解, 2:信任, 3:任务完成)
+        """
+        # 保存上一句话
+        self.last_user_message = user_message
+
+        # 如果联系方式已收集，进入任务完成阶段
+        if contact_collected:
+            self.conversation_stage = 3
+            return 3
+
+        # 如果收集进度超过50%，进入信任阶段
+        if collection_progress >= 0.5:
+            self.conversation_stage = 2
+            return 2
+
+        # 如果用户回复非简短内容（超过3个字），进入了解阶段
+        if len(user_message.strip()) > 3:
+            self.conversation_stage = 1
+            return 1
+
+        # 否则保持破（冰）阶段
+        return 0
+
+    def should_end_conversation(self, user_message: str) -> bool:
+        """
+        判断是否应该结束对话
+
+        根据最新要求：
+        - 任务完成后，用户回复确认性内容时
+        - 理解为用户正在礼貌结束对话
+        - 此时只给一次极简收尾（不含问题、表情、延续话题）
+        - 收尾后保持沉默，不再回复
+
+        Args:
+            user_message: 用户当前消息
+
+        Returns:
+            bool: 是否应该结束对话
+        """
+        # 如果任务未完成，不结束
+        if not self.is_task_completed():
+            return False
+
+        # 如果已经给过收尾语，保持沉默
+        if self.has_given_closing:
+            return True  # 返回True表示应该结束（不回复）
+
+        # 如果已给出确认性回复，用户再次回复确认性内容
+        if self.has_given_confirmation:
+            # 检查是否是确认性回复
+            text = user_message.strip().lower()
+            confirmation_keywords = ['好', '嗯', '可以', '行', 'ok', '好的', '嗯嗯']
+            for keyword in confirmation_keywords:
+                if text == keyword or text.startswith(keyword):
+                    return True
+
+        return False
+
+    def should_remain_silent(self) -> bool:
+        """
+        判断是否应该保持沉默（已给过收尾语）
+
+        Returns:
+            bool: 是否应该保持沉默
+        """
+        return self.has_given_closing
+
+    def record_closing_given(self) -> None:
+        """记录已给出收尾语（此后保持沉默）"""
+        self.has_given_closing = True
+
+    def get_closing_message(self) -> str:
+        """
+        获取收尾语（极简，不含问题、表情、延续话题）
+
+        Returns:
+            str: 收尾语
+        """
+        # 极简收尾：不含问题、表情、不延续话题
+        closing_responses = [
+            "好的。",
+            "明白。",
+            "嗯。",
+        ]
+        import random
+        return random.choice(closing_responses)
+
+    def record_confirmation_given(self) -> None:
+        """记录已给出确认性回复"""
+        self.has_given_confirmation = True
+
+    def get_conversation_stage_name(self) -> str:
+        """获取当前对话阶段的名称"""
+        stage_names = {
+            0: "破冰阶段",
+            1: "了解阶段",
+            2: "信任阶段",
+            3: "任务完成阶段"
+        }
+        return stage_names.get(self.conversation_stage, "未知阶段")
 
     def handle_no_response(self, user_gender: Optional[str] = None) -> str:
         """
@@ -445,6 +454,9 @@ class PersonalityProfile:
             "user_sex": self.user_sex,
             "target_gender": self.target_gender,
             "collection_stage": self.collection_stage,
+            "conversation_stage": self.conversation_stage,
+            "has_given_confirmation": self.has_given_confirmation,
+            "has_given_closing": self.has_given_closing,
             "knowledge_areas": [
                 "恋爱心理学",
                 "人际关系",
@@ -467,5 +479,10 @@ class PersonalityProfile:
         profile.experience_years = data.get("experience_years", 5)
         profile.user_sex = data.get("user_sex")
         profile.target_gender = data.get("target_gender")
-        profile.collection_stage = data.get("collection_stage", 0)
+        # 对话阶段相关字段
+        profile.conversation_stage = data.get("conversation_stage", 0)
+        profile.last_user_message = data.get("last_user_message")
+        profile.last_user_emotion = data.get("last_user_emotion")
+        profile.has_given_confirmation = data.get("has_given_confirmation", False)
+        profile.has_given_closing = data.get("has_given_closing", False)
         return profile

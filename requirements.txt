@@ -40,3 +40,15 @@ typing_extensions==4.15.0
 urllib3==2.6.3
 uvicorn==0.40.0
 volcengine==1.0.214
+redis==5.2.1
+hiredis==3.1.0
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.2
+pytest-cov==6.0.0
+pytest-mock==3.14.0
+
+# Performance Testing
+psutil==6.1.1
+locust==2.33.2

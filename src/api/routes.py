@@ -1,271 +1,210 @@
-"""API routes for the application"""
+"""API routes initialization - Refactored for better maintainability"""
 
 import logging
-from typing import Dict, Any
-from datetime import datetime
-from fastapi import FastAPI, HTTPException, Depends
+import os
+import atexit
+import asyncio
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.models.requests import (
-    ChatRequest,
-    HealthCheckResponse,
-    ChatResponse,
-    ErrorResponse,
-    UserProfileRequest,
-    ConversationHistoryRequest,
-    UserInsightsResponse
-)
-from src.models.personality import PersonalityProfile
 from src.services.ai_service import AIService
 from src.services.user_service import UserService
 from src.services.chat_service import ChatService
+from src.services.redis_service import redis_service
 from src.config.settings import settings
+from src.config.components.cors_config import CORSConfig
+from src.config.validator import validate_config_on_startup, ConfigValidationError
+from src.core.error_handler import global_exception_handler
+
+# Import route modules
+from src.api.routes import (
+    health_router,
+    chat_router,
+    conversation_router,
+    user_router,
+    system_router
+)
+
+# Import v1 routes (keep for compatibility)
+from src.api.v1 import chat as chat_v1
+from src.api.middleware.auth import verify_jwt_token
+
+# Import middleware
+from src.api.middleware.concurrency import ConcurrencyMiddleware
+from src.api.middleware.error_handling import ErrorHandlingMiddleware
 
 # Set up logging
 logging.basicConfig(level=getattr(logging, settings.log_level))
 logger = logging.getLogger(__name__)
 
-# Initialize services
+# ============================================================================
+# CORS Configuration (统一配置管理)
+# ============================================================================
+
+# 从环境变量加载 CORS 配置
+cors_config = CORSConfig.from_env()
+
+# 如果没有配置源地址，记录警告
+if not cors_config.get_origins_list():
+    logger.warning("No ALLOWED_ORIGINS configured. Using localhost only. Set ALLOWED_ORIGINS in .env for production.")
+
+# ============================================================================
+# Application Initialization
+# ============================================================================
+
+app = FastAPI(
+    title=settings.app_name,
+    description="AI红娘小缘 - 帮助单身男女脱单的智能服务",
+    version=settings.app_version,
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# ============================================================================
+# Middleware Configuration
+# ============================================================================
+
+# CORS middleware (使用统一配置)
+app.add_middleware(CORSMiddleware, **cors_config.to_middleware_kwargs())
+
+# Error handling middleware (统一错误处理)
+app.add_middleware(
+    ErrorHandlingMiddleware,
+    enable_logging=True,
+    enable_tracing=True,
+    debug_mode=settings.debug_mode if hasattr(settings, 'debug_mode') else False
+)
+
+# Concurrency middleware (rate limiting)
+app.add_middleware(ConcurrencyMiddleware, enabled=settings.rate_limit_enabled)
+
+# ============================================================================
+# Service Initialization
+# ============================================================================
+
 ai_service = AIService()
 user_service = UserService()
 chat_service = ChatService(ai_service, user_service)
 
-# Initialize FastAPI app
-app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    description="小缘（同城脱单联盟）AI红娘服务API"
-)
+# ============================================================================
+# Route Registration
+# ============================================================================
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Include all route modules
+app.include_router(health_router)
+app.include_router(chat_router)
+app.include_router(conversation_router)
+app.include_router(user_router)
+app.include_router(system_router)
 
+# Include v1 routes for backward compatibility
+app.include_router(chat_v1.router, prefix="/api/v1")
 
-@app.get("/")
-@app.get("/health")
-async def health_check() -> HealthCheckResponse:
-    """Health check endpoint"""
+# ============================================================================
+# Error Handlers
+# ============================================================================
+
+# Global exception handlers
+app.add_exception_handler(Exception, global_exception_handler)
+
+# ============================================================================
+# Lifecycle Events
+# ============================================================================
+
+async def async_cleanup_resources():
+    """Async cleanup function to close all service connections"""
     try:
-        # Check AI service health
-        ai_healthy = await ai_service.health_check()
+        # Close AI service client
+        await ai_service.close()
+        logger.info("AI service client closed successfully")
+    except Exception as e:
+        logger.error(f"Error closing AI service client: {e}")
 
-        if ai_healthy:
-            return HealthCheckResponse(
-                status="ok",
-                message="小缘红娘服务运行中🌸",
-                version=settings.app_version
-            )
+    # Close Redis connection
+    if redis_service.is_enabled():
+        try:
+            await redis_service.close()
+            logger.info("Redis connection closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing Redis connection: {e}")
+
+
+def cleanup_resources():
+    """Cleanup function to close AI service client"""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If loop is running, create a task
+            loop.create_task(async_cleanup_resources())
         else:
-            return HealthCheckResponse(
-                status="degraded",
-                message="服务运行中，但AI服务有问题",
-                version=settings.app_version
-            )
-
+            # If loop is not running, run directly
+            loop.run_until_complete(async_cleanup_resources())
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        raise HTTPException(status_code=500, detail="服务健康检查失败")
+        logger.error(f"Error in cleanup_resources: {e}")
 
 
-@app.post("/api/doubao/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
-    """Chat endpoint"""
+# Register cleanup function
+atexit.register(cleanup_resources)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Startup event handler"""
     try:
-        logger.info(f"Processing chat request from user: {request.accountId}")
+        # Validate configuration
+        validate_config_on_startup()
 
-        # Process the chat request
-        result = await chat_service.process_chat_request(request)
+        # Initialize route modules with services
+        from src.api.routes.health import init_services as init_health
+        from src.api.routes.chat import init_service as init_chat
+        from src.api.routes.conversation import init_service as init_conversation
+        from src.api.routes.user import init_service as init_user
+        from src.api.routes.system import init_service as init_system
 
-        # Convert to response model
-        return ChatResponse(**result)
+        init_health(ai_service, user_service, chat_service)
+        init_chat(chat_service)
+        init_conversation(chat_service)
+        init_user(chat_service)
+        init_system(user_service)
 
-    except ValueError as e:
-        logger.warning(f"Validation error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.info(f"{settings.app_name} v{settings.app_version} started successfully")
+        logger.info(f"Health check available at: http://localhost:8000/health")
+        logger.info(f"API documentation available at: http://localhost:8000/docs")
+
+    except ConfigValidationError as e:
+        logger.error(f"Configuration validation failed: {e}")
+        raise
     except Exception as e:
-        logger.error(f"Chat processing error: {e}")
-        raise HTTPException(status_code=500, detail="处理聊天请求时出错")
+        logger.error(f"Startup failed: {e}")
+        raise
 
 
-@app.post("/api/doubao/welcome")
-async def welcome(user_id: str) -> Dict[str, Any]:
-    """Welcome endpoint for new users"""
-    try:
-        logger.info(f"Generating welcome for user: {user_id}")
-
-        # Generate welcome message
-        result = await chat_service.generate_welcome_message(user_id)
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Welcome generation error: {e}")
-        raise HTTPException(status_code=500, detail="生成欢迎消息时出错")
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Shutdown event handler"""
+    logger.info("Shutting down application...")
+    await async_cleanup_resources()
+    logger.info("Application shutdown complete")
 
 
-@app.post("/api/doubao/feedback")
-async def feedback(
-    user_id: str,
-    message: str,
-    rating: int,
-    feedback_type: str = "response"
-) -> Dict[str, Any]:
-    """Feedback endpoint"""
-    try:
-        logger.info(f"Processing feedback from user: {user_id}")
+# ============================================================================
+# Root Endpoint
+# ============================================================================
 
-        # Process feedback
-        result = await chat_service.process_user_feedback(
-            user_id, message, rating, feedback_type
-        )
-
-        return result
-
-    except ValueError as e:
-        logger.warning(f"Feedback validation error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Feedback processing error: {e}")
-        raise HTTPException(status_code=500, detail="处理反馈时出错")
-
-
-@app.get("/api/doubao/history")
-async def get_conversation_history(
-    user_id: str,
-    limit: int = 10,
-    offset: int = 0
-) -> Dict[str, Any]:
-    """Get conversation history endpoint"""
-    try:
-        logger.info(f"Getting history for user: {user_id}")
-
-        # Get conversation history
-        result = await chat_service.get_user_conversation_history(
-            user_id, limit, offset
-        )
-
-        return result
-
-    except Exception as e:
-        logger.error(f"History retrieval error: {e}")
-        raise HTTPException(status_code=500, detail="获取对话历史时出错")
-
-
-@app.get("/api/doubao/profile/{user_id}")
-async def get_user_profile(user_id: str) -> Dict[str, Any]:
-    """Get user profile endpoint"""
-    try:
-        logger.info(f"Getting profile for user: {user_id}")
-
-        # Get user profile
-        result = await chat_service.get_user_profile(user_id)
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Profile retrieval error: {e}")
-        raise HTTPException(status_code=500, detail="获取用户资料时出错")
-
-
-@app.post("/api/doubao/reset")
-async def reset_conversation(user_id: str) -> Dict[str, Any]:
-    """Reset conversation endpoint"""
-    try:
-        logger.info(f"Resetting conversation for user: {user_id}")
-
-        # Reset conversation
-        result = await chat_service.reset_user_conversation(user_id)
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Conversation reset error: {e}")
-        raise HTTPException(status_code=500, detail="重置对话时出错")
-
-
-@app.get("/api/doubao/stats")
-async def get_statistics() -> Dict[str, Any]:
-    """Get service statistics endpoint"""
-    try:
-        logger.info("Getting service statistics")
-
-        # Get user statistics
-        stats = user_service.get_user_statistics()
-
-        return {
-            "success": True,
-            "statistics": stats,
-            "timestamp": datetime.now().isoformat()
-        }
-
-    except Exception as e:
-        logger.error(f"Statistics retrieval error: {e}")
-        raise HTTPException(status_code=500, detail="获取统计信息时出错")
-
-
-@app.get("/api/doubao/personality")
-async def get_personality_profile() -> Dict[str, Any]:
-    """Get personality profile endpoint"""
-    try:
-        # Get personality profile
-        personality = PersonalityProfile()
-
-        return {
-            "success": True,
-            "personality": personality.to_dict(),
-            "timestamp": datetime.now().isoformat()
-        }
-
-    except Exception as e:
-        logger.error(f"Personality retrieval error: {e}")
-        raise HTTPException(status_code=500, detail="获取人格设定时出错")
-
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    """Custom HTTP exception handler"""
-    return ErrorResponse(
-        success=False,
-        error=exc.detail,
-        error_code=f"HTTP_{exc.status_code}",
-        details={"status_code": exc.status_code}
-    )
-
-
-@app.exception_handler(Exception)
-async def general_exception_handler(request, exc):
-    """General exception handler"""
-    logger.error(f"Unhandled exception: {exc}")
-    return ErrorResponse(
-        success=False,
-        error="内部服务器错误",
-        error_code="INTERNAL_ERROR"
-    )
-
-
-# Root endpoint for basic info
-@app.get("/api")
-async def api_info() -> Dict[str, Any]:
-    """API information endpoint"""
+@app.get("/", tags=["根路径"])
+async def root():
+    """Root endpoint"""
     return {
         "service": settings.app_name,
         "version": settings.app_version,
-        "endpoints": {
-            "chat": "/api/doubao/chat",
-            "welcome": "/api/doubao/welcome",
-            "feedback": "/api/doubao/feedback",
-            "history": "/api/doubao/history",
-            "profile": "/api/doubao/profile/{user_id}",
-            "reset": "/api/doubao/reset",
-            "stats": "/api/doubao/stats",
-            "personality": "/api/doubao/personality",
-            "health": "/health"
-        },
-        "timestamp": datetime.now().isoformat()
+        "status": "running",
+        "docs": "/docs",
+        "health": "/health"
     }
+
+
+# ============================================================================
+# Export
+# ============================================================================
+
+__all__ = ["app"]

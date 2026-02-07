@@ -5,23 +5,28 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="dab58ba2-b9a5-4583-a575-0c0dcae04bd8" name="Changes" comment="Changes">
-      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/doubao_mcp_server.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/doubao_mcp_server.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.run/PyCharm_Run_Configuration.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/pytest.ini" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.github/workflows/build-windows.yml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/api/routes.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/api/routes.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/config/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/config/portable_config.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/settings.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/config/validators.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/src/models/personality.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/personality.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/models/requests.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/requests.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/models/user_profile.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/user_profile.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/models/user_state.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/user_state.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/services/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/ai_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/ai_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/chat_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/chat_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/info_collector.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/info_collector.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/utils/input_analyzer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/input_analyzer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/web_tool.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/小缘Web工具.spec" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/services/info_collector.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/services/user_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/user_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test_chat.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/unit/test_services.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_services.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -198,6 +203,101 @@
       <workItem from="1769766264707" duration="2345000" />
       <workItem from="1769771922846" duration="1658000" />
       <workItem from="1769773656189" duration="5055000" />
+      <workItem from="1769839137197" duration="691000" />
+      <workItem from="1769839853563" duration="9029000" />
+      <workItem from="1769852257534" duration="16941000" />
+      <workItem from="1769949638556" duration="5943000" />
+      <workItem from="1769956261911" duration="5963000" />
+      <workItem from="1770013232769" duration="566000" />
+      <workItem from="1770013813786" duration="8949000" />
+      <workItem from="1770034844929" duration="6304000" />
+      <workItem from="1770041582159" duration="962000" />
+      <workItem from="1770042646306" duration="2311000" />
+      <workItem from="1770045314722" duration="221000" />
+      <workItem from="1770045596958" duration="213000" />
+      <workItem from="1770045823482" duration="777000" />
+      <workItem from="1770046619919" duration="3076000" />
+      <workItem from="1770085256609" duration="683000" />
+      <workItem from="1770085954958" duration="466000" />
+      <workItem from="1770086434407" duration="488000" />
+      <workItem from="1770087009441" duration="210000" />
+      <workItem from="1770087233218" duration="351000" />
+      <workItem from="1770087601655" duration="185000" />
+      <workItem from="1770088632784" duration="592000" />
+      <workItem from="1770089237383" duration="579000" />
+      <workItem from="1770089861771" duration="217000" />
+      <workItem from="1770090090594" duration="65000" />
+      <workItem from="1770090166836" duration="338000" />
+      <workItem from="1770090518989" duration="599000" />
+      <workItem from="1770091128866" duration="662000" />
+      <workItem from="1770091804266" duration="674000" />
+      <workItem from="1770092493271" duration="792000" />
+      <workItem from="1770098482713" duration="898000" />
+      <workItem from="1770103190012" duration="3941000" />
+      <workItem from="1770107782489" duration="324000" />
+      <workItem from="1770108121562" duration="436000" />
+      <workItem from="1770108570175" duration="339000" />
+      <workItem from="1770108923695" duration="271000" />
+      <workItem from="1770109209078" duration="191000" />
+      <workItem from="1770109677338" duration="810000" />
+      <workItem from="1770110510981" duration="504000" />
+      <workItem from="1770111031486" duration="72000" />
+      <workItem from="1770111116535" duration="5643000" />
+      <workItem from="1770116835472" duration="12804000" />
+      <workItem from="1770179487224" duration="3548000" />
+      <workItem from="1770192931340" duration="3987000" />
+      <workItem from="1770197517818" duration="2247000" />
+      <workItem from="1770199981255" duration="465000" />
+      <workItem from="1770200945100" duration="1502000" />
+      <workItem from="1770202469623" duration="1912000" />
+      <workItem from="1770204412789" duration="620000" />
+      <workItem from="1770205049392" duration="195000" />
+      <workItem from="1770205257323" duration="245000" />
+      <workItem from="1770205513297" duration="99000" />
+      <workItem from="1770205633100" duration="177000" />
+      <workItem from="1770205828651" duration="2437000" />
+      <workItem from="1770208288508" duration="801000" />
+      <workItem from="1770209103960" duration="466000" />
+      <workItem from="1770209586072" duration="748000" />
+      <workItem from="1770210349631" duration="540000" />
+      <workItem from="1770210903621" duration="4000" />
+      <workItem from="1770210926544" duration="227000" />
+      <workItem from="1770211185189" duration="1946000" />
+      <workItem from="1770257633248" duration="867000" />
+      <workItem from="1770258518553" duration="2474000" />
+      <workItem from="1770263624589" duration="1054000" />
+      <workItem from="1770264997173" duration="10916000" />
+      <workItem from="1770280497126" duration="466000" />
+      <workItem from="1770280975733" duration="272000" />
+      <workItem from="1770281286300" duration="336000" />
+      <workItem from="1770281637669" duration="5712000" />
+      <workItem from="1770287745369" duration="2528000" />
+      <workItem from="1770290293632" duration="1226000" />
+      <workItem from="1770291535233" duration="1682000" />
+      <workItem from="1770344097891" duration="203000" />
+      <workItem from="1770344313829" duration="13400000" />
+      <workItem from="1770364213032" duration="319000" />
+      <workItem from="1770364543230" duration="397000" />
+      <workItem from="1770364954071" duration="1340000" />
+      <workItem from="1770366308156" duration="40000" />
+      <workItem from="1770366360945" duration="120000" />
+      <workItem from="1770366494826" duration="133000" />
+      <workItem from="1770366650986" duration="502000" />
+      <workItem from="1770367165726" duration="751000" />
+      <workItem from="1770368780799" duration="350000" />
+      <workItem from="1770369144193" duration="266000" />
+      <workItem from="1770369422985" duration="1228000" />
+      <workItem from="1770370670861" duration="588000" />
+      <workItem from="1770371305857" duration="123000" />
+      <workItem from="1770371491778" duration="2604000" />
+      <workItem from="1770374116646" duration="168000" />
+      <workItem from="1770374300683" duration="3000000" />
+      <workItem from="1770377325444" duration="14015000" />
+      <workItem from="1770451310940" duration="1672000" />
+      <workItem from="1770453005631" duration="69000" />
+      <workItem from="1770453088527" duration="241000" />
+      <workItem from="1770453344026" duration="209000" />
+      <workItem from="1770453565513" duration="1696000" />
     </task>
     <servers />
   </component>
@@ -217,7 +317,7 @@
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/doubao_mcp_server$run_service.coverage" NAME="run_service Coverage Results" MODIFIED="1769423718356" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/doubao_mcp_server$main.coverage" NAME="main 覆盖结果" MODIFIED="1769674949104" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/doubao_mcp_server$main.coverage" NAME="main 覆盖结果" MODIFIED="1770204678673" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/doubao_mcp_server$routes.coverage" NAME="routes Coverage Results" MODIFIED="1769424688037" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/api" />
   </component>
 </project>

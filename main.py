@@ -5,18 +5,25 @@ import sys
 import uvicorn
 from src.api.routes import app
 from src.config.settings import settings
+from src.config.components.network_config import NetworkConfig
 import logging
 
-# Disable proxy to avoid network issues
-os.environ['NO_PROXY'] = '*'
-os.environ['HTTP_PROXY'] = ''
-os.environ['HTTPS_PROXY'] = ''
+# ============================================================================
+# Python Path Setup
+# ============================================================================
 
-# Ensure src directory is in Python path
 project_root = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(project_root, 'src')
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
+
+# ============================================================================
+# Network Configuration
+# ============================================================================
+
+# Apply network configuration (proxy settings)
+network_config = NetworkConfig.from_env()
+network_config.apply_to_environment()
 
 def setup_logging():
     """Set up logging configuration"""

@@ -2,7 +2,14 @@
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+import re
+
+
+def clean_surrogate_pairs(text: str) -> str:
+    """清理字符串中的代理对字符"""
+    # 编码为 UTF-8，忽略无效字符，然后解码回来
+    return text.encode('utf-8', errors='ignore').decode('utf-8')
 
 
 class ChatRequest(BaseModel):
@@ -14,21 +21,34 @@ class ChatRequest(BaseModel):
     sex: str = Field("女", description="用户性别")
     timestamp: Optional[str] = Field(None, description="时间戳")
 
-    @validator('question')
+    @model_validator(mode='before')
+    @classmethod
+    def clean_strings(cls, data):
+        """清理字符串中的无效 Unicode 字符"""
+        if isinstance(data, dict):
+            for key in ['question', 'accountId', 'dialogId']:
+                if key in data and isinstance(data[key], str):
+                    data[key] = clean_surrogate_pairs(data[key])
+        return data
+
+    @field_validator('question')
+    @classmethod
     def validate_question(cls, v):
         """Validate question"""
         if not v or not v.strip():
             raise ValueError("Question cannot be empty")
         return v.strip()
 
-    @validator('accountId')
+    @field_validator('accountId')
+    @classmethod
     def validate_account_id(cls, v):
         """Validate account ID"""
         if not v or not v.strip():
             raise ValueError("Account ID cannot be empty")
         return v.strip()
 
-    @validator('sex')
+    @field_validator('sex')
+    @classmethod
     def validate_sex(cls, v):
         """Validate sex"""
         valid_values = ["男", "女", "other", "unknown"]
@@ -36,7 +56,8 @@ class ChatRequest(BaseModel):
             raise ValueError(f"Sex must be one of: {valid_values}")
         return v
 
-    @validator('timestamp')
+    @field_validator('timestamp')
+    @classmethod
     def validate_timestamp(cls, v):
         """Validate timestamp"""
         if v:
@@ -45,11 +66,6 @@ class ChatRequest(BaseModel):
             except ValueError:
                 raise ValueError("Invalid timestamp format")
         return v
-
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class UserPreferenceRequest(BaseModel):

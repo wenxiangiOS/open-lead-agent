@@ -30,7 +30,7 @@ class UserProfile(BaseModel):
     # 待收集的信息（初始为 None）- 按优先级顺序
     sex: Optional[str] = Field(None, description="性别（男/女）- 首要收集")
     last_name: Optional[str] = Field(None, description="姓氏（对方希望怎么称呼自己）")
-    birth_year: Optional[int] = Field(None, description="出生年份")
+    age: Optional[int] = Field(None, description="年龄（数字）")
     height: Optional[str] = Field(None, description="身高（例如：165cm）")
     weight: Optional[str] = Field(None, description="体重（例如：55kg）")
     location: Optional[str] = Field(None, description="坐标/所在地（城市/地区）")
@@ -45,7 +45,7 @@ class UserProfile(BaseModel):
         default_factory=lambda: {
             "sex": False,
             "last_name": False,
-            "birth_year": False,
+            "age": False,
             "height": False,
             "weight": False,
             "location": False,
@@ -62,6 +62,12 @@ class UserProfile(BaseModel):
     error_count: Dict[str, int] = Field(
         default_factory=dict,
         description="各字段错误提醒次数"
+    )
+
+    # 跳过的字段（用户拒绝提供的字段）
+    skipped_fields: Dict[str, bool] = Field(
+        default_factory=dict,
+        description="用户拒绝提供、永久跳过的字段"
     )
 
     @validator('sex')
@@ -87,17 +93,20 @@ class UserProfile(BaseModel):
                 return cleaned
         return v
 
-    @validator('birth_year')
-    def validate_birth_year(cls, v):
-        """验证出生年份"""
+    @validator('age')
+    def validate_age(cls, v):
+        """验证年龄"""
         if v is not None:
             if isinstance(v, str):
-                try:
-                    v = int(v)
-                except ValueError:
+                v = str(v).strip()
+                # 提取数字（支持"28岁"格式）
+                import re
+                match = re.search(r'(\d+)', v)
+                if match:
+                    v = int(match.group(1))
+                else:
                     return None
-            current_year = datetime.now().year
-            if 1960 <= v <= current_year:
+            if 18 <= v <= 100:
                 return v
         return v
 
@@ -149,8 +158,8 @@ class UserProfile(BaseModel):
                 validated = self.validate_contact(value)
             elif field_name == 'sex':
                 validated = self.validate_sex(value)
-            elif field_name == 'birth_year':
-                validated = self.validate_birth_year(value)
+            elif field_name == 'age':
+                validated = self.validate_age(value)
             elif field_name == 'height':
                 validated = self.validate_height(value)
             elif field_name == 'weight':
@@ -163,6 +172,10 @@ class UserProfile(BaseModel):
 
             # 只有值不为 None 时才更新
             if validated is not None and validated != "":
+                # 调试：检查 last_name 是否被设置为拼接字符串
+                if field_name == 'last_name' and '/' in str(validated):
+                    import logging
+                    logging.getLogger(__name__).warning(f"last_name 被设置为拼接字符串: {validated}")
                 setattr(self, field_name, validated)
                 self.collection_progress[field_name] = True
                 self.updated_at = datetime.now()
@@ -179,23 +192,37 @@ class UserProfile(BaseModel):
         """
         获取收集进度（百分比）
 
+        跳过的字段视为已完成，计入进度
+
         Returns:
             float: 收集进度 0.0 - 1.0
         """
         completed = sum(1 for status in self.collection_progress.values() if status)
+        skipped = len(self.skipped_fields)
         total = len(self.collection_progress)
-        return completed / total if total > 0 else 0.0
+        return (completed + skipped) / total if total > 0 else 0.0
+
+    def is_collection_complete(self) -> bool:
+        """
+        检查信息收集是否完成
+
+        Returns:
+            bool: 是否已完成收集（进度 >= 90%）
+        """
+        return self.get_progress() >= 0.9
 
     def get_missing_fields(self) -> list:
         """
         获取未收集的字段
+
+        不包括已跳过的字段
 
         Returns:
             list: 未收集的字段名列表
         """
         return [
             field for field, collected in self.collection_progress.items()
-            if not collected
+            if not collected and field not in self.skipped_fields
         ]
 
     def get_next_field_to_collect(self) -> Optional[str]:
@@ -203,6 +230,7 @@ class UserProfile(BaseModel):
         获取下一个需要收集的字段
 
         按照收集优先级顺序返回未收集的字段
+        跳过已被用户拒绝提供的字段
 
         Returns:
             Optional[str]: 下一个要收集的字段名
@@ -211,7 +239,7 @@ class UserProfile(BaseModel):
         priority_order = [
             'sex',  # 性别 - 首要
             'last_name',  # 姓氏 - 对方希望怎么称呼
-            'birth_year',  # 出生年
+            'age',  # 年龄
             'height',  # 身高
             'weight',  # 体重
             'location',  # 坐标
@@ -223,7 +251,10 @@ class UserProfile(BaseModel):
         ]
 
         for field in priority_order:
-            if not self.collection_progress.get(field, False):
+            # 检查是否已收集或已跳过
+            is_collected = self.collection_progress.get(field, False)
+            is_skipped = self.skipped_fields.get(field, False)
+            if not is_collected and not is_skipped:
                 return field
 
         return None
@@ -253,11 +284,15 @@ class UserProfile(BaseModel):
 
     def get_greeting(self) -> str:
         """
-        根据已收集的信息生成合适的问候语
+        根据已收集的信息生成合适的称呼
 
         Returns:
-            str: 问候语
+            str: 称呼（优先使用性别称呼"小哥哥"/"小姐姐"，其次考虑姓氏）
         """
+        # 称呼规则：
+        # 1. 性别称呼为基础（小哥哥/小姐姐）- 这是主要称呼方式
+        # 2. last_name（用户提供的昵称）仅作为补充，不替代性别称呼
+
         if self.sex == '男':
             return "小哥哥"
         elif self.sex == '女':
@@ -273,7 +308,7 @@ class UserProfile(BaseModel):
             "updated_at": self.updated_at.isoformat(),
             "sex": self.sex,
             "last_name": self.last_name,
-            "birth_year": self.birth_year,
+            "age": self.age,
             "height": self.height,
             "weight": self.weight,
             "location": self.location,
@@ -285,6 +320,7 @@ class UserProfile(BaseModel):
             "collection_progress": self.collection_progress,
             "progress_percentage": round(self.get_progress() * 100, 2),
             "missing_fields": self.get_missing_fields(),
+            "skipped_fields": self.skipped_fields,
         }
 
     def get_collection_summary(self) -> str:
