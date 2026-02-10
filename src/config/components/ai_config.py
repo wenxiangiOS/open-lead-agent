@@ -65,8 +65,10 @@ class AIConfig(BaseModel):
     @classmethod
     def validate_model_name(cls, v: str) -> str:
         """验证模型名称"""
-        if not v.startswith('doubao-'):
-            raise ValueError(f'MODEL_NAME 必须以 doubao- 开头，当前值: {v}')
+        # 支持豆包和 GLM 模型
+        valid_prefixes = ('doubao-', 'glm-', 'gpt-')
+        if not any(v.startswith(prefix) for prefix in valid_prefixes):
+            raise ValueError(f'MODEL_NAME 必须以 doubao-、glm- 或 gpt- 开头，当前值: {v}')
 
         return v
 

@@ -5,28 +5,11 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="dab58ba2-b9a5-4583-a575-0c0dcae04bd8" name="Changes" comment="Changes">
-      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.github/workflows/build-windows.yml" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/api/routes.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/api/routes.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/config/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/config/portable_config.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/settings.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/config/validators.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/models/personality.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/personality.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/models/requests.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/requests.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/config/components/ai_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/components/ai_config.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/models/user_profile.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/user_profile.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/models/user_state.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/user_state.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/ai_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/ai_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/chat_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/chat_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/info_collector.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/user_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/user_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/utils/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test_chat.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_services.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_services.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -297,7 +280,19 @@
       <workItem from="1770453005631" duration="69000" />
       <workItem from="1770453088527" duration="241000" />
       <workItem from="1770453344026" duration="209000" />
-      <workItem from="1770453565513" duration="1696000" />
+      <workItem from="1770453565513" duration="2379000" />
+      <workItem from="1770459765785" duration="4533000" />
+      <workItem from="1770696279440" duration="1355000" />
+      <workItem from="1770697652141" duration="230000" />
+      <workItem from="1770697900744" duration="79000" />
+      <workItem from="1770698003759" duration="190000" />
+      <workItem from="1770698209882" duration="52000" />
+      <workItem from="1770698272869" duration="48000" />
+      <workItem from="1770698334938" duration="699000" />
+      <workItem from="1770703113967" duration="407000" />
+      <workItem from="1770703535987" duration="801000" />
+      <workItem from="1770704352650" duration="21000" />
+      <workItem from="1770704387118" duration="3459000" />
     </task>
     <servers />
   </component>

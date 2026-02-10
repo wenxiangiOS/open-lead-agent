@@ -211,6 +211,19 @@ class UserProfile(BaseModel):
         """
         return self.get_progress() >= 0.9
 
+    def is_empty(self) -> bool:
+        """
+        检查用户档案是否为空（全新用户）
+
+        Returns:
+            bool: 是否为空（所有关键字段都是 None）
+        """
+        # 检查所有关键字段是否都为空
+        key_fields = ['sex', 'last_name', 'age', 'height', 'weight',
+                      'location', 'education', 'marital_status',
+                      'monthly_income', 'occupation', 'contact']
+        return all(getattr(self, field) is None for field in key_fields)
+
     def get_missing_fields(self) -> list:
         """
         获取未收集的字段

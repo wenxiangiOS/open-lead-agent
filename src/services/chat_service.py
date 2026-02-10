@@ -85,6 +85,14 @@ class ChatService:
             # 1. 获取用户档案
             user_profile = await self.user_service.get_user_profile(account_id)
 
+            # 1.5. 如果用户档案为空（全新用户），重置无意义输入计数器
+            # 这确保用户数据过期后，重新开始对话时不会受到之前计数的影响
+            is_empty = user_profile.is_empty()
+            logger.info(f"[用户档案检查] account_id={account_id}, is_empty={is_empty}, last_name={user_profile.last_name}")
+            if is_empty:
+                await self._reset_nonsense_count(account_id)
+                logger.info(f"[全新用户] 已重置无意义输入计数器: {account_id}")
+
             # 2. 检查信息是否已收集完成且用户只回复确认词（如"嗯"、"好"）
             # 如果是，直接返回空响应，避免死循环
             if user_profile.is_collection_complete():
@@ -510,32 +518,44 @@ class ChatService:
             bool: 是否是无意义输入
         """
         import re
+        import logging
         from src.services.redis_service import redis_service
 
+        logger = logging.getLogger(__name__)
         text_stripped = text.strip()
 
         # 跳过纯中文输入（认为是有意义的）
         # 简化检查：如果主要是中文，认为是有意义的
         chinese_chars = re.findall(r'[\u4e00-\u9fa5]', text_stripped)
         if len(chinese_chars) >= len(text_stripped) * 0.5 and len(text_stripped) > 3:
+            logger.info(f"[无意义检测] 通过中文检查: {text_stripped}")
             return False
 
         # 1. 长度过短（1-2个字符且不是有意义的内容）
         if len(text_stripped) <= 2:
             # 检查是否是中文或英文单词
-            if not re.search(r'[\u4e00-\u9fa5]{2,}|[a-zA-Z]{2,}', text_stripped):
+            pattern = r'[\u4e00-\u9fa5]{2,}|[a-zA-Z]{2,}'
+            match = re.search(pattern, text_stripped)
+            logger.info(f"[无意义检测] 短输入 '{text_stripped}' (len={len(text_stripped)}) 正则匹配: {match}")
+            if not match:
+                logger.info(f"[无意义检测] 判定为无意义: {text_stripped}")
                 return True
+            else:
+                logger.info(f"[无意义检测] 判定为有意义: {text_stripped}，返回 False")
+                return False  # 明确返回 False！
 
         # 2. 大量表情符号/特殊字符（超过内容的30%）
+        # 注意：使用范围时必须精确，避免包含中文字符
         emoji_pattern = re.compile(
             '[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF'
-            '\U00002702-\U000027B0\U000024C2-\U0001F251'
-            '\u2600-\u26FF\u2700-\u27BF]'
+            '\U00002702-\U000027B0\U000024C2-\U000027BF'
+            '\u2600-\u26FF]'
         )
         emoji_count = len(emoji_pattern.findall(text_stripped))
         if emoji_count > 0 and len(text_stripped) > 0:
             emoji_ratio = emoji_count / len(text_stripped)
             if emoji_ratio > 0.3:
+                logger.info(f"[无意义检测] 表情符号过多: {text_stripped}")
                 return True
 
         # 3. 纯数字或数字+符号（且不是手机号、年龄等有意义的数字）
@@ -544,17 +564,18 @@ class ChatService:
             if not re.match(r'^1[3-9]\d{9}$', re.sub(r'\s+', '', text_stripped)):
                 return True
 
-        # 4. 键盘乱敲检测 - 优先检测！
+        # 4. 键盘乱敲检测 - 只检测字母键盘乱敲
         # 检测模式：连续键盘上相邻的字母（如 "rtyui", "asdfg", "qwerty"）
+        # 不检测数字序列，因为手机号等正常数字可能包含连续数字
         keyboard_sequences = [
             'qwertyuiop', 'asdfghjkl', 'zxcvbnm',
-            '1234567890', '0987654321',
             'qwer', 'asdf', 'zxcv', 'tyui', 'ghjk', 'bnm',
             'rtyu', 'fghj', 'cvbn', 'yuiop', 'hjkl'
         ]
         text_lower = text_stripped.lower()
         for seq in keyboard_sequences:
             if seq in text_lower or seq[::-1] in text_lower:
+                logger.info(f"[无意义检测] 键盘乱敲: {text_stripped}")
                 return True
 
         # 5. 字母数字混合乱码 - 新的检测方法！
@@ -563,11 +584,14 @@ class ChatService:
             # 检查是否是字母数字混合
             has_letter = bool(re.search(r'[a-zA-Z]', text_stripped))
             has_digit = bool(re.search(r'\d', text_stripped))
+            logger.info(f"[无意义检测] 字母数字检查: has_letter={has_letter}, has_digit={has_digit}")
 
             if has_letter and has_digit:
                 # 方法1：检测是否有重复的短模式（2-4字符）
+                # 排除常见的数字组合（如年龄、体重等）
+                # 只有当重复模式占比很高时才认为是乱码
                 for pattern_len in range(2, 5):
-                    if len(text_stripped) >= pattern_len * 2:
+                    if len(text_stripped) >= pattern_len * 3:  # 提高阈值：至少出现3次
                         patterns = []
                         for i in range(len(text_stripped) - pattern_len + 1):
                             pattern = text_stripped[i:i + pattern_len].lower()
@@ -577,8 +601,9 @@ class ChatService:
                         from collections import Counter
                         pattern_counts = Counter(patterns)
                         for pattern, count in pattern_counts.items():
-                            if count >= 2 and pattern.isalnum():
-                                # 找到重复模式
+                            # 重复至少3次且是字母数字混合才认为是乱码
+                            if count >= 3 and pattern.isalnum() and any(c.isalpha() for c in pattern) and any(c.isdigit() for c in pattern):
+                                logger.info(f"[无意义检测] 重复模式(字母数字混合): {pattern} count={count}")
                                 return True
 
                 # 方法2：检测字符分布是否均匀（乱码特征）
@@ -593,6 +618,7 @@ class ChatService:
 
                 # 如果类型切换次数超过长度的一半，说明是乱码
                 if type_switches > len(text_stripped) * 0.4:
+                    logger.info(f"[无意义检测] 类型切换过多: type_switches={type_switches}, len={len(text_stripped)}")
                     return True
 
         # 6. 字符熵检测 - 唯一字符太少说明大量重复
@@ -662,8 +688,15 @@ class ChatService:
         Returns:
             Optional[str]: 如果需要特殊处理则返回回复，否则返回None
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[_check_and_handle_nonsense] 开始检查: input={user_input}")
+
         # 检测是否是无意义输入
-        if self._is_nonsense_input(user_input):
+        is_nonsense = self._is_nonsense_input(user_input)
+        logger.info(f"[_check_and_handle_nonsense] is_nonsense={is_nonsense}")
+
+        if is_nonsense:
             count = await self._increment_nonsense_count(user_id)
 
             # 第一次：友好提醒

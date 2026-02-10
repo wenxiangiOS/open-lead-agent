@@ -1,5 +1,5 @@
 """AI service for Doubao integration"""
-#  层级：基础设施层  核心职责：豆包 AI API 交互
+"""调用豆包 API，生成回复、情感分析、关键词提取、意图分类"""
 
 import logging
 import asyncio
