@@ -152,7 +152,7 @@ async def startup_event():
     """Startup event handler"""
     try:
         # Validate configuration
-        validate_config_on_startup()
+        validate_config_on_startup(settings)
 
         # Initialize route modules with services
         from src.api.routes.health import init_services as init_health

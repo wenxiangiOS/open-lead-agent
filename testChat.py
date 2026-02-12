@@ -63,9 +63,12 @@ class ChatTester:
         print("-" * 50)
 
     async def welcome(self):
-        """发送欢迎消息（已禁用，直接开始对话）"""
-        # 不再显示欢迎消息，直接开始对话
-        pass
+        """发送欢迎消息"""
+        print("👧 小缘: 你好呀，我们是同城脱单联盟，这边需要帮脱单吗？可以根据小哥哥/小姐姐的要求推荐合适的男生/女生哦！")
+        print("（此条为系统自动发送）")
+        print("怎么牵线TA？")
+        print("想找适合自己的男生/女生？")
+        print()
 
     async def send_message(self, user_input: str):
         """发送消息"""

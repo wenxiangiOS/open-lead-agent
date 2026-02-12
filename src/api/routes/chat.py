@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException
 
-from src.models.requests import ChatResponse, ErrorResponse
+from src.models.requests import ChatResponse, ErrorResponse, ChatRequest
 from src.services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
@@ -62,10 +62,12 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
         raise HTTPException(status_code=500, detail="服务未初始化")
 
     try:
-        logger.info(f"Processing chat request from user: {request.get('accountId')}")
+        # 将 dict 转换为 ChatRequest 模型
+        chat_request = ChatRequest(**request)
+        logger.info(f"Processing chat request from user: {chat_request.accountId}")
 
         # Process the chat request
-        result = await chat_service.process_chat_request(request)
+        result = await chat_service.process_chat_request(chat_request)
 
         # Convert to response model
         return ChatResponse(**result)
