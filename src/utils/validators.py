@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 class PhoneValidator:
     """手机号验证器"""
 
-    # 中国大陆手机号正则：1开头，第二位3-9，共11位数字
-    PATTERN = r'^1[3-9]\d{9}$'
+    # 中国大陆手机号正则：11位数字即可（简化验证，减少误判）
+    # 移动、联通、电信的号段都在变化，过于严格的验证会导致有效号码被拒绝
+    PATTERN = r'^\d{11}$'
 
     @classmethod
     def is_valid(cls, phone: str) -> Tuple[bool, Optional[str]]:
@@ -34,6 +35,7 @@ class PhoneValidator:
         # 移除可能的空格和横杠
         clean_phone = phone.replace(' ', '').replace('-', '')
 
+        # 检查是否是11位纯数字
         if not re.match(cls.PATTERN, clean_phone):
             return False, f"小哥哥，这个号码好像位数不对呢～能确认下是11位手机号或微信号吗呀"
 

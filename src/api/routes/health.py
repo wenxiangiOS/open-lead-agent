@@ -2,6 +2,7 @@
 
 import logging
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from src.models.requests import HealthCheckResponse, ErrorResponse
 from src.services.ai_service import AIService
@@ -76,6 +77,33 @@ async def health_check() -> HealthCheckResponse:
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=500, detail="服务健康检查失败")
+
+
+@router.get(
+    "/config/welcome",
+    summary="获取欢迎消息",
+    description="获取系统欢迎消息配置",
+    responses={
+        200: {
+            "description": "成功返回欢迎消息",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "welcome_message": "好呀～我们是同城脱单联盟..."
+                    }
+                }
+            }
+        }
+    }
+)
+async def get_welcome_message():
+    """获取欢迎消息端点，从 prompts.py 统一读取"""
+    try:
+        from src.services.prompts import SYSTEM_WELCOME_MESSAGE
+        return {"welcome_message": SYSTEM_WELCOME_MESSAGE}
+    except Exception as e:
+        logger.error(f"Failed to get welcome message: {e}")
+        raise HTTPException(status_code=500, detail="获取欢迎消息失败")
 
 
 @router.get(

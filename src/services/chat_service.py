@@ -432,6 +432,15 @@ class ChatService:
 
     def _error_response(self, error: str, dialog_id: Optional[str]) -> Dict[str, Any]:
         """构建错误响应"""
+        # 检测是否是429配额错误，如果是则返回空响应（不显示错误消息）
+        if '429' in error or 'SetLimitExceeded' in error or 'TooManyRequests' in error:
+            return {
+                "success": True,
+                "response": "",
+                "dialogId": dialog_id,
+                "silent": True
+            }
+
         return {
             "success": False,
             "error": error,

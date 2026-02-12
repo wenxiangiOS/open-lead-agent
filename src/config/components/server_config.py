@@ -14,7 +14,7 @@ class ServerConfig(BaseModel):
     # 监听配置
     host: str = Field(default="0.0.0.0", description="监听地址")
     port: int = Field(default=8000, ge=1, le=65535, description="监听端口")
-    reload: bool = Field(default=False, description="自动重载（开发模式）")
+    reload: bool = Field(default=True, description="自动重载（开发模式）")
 
     # 工作进程
     workers: int = Field(default=1, ge=1, le=16, description="工作进程数")

@@ -341,9 +341,17 @@
             input.value = '';
             input.blur();
 
-            // 显示欢迎消息（本地生成，不调用API）
-            const welcomeMessage = '你好呀，我们是同城脱单联盟，这边需要帮脱单吗？可以根据小哥哥/小姐姐的要求推荐合适的男生/女生哦！\n（此条为系统自动发送）\n怎么牵线TA？\n想找适合自己的男生/女生？';
-            addMessage('ai', welcomeMessage);
+            // 从后端 API 获取欢迎消息（统一管理，只需在 prompts.py 中修改）
+            fetch(`${API_BASE}/config/welcome`)
+                .then(res => res.json())
+                .then(data => {
+                    addMessage('ai', data.welcome_message);
+                })
+                .catch(err => {
+                    // 如果 API 调用失败，使用默认消息
+                    console.error('获取欢迎消息失败:', err);
+                    addMessage('ai', '你好～我是小缘，有什么可以帮你的吗？');
+                });
 
             // 等待一段时间后允许发送
             setTimeout(() => {
@@ -384,7 +392,10 @@
                 const data = await response.json();
                 hideTyping();
 
-                if (data.success && data.response) {
+                if (data.silent) {
+                    // 429配额错误，静默处理，不显示任何消息
+                    console.log('服务暂时不可用（配额限制），已静默处理');
+                } else if (data.success && data.response) {
                     addMessage('ai', data.response);
                 } else if (data.error) {
                     addMessage('ai', '抱歉：' + data.error);

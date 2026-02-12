@@ -3,7 +3,6 @@
 import os
 import sys
 import uvicorn
-from importlib import util as import_util
 from src.config.settings import settings
 from src.config.components.network_config import NetworkConfig
 import logging
@@ -38,27 +37,31 @@ def main():
     logger = logging.getLogger(__name__)
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
 
-    # 直接加载 src/api/routes.py 文件（避开 routes/ 目录冲突）
+    # 导入 FastAPI app（从 routes 文件而不是 routes 包）
+    # 使用 sys.modules 避免 routes/ 目录和 routes.py 冲突
+    import importlib.util
     routes_path = os.path.join(project_root, 'src/api/routes.py')
-    spec = import_util.spec_from_file_location("routes_module", routes_path)
-    routes_module = import_util.module_from_spec(spec)
-    sys.modules['routes_module'] = routes_module
+    spec = importlib.util.spec_from_file_location("routes_app", routes_path)
+    routes_module = importlib.util.module_from_spec(spec)
+    sys.modules['routes_app'] = routes_module
     spec.loader.exec_module(routes_module)
     app = routes_module.app
 
-    # 挂载测试页面（独立模块，可安全删除整个 test_page/ 文件夹）
+    # 挂载测试页面
     try:
         from test_page import mount_test_page
         mount_test_page(app, project_root)
     except ImportError:
-        logger.info("测试页面模块未找到，跳过挂载（如不需要可删除 test_page/ 整个文件夹）")
+        logger.info("测试页面模块未找到，跳过挂载")
+
+    logger.info(f"Server starting on http://0.0.0.0:8000")
 
     # 监听所有网络接口，允许局域网/手机访问
     uvicorn.run(
         app,
-        host="0.0.0.0",  # 允许外部访问
+        host="0.0.0.0",
         port=8000,
-        reload=settings.reload,
+        reload=False,  # 禁用 reload，避免导入问题
         log_level=settings.log_level.lower()
     )
 

@@ -18,6 +18,14 @@ src_path = os.path.join(project_root, 'src')
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
+# 导入系统开场白配置（与线上环境统一）
+system_welcome = None
+try:
+    from src.services.prompts import SYSTEM_WELCOME_MESSAGE
+    system_welcome = SYSTEM_WELCOME_MESSAGE
+except ImportError:
+    pass
+
 from src.services.chat_service import ChatService
 from src.services.ai_service import AIService
 from src.services.user_service import UserService
@@ -64,10 +72,14 @@ class ChatTester:
 
     async def welcome(self):
         """发送欢迎消息"""
-        print("👧 小缘: 你好呀，我们是同城脱单联盟，这边需要帮脱单吗？可以根据小哥哥/小姐姐的要求推荐合适的男生/女生哦！")
-        print("（此条为系统自动发送）")
-        print("怎么牵线TA？")
-        print("想找适合自己的男生/女生？")
+        # 从系统统一配置读取开场白（与线上环境一致）
+        if system_welcome:
+            print(f"👧 小缘: {system_welcome}")
+        else:
+            print("👧 小缘: 我们是同城脱单联盟，这边需要帮脱单吗？可以根据小哥哥/小姐姐的要求推荐合适的男生/女生哦！")
+            print("（此条为系统自动发送）")
+            print("怎么牵线TA？")
+            print("想找适合自己的男生/女生？")
         print()
 
     async def send_message(self, user_input: str):
