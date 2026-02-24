@@ -94,11 +94,9 @@ class ValidationService:
         await user_service.save_user_profile(account_id, user_profile)
         logger.info(f"[联系方式验证成功] 已标记 collection_progress['contact'] = True")
 
-        success_msg = (
-            "好的呀～那你等好消息啦，祝你早日脱单🥰 "
-            "匹配一般1-8小时哒~ 牵线同事联系前会提前约时间不打扰你～"
-        )
-        return (True, None, success_msg)
+        # 不再返回收尾话术，而是返回 None，让后续逻辑询问择偶要求
+        # 收尾话术会在择偶要求收集后才触发
+        return (True, None, None)
 
     def validate_phone(self, phone: str) -> Tuple[bool, Optional[str]]:
         """

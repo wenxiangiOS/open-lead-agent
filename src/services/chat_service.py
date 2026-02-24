@@ -142,11 +142,16 @@ class ChatService:
                 conversation_context
             )
 
-            # 检查信息是否已收集完成（包含"已留联系"标记）
+            # 检查信息是否已收集完成（包含"已留联系"标记且包含"要求:"择偶要求）
             from src.services.extraction_service import ExtractionService
             extraction_service = ExtractionService(self.user_service)
             collected_info = extraction_service.get_collected_info_summary(user_profile)
-            if "已留联系" in collected_info:
+
+            # 只有联系方式和择偶要求都收集了，才算真正完成
+            has_contact = "已留联系" in collected_info
+            has_requirement = "要求:" in collected_info
+
+            if has_contact and has_requirement:
                 # 信息已全部收集完成，根据用户输入决定如何回复
                 user_input = request.question.strip()
 
@@ -397,7 +402,7 @@ class ChatService:
         # 获取消息计数
         message_count = await self.dialogue_manager.get_message_count(account_id)
 
-        # 构建已收集信息（所有 11 个字段）
+        # 构建已收集信息（所有 12 个字段）
         collected_info = {
             "sex": user_profile.sex or "未留",
             "last_name": user_profile.last_name or "未留称呼",
@@ -409,7 +414,8 @@ class ChatService:
             "marital_status": user_profile.marital_status or "未留",
             "monthly_income": user_profile.monthly_income or "未留",
             "occupation": user_profile.occupation or "未留",
-            "contact": user_profile.contact or "未留"
+            "contact": user_profile.contact or "未留",
+            "partner_requirement": user_profile.partner_requirement or "未留"
         }
 
         return {
@@ -547,6 +553,11 @@ class ChatService:
             match = re.search(pattern, text_stripped)
             logger.info(f"[无意义检测] 短输入 '{text_stripped}' (len={len(text_stripped)}) 正则匹配: {match}")
             if not match:
+                # 额外检查：数字+单位格式（如"5万"、"3k"、"20k"）是有意义的
+                income_pattern = r'^\d+[万千百kKwW]?$|^\d+[万千百kKwW]$'
+                if re.match(income_pattern, text_stripped):
+                    logger.info(f"[无意义检测] 判定为有意义（收入格式）: {text_stripped}")
+                    return False
                 logger.info(f"[无意义检测] 判定为无意义: {text_stripped}")
                 return True
             else:
@@ -631,7 +642,11 @@ class ChatService:
                     return True
 
         # 6. 字符熵检测 - 唯一字符太少说明大量重复
+        # 但排除手机号（手机号可能有重复数字）
         if len(text_stripped) >= 8:
+            # 先检查是否是手机号格式
+            if re.match(r'^1[3-9]\d{9}$', text_stripped):
+                return False  # 手机号是有意义的
             unique_chars = set(text_stripped.lower())
             unique_ratio = len(unique_chars) / len(text_stripped)
             # 如果独特字符少于50%，说明大量重复

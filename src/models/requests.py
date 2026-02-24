@@ -94,6 +94,7 @@ class ChatResponse(BaseModel):
     timestamp: str = Field(default_factory=datetime.now().isoformat, description="时间戳")
     error: Optional[str] = Field(None, description="错误信息")
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="置信度")
+    debug_info: Optional[str] = Field(None, description="调试信息（仅测试页面使用）")
 
 
 class UserProfileRequest(BaseModel):

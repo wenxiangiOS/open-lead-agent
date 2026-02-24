@@ -20,6 +20,7 @@ class UserProfile(BaseModel):
     8. 职业 - 做什么工作
     9. 称呼 - 对方希望怎么称呼自己
     10. 电话/微信 - 联系方式
+    11. 择偶要求 - 年龄/身高/学历等要求（联系方式收集后询问）
     """
 
     # 基本信息
@@ -39,6 +40,7 @@ class UserProfile(BaseModel):
     monthly_income: Optional[str] = Field(None, description="月薪（月收入范围）")
     occupation: Optional[str] = Field(None, description="职业（做什么工作）")
     contact: Optional[str] = Field(None, description="联系方式（电话/微信）")
+    partner_requirement: Optional[str] = Field(None, description="择偶要求（年龄/身高/学历等）")
 
     # 收集状态跟踪
     collection_progress: Dict[str, bool] = Field(
@@ -54,6 +56,7 @@ class UserProfile(BaseModel):
             "monthly_income": False,
             "occupation": False,
             "contact": False,
+            "partner_requirement": False,
         },
         description="各字段收集状态"
     )
@@ -221,7 +224,7 @@ class UserProfile(BaseModel):
         # 检查所有关键字段是否都为空
         key_fields = ['sex', 'last_name', 'age', 'height', 'weight',
                       'location', 'education', 'marital_status',
-                      'monthly_income', 'occupation', 'contact']
+                      'monthly_income', 'occupation', 'contact', 'partner_requirement']
         return all(getattr(self, field) is None for field in key_fields)
 
     def get_missing_fields(self) -> list:
@@ -248,7 +251,7 @@ class UserProfile(BaseModel):
         Returns:
             Optional[str]: 下一个要收集的字段名
         """
-        # 新的优先级顺序：姓氏优先
+        # 优先级顺序：姓氏优先，择偶要求最后
         priority_order = [
             'sex',  # 性别 - 首要
             'last_name',  # 姓氏 - 对方希望怎么称呼
@@ -261,6 +264,7 @@ class UserProfile(BaseModel):
             'monthly_income',  # 月薪
             'occupation',  # 职业
             'contact',  # 联系方式
+            'partner_requirement',  # 择偶要求 - 最后收集
         ]
 
         for field in priority_order:
@@ -330,6 +334,7 @@ class UserProfile(BaseModel):
             "monthly_income": self.monthly_income,
             "occupation": self.occupation,
             "contact": self.contact,
+            "partner_requirement": self.partner_requirement,
             "collection_progress": self.collection_progress,
             "progress_percentage": round(self.get_progress() * 100, 2),
             "missing_fields": self.get_missing_fields(),

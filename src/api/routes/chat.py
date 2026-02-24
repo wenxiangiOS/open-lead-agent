@@ -66,8 +66,21 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
         chat_request = ChatRequest(**request)
         logger.info(f"Processing chat request from user: {chat_request.accountId}")
 
+        # 检查是否需要返回调试信息（仅测试页面使用）
+        debug_mode = request.get("debug", False)
+
         # Process the chat request
         result = await chat_service.process_chat_request(chat_request)
+
+        # 如果是调试模式，添加已收集的用户信息
+        if debug_mode:
+            try:
+                profile = await chat_service.get_user_profile(chat_request.accountId)
+                debug_info = _format_debug_info(profile)
+                result["debug_info"] = debug_info
+            except Exception as e:
+                logger.warning(f"Failed to get debug info: {e}")
+                result["debug_info"] = None
 
         # Convert to response model
         return ChatResponse(**result)
@@ -78,6 +91,41 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
     except Exception as e:
         logger.error(f"Chat processing error: {e}")
         raise HTTPException(status_code=500, detail="处理聊天请求时出错")
+
+
+def _format_debug_info(profile: Dict[str, Any]) -> str:
+    """格式化用户已收集的信息为调试显示字符串"""
+    # 字段中文名映射
+    field_names = {
+        "sex": "性别",
+        "last_name": "称呼",
+        "age": "年龄",
+        "height": "身高",
+        "weight": "体重",
+        "location": "坐标",
+        "education": "学历",
+        "marital_status": "婚况",
+        "monthly_income": "月薪",
+        "occupation": "职业",
+        "contact": "联系方式",
+        "partner_requirement": "择偶要求",
+    }
+
+    items = ["[已收集:"]
+    for field, name in field_names.items():
+        value = profile.get(field)
+        if value is not None:
+            items.append(f"{name}:{value}")
+        else:
+            # 检查是否被跳过
+            skipped = profile.get("skipped_fields", {})
+            if skipped.get(field, False):
+                items.append(f"{name}:跳过")
+            else:
+                items.append(f"{name}:未留")
+    items.append("]")
+
+    return " ".join(items)
 
 
 @router.post(

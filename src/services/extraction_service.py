@@ -37,6 +37,9 @@ class ExtractionService:
         "月收入": "monthly_income",
         "婚况": "marital_status",
         "联系方式": "contact",
+        "择偶要求": "partner_requirement",
+        "择偶": "partner_requirement",
+        "要求": "partner_requirement",
         # 英文字段名（直接映射）
         "last_name": "last_name",
         "sex": "sex",
@@ -49,6 +52,7 @@ class ExtractionService:
         "monthly_income": "monthly_income",
         "marital_status": "marital_status",
         "contact": "contact",
+        "partner_requirement": "partner_requirement",
         # 带空格的字段名（AI 可能返回）
         " 职业": "occupation",
         " 学历": "education",
@@ -57,6 +61,7 @@ class ExtractionService:
         " 月收入": "monthly_income",
         " 婚况": "marital_status",
         " 联系方式": "contact",
+        " 择偶要求": "partner_requirement",
     }
 
     # 无效名称列表
@@ -70,7 +75,8 @@ class ExtractionService:
         'occupation': ['职业', '工作', '做什么'],
         'height': ['身高'],
         'weight': ['体重'],
-        'monthly_income': ['收入', '月薪', '年薪', '工资']
+        'monthly_income': ['收入', '月薪', '年薪', '工资'],
+        'partner_requirement': ['择偶', '要求', '找什么样的', '什么类型的', '喜欢的类型'],
     }
 
     def __init__(self, user_service: UserService):
@@ -312,6 +318,9 @@ class ExtractionService:
                 # 确保 collection_progress 也被标记（用于 is_collection_complete()）
                 if not user_profile.collection_progress.get('contact', False):
                     user_profile.collection_progress['contact'] = True
+            # 添加择偶要求（如果有）
+            if user_profile.partner_requirement:
+                parts.append(f"要求:{user_profile.partner_requirement}")
             return "【已收集】" + ",".join(parts)
         return "【已收集】无"
 
@@ -343,7 +352,8 @@ class ExtractionService:
             'education': '学历',
             'occupation': '职业',
             'monthly_income': '收入',
-            'contact': '联系方式'
+            'contact': '联系方式',
+            'partner_requirement': '择偶要求'
         }
 
         prompts = []
