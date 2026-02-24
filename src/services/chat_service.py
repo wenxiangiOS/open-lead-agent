@@ -147,20 +147,26 @@ class ChatService:
             extraction_service = ExtractionService(self.user_service)
             collected_info = extraction_service.get_collected_info_summary(user_profile)
 
-            # 只有联系方式和择偶要求都收集了，才算真正完成
+            # 只有联系方式和择偶要求都收集了，才算进入收尾阶段
             has_contact = "已留联系" in collected_info
             has_requirement = "要求:" in collected_info
 
             if has_contact and has_requirement:
-                # 信息已全部收集完成，根据用户输入决定如何回复
+                # 用户已提供联系方式和择偶要求，检查是否表示结束
                 user_input = request.question.strip()
 
-                # 检查是否是问候语或问题（如"在吗"、"你好"、"嗨"等）
+                # 结束信号词（用户表示没有其他要求了）
+                ending_signals = ['没有了', '没啦', '没了', '就这些', '就这点', '暂时没有', '暂时没',
+                                  '先这样', '差不多', '应该没了', '应该没', '没有了呢', '没啥了',
+                                  '其他没了', '其他没', '暂时就这些', '目前没', '目前没有']
+                is_ending = any(signal in user_input for signal in ending_signals)
+
+                # 检查是否是问候语
                 greeting_words = ['在吗', '在不在', '你好', '您好', '嗨', '哈喽', 'hello', 'hi']
                 is_greeting = any(word in user_input for word in greeting_words)
 
                 if is_greeting:
-                    # 用户打招呼，自然回复"在的呀～"
+                    # 用户打招呼，自然回复
                     logger.info(f"[信息收集完成] 用户打招呼，返回自然回复")
                     natural_response = "在的呀～小哥哥，有什么可以帮你的吗呀"
                     return await self._build_chat_response(
@@ -170,8 +176,9 @@ class ChatService:
                         {"collected": False, "all_fields": []},
                         request.dialogId
                     )
-                else:
-                    # 其他情况，返回收尾话术（但只返回一次，不要重复）
+                elif is_ending:
+                    # 用户表示没有其他要求了，返回收尾话术
+                    logger.info(f"[信息收集完成] 用户表示结束: {user_input}")
                     # 检查是否已经发送过收尾话术
                     last_response = await self.dialogue_manager.get_last_response(account_id)
                     closing_message = "好的呀～那你等好消息啦，祝你早日脱单🥰 匹配一般1-8小时哒~ 牵线同事联系前会提前约时间不打扰你～"
@@ -188,7 +195,6 @@ class ChatService:
                         )
                     else:
                         # 第一次，返回收尾话术
-                        logger.info(f"[信息收集完成] 检测到'已留联系'标记，直接返回收尾话术")
                         return await self._build_chat_response(
                             account_id,
                             user_profile,
@@ -196,6 +202,7 @@ class ChatService:
                             {"collected": False, "all_fields": []},
                             request.dialogId
                         )
+                # else: 用户可能还有其他要求要补充，继续让 AI 对话
 
             # 7. 调用 AI 生成回复
             ai_response = await self._call_ai(main_prompt, account_id)
