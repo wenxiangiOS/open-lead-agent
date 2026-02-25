@@ -105,19 +105,24 @@ class ExtractionService:
         if not response:
             return {}
 
+        # 调试：显示 AI 原始回复（限制长度）
+        logger.info(f"[AI原始回复] {repr(response[:500])}")
+
         # 1. 优先匹配 <extract>...</extract> XML 标签格式
         extract_pattern = r'<extract>\s*\n?(.*?)\n?</extract>'
         match = re.search(extract_pattern, response, re.DOTALL)
         if match:
             content = match.group(1).strip()
             # 调试：显示原始内容（限制长度）
-            logger.info(f"[提取原始] {repr(content[:100])}")
+            logger.info(f"[提取原始] {repr(content[:200])}")
             extracted = self._parse_extract_content(content)
             if extracted:
                 # 简化日志：只显示提取到的非空字段
                 non_empty = {k: v for k, v in extracted.items() if v not in [None, '', 'null']}
                 logger.info(f"[提取] {non_empty}")
                 return extracted
+        else:
+            logger.warning(f"[提取失败] AI 回复中没有找到 <extract> 标签！")
 
         # 2. 尝试匹配 ```json...``` 代码块格式
         json_pattern = r'```json\s*\n?(.*?)\n?```'
@@ -140,7 +145,7 @@ class ExtractionService:
 
         支持：
         - JSON 格式
-        - field:value 格式（多行，支持 /n 和 \n 换行）
+        - field:value 格式（多行或单行空格分隔）
 
         Args:
             content: 提取标签内的内容
@@ -158,18 +163,19 @@ class ExtractionService:
         except json.JSONDecodeError:
             pass
 
-        # 尝试 field:value 格式解析（支持多行）
+        # 尝试 field:value 格式解析
         result = {}
-        # 支持 /n 和 \n 作为换行符
-        content = content.replace('/n', '\n')
-        lines = content.split('\n')
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith('#'):
+        # 支持 /n 和 \n 作为分隔符
+        content = content.replace('/n', ' ').replace('\n', ' ')
+        # 用空格分割各个字段
+        parts = content.split()
+        for part in parts:
+            part = part.strip()
+            if not part or part.startswith('#'):
                 continue
 
             # 匹配 field:value 格式
-            match = re.match(r'^([^:]+)\s*:\s*(.+)$', line)
+            match = re.match(r'^([^:]+)\s*:\s*(.+)$', part)
             if match:
                 field, value = match.groups()
                 # 清理值中的引号
@@ -177,9 +183,6 @@ class ExtractionService:
                 # 如果值是 "null"，转换为 None
                 if value == 'null':
                     value = None
-                # 清理值末尾的 /n 或 \n（仅当 value 不为 None 时）
-                if value is not None:
-                    value = value.rstrip('/n').rstrip('\n').strip()
                 result[field] = value
 
         return result
@@ -311,16 +314,16 @@ class ExtractionService:
             parts.append(str(user_profile.marital_status))
 
         if parts:
-            # 检查是否已收集联系方式（信息收集完成的标志）
+            # 添加择偶要求（如果有）- 在联系方式之前
+            if user_profile.partner_requirement:
+                parts.append(f"要求:{user_profile.partner_requirement}")
+            # 检查是否已收集联系方式（信息收集完成的标志）- 最后显示
             # 只检查 contact 字段是否有值，不依赖 collection_progress
             if user_profile.contact and user_profile.contact != "":
                 parts.append("已留联系")
                 # 确保 collection_progress 也被标记（用于 is_collection_complete()）
                 if not user_profile.collection_progress.get('contact', False):
                     user_profile.collection_progress['contact'] = True
-            # 添加择偶要求（如果有）
-            if user_profile.partner_requirement:
-                parts.append(f"要求:{user_profile.partner_requirement}")
             return "【已收集】" + ",".join(parts)
         return "【已收集】无"
 

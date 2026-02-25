@@ -68,6 +68,7 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
 
         # 检查是否需要返回调试信息（仅测试页面使用）
         debug_mode = request.get("debug", False)
+        logger.info(f"[DEBUG] debug_mode={debug_mode}, request keys={list(request.keys())}")
 
         # Process the chat request
         result = await chat_service.process_chat_request(chat_request)
@@ -75,8 +76,10 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
         # 如果是调试模式，添加已收集的用户信息
         if debug_mode:
             try:
-                profile = await chat_service.get_user_profile(chat_request.accountId)
+                profile_result = await chat_service.get_user_profile(chat_request.accountId)
+                profile = profile_result.get("profile", {})
                 debug_info = _format_debug_info(profile)
+                logger.info(f"[DEBUG] debug_info: {debug_info}")
                 result["debug_info"] = debug_info
             except Exception as e:
                 logger.warning(f"Failed to get debug info: {e}")

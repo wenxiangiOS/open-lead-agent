@@ -227,66 +227,6 @@
             color: #333;
             margin-bottom: 15px;
         }
-
-        /* 调试开关样式 */
-        .debug-toggle-container {
-            padding: 10px 15px;
-            background: #fff3e0;
-            border-bottom: 1px solid #ffe0b2;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .debug-toggle-label {
-            font-size: 13px;
-            color: #e65100;
-            font-weight: 500;
-        }
-
-        .debug-toggle {
-            position: relative;
-            width: 50px;
-            height: 26px;
-        }
-
-        .debug-toggle input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-
-        .debug-slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #ccc;
-            transition: .3s;
-            border-radius: 26px;
-        }
-
-        .debug-slider:before {
-            position: absolute;
-            content: "";
-            height: 20px;
-            width: 20px;
-            left: 3px;
-            bottom: 3px;
-            background-color: white;
-            transition: .3s;
-            border-radius: 50%;
-        }
-
-        .debug-toggle input:checked + .debug-slider {
-            background-color: #ff9800;
-        }
-
-        .debug-toggle input:checked + .debug-slider:before {
-            transform: translateX(24px);
-        }
     </style>
 </head>
 <body>
@@ -302,15 +242,6 @@
 
         <div class="account-input">
             <input type="text" id="accountId" placeholder="输入你的昵称" value="">
-        </div>
-
-        <!-- 调试开关 -->
-        <div class="debug-toggle-container">
-            <span class="debug-toggle-label">显示已收集信息</span>
-            <label class="debug-toggle">
-                <input type="checkbox" id="debugToggle">
-                <span class="debug-slider"></span>
-            </label>
         </div>
 
         <!-- 欢迎界面 -->
@@ -341,25 +272,6 @@
         let accountId = '';
         let isProcessing = false;
         let hasStarted = false;
-        let showDebugInfo = true;  // 默认开启调试信息
-
-        // 获取调试开关状态
-        function isDebugEnabled() {
-            return document.getElementById('debugToggle').checked;
-        }
-
-        // 从 localStorage 加载开关状态
-        function loadDebugToggleState() {
-            const saved = localStorage.getItem('debugToggleEnabled');
-            // 如果没有保存过，默认为 true（开启）
-            const enabled = saved === null ? true : saved === 'true';
-            document.getElementById('debugToggle').checked = enabled;
-        }
-
-        // 保存开关状态到 localStorage
-        function saveDebugToggleState() {
-            localStorage.setItem('debugToggleEnabled', document.getElementById('debugToggle').checked);
-        }
 
         // 生成随机用户ID
         function generateUserId() {
@@ -468,7 +380,6 @@
             // 发送到服务器
             try {
                 showTyping();
-                const debugEnabled = isDebugEnabled();
                 const response = await fetch(`${API_BASE}/api/doubao/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -476,7 +387,7 @@
                         accountId: accountId,
                         question: message,
                         sex: 'unknown',
-                        debug: debugEnabled  // 根据开关状态决定是否启用调试模式
+                        debug: true  // 永远启用调试模式，显示已收集信息
                     })
                 });
 
@@ -487,9 +398,9 @@
                     // 429配额错误，静默处理，不显示任何消息
                     console.log('服务暂时不可用（配额限制），已静默处理');
                 } else if (data.success && data.response) {
-                    // 根据开关状态决定是否显示调试信息
+                    // 永远显示调试信息
                     let displayText = data.response;
-                    if (debugEnabled && data.debug_info) {
+                    if (data.debug_info) {
                         displayText += data.debug_info;
                     }
                     addMessage('ai', displayText);
@@ -535,12 +446,8 @@
         // 初始化
         accountId = generateUserId();
         document.getElementById('accountId').value = accountId;
-        loadDebugToggleState();  // 加载开关状态
         checkStatus();
         setInterval(checkStatus, 30000);
-
-        // 监听开关变化，保存状态
-        document.getElementById('debugToggle').addEventListener('change', saveDebugToggleState);
     </script>
 </body>
 </html>

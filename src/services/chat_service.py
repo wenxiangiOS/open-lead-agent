@@ -318,7 +318,7 @@ class ChatService:
             # 标记被拒绝但未被提取的字段
             for field in refused_fields:
                 if field not in collected_fields:
-                    self.user_service.skip_user_profile_field(account_id, field)
+                    await self.user_service.skip_user_profile_field(account_id, field)
                     logger.info(f"[拒绝标记] 用户拒绝字段: {field}")
 
             del self._temp_refused_fields[account_id]
@@ -614,6 +614,11 @@ class ChatService:
             logger.info(f"[无意义检测] 字母数字检查: has_letter={has_letter}, has_digit={has_digit}")
 
             if has_letter and has_digit:
+                # 排除微信号格式：以字母开头，6-20字符，可含字母数字下划线减号
+                wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{5,19}$'
+                if re.match(wechat_pattern, text_stripped):
+                    logger.info(f"[无意义检测] 判定为有意义（微信号格式）: {text_stripped}")
+                    return False
                 # 方法1：检测是否有重复的短模式（2-4字符）
                 # 排除常见的数字组合（如年龄、体重等）
                 # 只有当重复模式占比很高时才认为是乱码

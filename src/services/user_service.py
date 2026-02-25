@@ -509,8 +509,22 @@ class UserService:
             account_id: 用户账号ID
             field_name: 字段名
         """
-        profile = self.get_user_profile(account_id)
+        # 注意：这是一个同步方法，仅用于内存模式
+        if account_id in self._memory_profiles:
+            self._memory_profiles[account_id].skipped_fields[field_name] = True
+            logger.info(f"Field {field_name} marked as skipped for user {account_id}")
+
+    async def skip_user_profile_field(self, account_id: str, field_name: str) -> None:
+        """
+        跳过某个字段的收集（用户拒绝提供）- 异步版本
+
+        Args:
+            account_id: 用户账号ID
+            field_name: 字段名
+        """
+        profile = await self.get_user_profile(account_id)
         profile.skipped_fields[field_name] = True
+        await self.save_user_profile(account_id, profile)
         logger.info(f"Field {field_name} marked as skipped for user {account_id}")
 
     async def add_message_to_history(self, user_id: str, message: Dict[str, Any]) -> None:

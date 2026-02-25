@@ -171,14 +171,23 @@ class UserProfile(BaseModel):
                 # 姓氏字段直接使用提取的值，不经过额外验证
                 validated = value
             elif field_name == 'partner_requirement':
-                # 择偶要求字段：追加而不是覆盖
+                # 择偶要求字段：追加而不是覆盖，但要避免重复
                 existing = getattr(self, 'partner_requirement', None)
                 if existing and existing != "":
-                    # 检查新值是否已经存在于现有值中
-                    if value not in existing:
-                        validated = f"{existing},{value}"
+                    # 拆分现有值和新值，只添加不存在的部分
+                    existing_items = [item.strip() for item in existing.split(',')]
+                    new_items = [item.strip() for item in value.split(',')]
+
+                    # 只添加现有值中没有的部分
+                    items_to_add = []
+                    for item in new_items:
+                        if item and item not in existing_items:
+                            items_to_add.append(item)
+
+                    if items_to_add:
+                        validated = f"{existing},{','.join(items_to_add)}"
                     else:
-                        validated = existing  # 已存在，不重复添加
+                        validated = existing  # 所有内容都已存在，不更新
                 else:
                     validated = value
             else:

@@ -67,7 +67,8 @@ class AIService:
             http_client=httpx.AsyncClient(
                 limits=limits,
                 timeout=timeout,
-                verify=True  # 启用SSL验证
+                verify=True,  # 启用SSL验证
+                proxy=None    # 禁用代理，直连豆包API
             )
         )
         self.model_name = settings.model_name
@@ -98,18 +99,33 @@ class AIService:
             asyncio.TimeoutError: 调用超时
         """
         timeout = timeout or self.DEFAULT_TIMEOUT
+        max_retries = 3  # 最大重试次数
+        retry_delay = 1  # 重试间隔（秒）
 
-        try:
-            async with asyncio.timeout(timeout):
-                return await self._do_generate_response(
-                    message, system_prompt, temperature, max_tokens
-                )
-        except asyncio.TimeoutError:
-            logger.error(f"AI 调用超时（{timeout}秒）")
-            raise AIServiceException(f"AI 服务响应超时（{timeout}秒）")
-        except Exception as e:
-            logger.error(f"AI 调用失败: {e}")
-            raise AIServiceException(f"AI 服务错误: {str(e)}")
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                async with asyncio.timeout(timeout):
+                    return await self._do_generate_response(
+                        message, system_prompt, temperature, max_tokens
+                    )
+            except asyncio.TimeoutError as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    logger.warning(f"AI 调用超时（{timeout}秒），第 {attempt + 1} 次重试...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # 指数退避
+                else:
+                    logger.error(f"AI 调用超时（{timeout}秒），已重试 {max_retries} 次")
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    logger.warning(f"AI 调用失败: {e}，第 {attempt + 1} 次重试...")
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.error(f"AI 调用失败: {e}")
+
+        raise AIServiceException(f"AI 服务响应超时（{timeout}秒），已重试 {max_retries} 次")
 
     async def _do_generate_response(
         self,

@@ -30,14 +30,14 @@ class PhoneValidator:
             Tuple[bool, Optional[str]]: (是否有效, 错误消息)
         """
         if not phone:
-            return False, "小哥哥，方便留个能联系到的手机号或微信号吗呀～"
+            return False, "方便留个能联系到的手机号或微信号吗呀～"
 
         # 移除可能的空格和横杠
         clean_phone = phone.replace(' ', '').replace('-', '')
 
         # 检查是否是11位纯数字
         if not re.match(cls.PATTERN, clean_phone):
-            return False, f"小哥哥，这个号码好像位数不对呢～能确认下是11位手机号或微信号吗呀"
+            return False, "这个号码好像位数不对呢～能确认下是11位手机号或微信号吗呀"
 
         return True, None
 
@@ -60,10 +60,10 @@ class WechatValidator:
             Tuple[bool, Optional[str]]: (是否有效, 错误消息)
         """
         if not wechat:
-            return False, "小哥哥，方便留个能联系到的微信号吗呀～"
+            return False, "方便留个能联系到的微信号吗呀～"
 
         if not re.match(cls.PATTERN, wechat):
-            return False, "小哥哥，这个微信号好像格式不太对呢～是字母开头的6-20位字符吗呀"
+            return False, "这个微信号好像格式不太对呢～是字母开头的6-20位字符吗呀"
 
         return True, None
 
@@ -83,7 +83,7 @@ class ContactValidator:
             Tuple[bool, str, Optional[str]]: (是否有效, 类型, 错误消息)
         """
         if not contact or contact in ['phone', 'wechat']:
-            return False, 'unknown', "小哥哥，方便留个能联系到的手机号或微信号吗呀～"
+            return False, 'unknown', "方便留个能联系到的手机号或微信号吗呀～"
 
         # 尝试验证为手机号
         is_valid_phone, phone_error = PhoneValidator.is_valid(contact)
@@ -96,7 +96,7 @@ class ContactValidator:
             return True, 'wechat', None
 
         # 都不是，返回错误
-        return False, 'unknown', phone_error or wechat_error or "小哥哥，方便留个能联系到的手机号或微信号吗呀～"
+        return False, 'unknown', phone_error or wechat_error or "方便留个能联系到的手机号或微信号吗呀～"
 
 
 class AgeValidator:

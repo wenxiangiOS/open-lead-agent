@@ -72,13 +72,16 @@ class ValidationService:
             error_count = user_state.increment_contact_error()
             await user_service.save_user_state(account_id, user_state)
 
+            # 根据用户性别选择称呼
+            call_name = user_profile.get_greeting() if user_profile else "亲"
+
             # 根据错误次数给出不同提示
             if error_count == 1:
-                # 第1次错误：提示手机号格式问题
-                return (False, error_msg, None)
+                # 第1次错误：提示手机号格式问题（添加称呼前缀）
+                return (False, f"{call_name}，{error_msg}", None)
             elif error_count == 2:
                 # 第2次错误：提示微信也可以
-                return (False, "嗯嗯，小哥哥不方便留手机号的话，微信号也可以呀～方便留个微信号吗呀", None)
+                return (False, f"嗯嗯，{call_name}不方便留手机号的话，微信号也可以呀～方便留个微信号吗呀", None)
             else:
                 # 第3次及以上：委婉结束话题
                 user_profile.skipped_fields['contact'] = True
