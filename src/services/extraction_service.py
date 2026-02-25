@@ -64,8 +64,13 @@ class ExtractionService:
         " 择偶要求": "partner_requirement",
     }
 
-    # 无效名称列表
-    INVALID_NAMES = {'小姐姐', '小哥哥', '你好呀', '你好呢', '你好', '哈喽', '嗨', '呀', '呢', '哒', '哦', '哈'}
+    # 无效名称列表（这些词不应该被识别为名字）
+    INVALID_NAMES = {
+        '小姐姐', '小哥哥', '你好呀', '你好呢', '你好', '哈喽', '嗨', '呀', '呢', '哒', '哦', '哈',
+        '好的', '嗯嗯', '好的呢', '好呀', '行', '可以', 'ok', '好的哈', '好哒',
+        '哈德', '哈哈', '哈哈哈', '呵呵', '嘿嘿', '哇', '咦', '唉', '嗯',
+        '什么', '怎么', '为什么', '哪里', '谁', '多少',
+    }
 
     # 字段关键词映射（用于推断拒绝的字段）
     FIELD_KEYWORDS = {
@@ -244,7 +249,17 @@ class ExtractionService:
 
                 # 检查是否为无效值
                 if mapped_field == "last_name":
-                    if value in self.INVALID_NAMES or len(value) <= 1:
+                    # 名字必须是2-4个字符
+                    if len(value) <= 1 or len(value) > 4:
+                        logger.info(f"[名字验证] 长度不符合要求(2-4字符): {value}")
+                        continue
+                    # 名字不能在无效名称列表中
+                    if value in self.INVALID_NAMES:
+                        logger.info(f"[名字验证] 在无效名称列表中: {value}")
+                        continue
+                    # 名字不能全是数字
+                    if value.isdigit():
+                        logger.info(f"[名字验证] 不能全是数字: {value}")
                         continue
 
                 # 检查字段是否需要更新

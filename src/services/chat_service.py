@@ -69,6 +69,9 @@ class ChatService:
         # 无意义输入计数器键名前缀
         self._nonsense_count_prefix = "nonsense_count:"
 
+        # 确认词（用户回复"好的"但没留联系方式）计数器键名前缀
+        self._confirm_count_prefix = "confirm_count:"
+
     async def process_chat_request(self, request: ChatRequest) -> Dict[str, Any]:
         """
         处理聊天请求 - 核心业务逻辑
@@ -95,7 +98,8 @@ class ChatService:
 
             # 2. 检查信息是否已收集完成且用户只回复确认词（如"嗯"、"好"）
             # 如果是，直接返回空响应，避免死循环
-            if user_profile.is_collection_complete():
+            # 注意：只有联系方式已收集时才跳过，否则用户可能只是表示同意留电话
+            if user_profile.is_collection_complete() and user_profile.contact:
                 # 确认词列表
                 affirmative_words = ['嗯', '好', '好的', '行', '可以', 'ok', '是的', '对', '是']
                 is_affirmative = request.question.strip() in affirmative_words
@@ -108,6 +112,39 @@ class ChatService:
                         "collection_complete": True,
                         "dialogId": request.dialogId
                     }
+
+            # 2.5. 检测用户回复确认词但没留联系方式的情况
+            # 条件：择偶要求已收集 + 联系方式未收集 + 用户回复确认词
+            from src.services.extraction_service import ExtractionService
+            extraction_service = ExtractionService(self.user_service)
+            collected_info_summary = extraction_service.get_collected_info_summary(user_profile)
+            has_requirement = "要求:" in collected_info_summary
+            has_contact = "已留联系" in collected_info_summary
+
+            # 确认词列表
+            affirmative_words = ['嗯', '好', '好的', '行', '可以', 'ok', '是的', '对', '是', '恩', '嗯嗯', '好的呢', '好呀']
+            user_input = request.question.strip()
+            is_affirmative = user_input in affirmative_words
+
+            if has_requirement and not has_contact and is_affirmative:
+                # 用户在被问联系方式时只回复确认词，没有提供实际号码
+                confirm_count = await self._increment_confirm_count(account_id)
+                logger.info(f"[确认词检测] 用户第{confirm_count}次回复确认词但没留联系方式: {user_input}")
+
+                # 根据次数返回不同的回复
+                confirm_response = self._get_confirm_word_response(user_profile, confirm_count)
+                if confirm_response is not None:
+                    # 注意：空字符串 "" 也是有效响应，表示不回复用户
+                    return await self._build_chat_response(
+                        account_id,
+                        user_profile,
+                        confirm_response,  # 可能是空字符串
+                        {"collected": False, "all_fields": []},
+                        request.dialogId
+                    )
+            elif has_contact:
+                # 联系方式已收集，重置确认词计数器
+                await self._reset_confirm_count(account_id)
 
             # 3. 更新人设性别
             self.dialogue_manager.update_user_sex(user_profile)
@@ -217,6 +254,14 @@ class ChatService:
                 extracted_data,
                 request.question
             )
+
+            # 9.5. 如果用户提供了择偶要求，重置确认词计数器
+            # 因为接下来AI会问联系方式，这是新一轮的"问联系方式"流程
+            for field_info in collection_result.get('all_fields', []):
+                if field_info.get('field') == 'partner_requirement':
+                    await self._reset_confirm_count(account_id)
+                    logger.info(f"[确认词计数器] 用户提供了择偶要求，重置确认词计数器")
+                    break
 
             # 重新获取 user_profile 以获得最新数据
             user_profile = await self.user_service.get_user_profile(account_id)
@@ -344,6 +389,10 @@ class ChatService:
 
         if collected_contact is None:
             return ai_response
+
+        # 用户提供了联系方式，重置确认词计数器
+        await self._reset_confirm_count(account_id)
+        logger.info(f"[联系方式验证] 用户提供了联系方式，重置确认词计数器")
 
         # 验证联系方式
         logger.info(f"[联系方式验证] 开始验证: {collected_contact}")
@@ -588,8 +637,36 @@ class ChatService:
         # 3. 纯数字或数字+符号（且不是手机号、年龄等有意义的数字）
         if re.match(r'^[\d\s\+\-\(\)\*#]{3,}$', text_stripped):
             # 排除手机号格式
-            if not re.match(r'^1[3-9]\d{9}$', re.sub(r'\s+', '', text_stripped)):
-                return True
+            if re.match(r'^1[3-9]\d{9}$', re.sub(r'\s+', '', text_stripped)):
+                logger.info(f"[无意义检测] 手机号格式，判定有意义: {text_stripped}")
+                return False
+
+            # 排除常见的有意义数字格式
+            pure_num = re.sub(r'\s+', '', text_stripped)
+            try:
+                num = int(pure_num)
+                # 身高范围：100-250（cm）
+                if 100 <= num <= 250:
+                    logger.info(f"[无意义检测] 可能是身高，判定有意义: {text_stripped}")
+                    return False
+                # 体重范围：30-300（斤/kg）
+                if 30 <= num <= 300:
+                    logger.info(f"[无意义检测] 可能是体重，判定有意义: {text_stripped}")
+                    return False
+                # 年龄范围：18-80
+                if 18 <= num <= 80:
+                    logger.info(f"[无意义检测] 可能是年龄，判定有意义: {text_stripped}")
+                    return False
+                # 收入：常见范围
+                if num >= 1000:
+                    logger.info(f"[无意义检测] 可能是收入等大数字，判定有意义: {text_stripped}")
+                    return False
+            except ValueError:
+                pass
+
+            # 其他纯数字才判定为无意义
+            logger.info(f"[无意义检测] 纯数字但无法识别含义: {text_stripped}")
+            return True
 
         # 4. 键盘乱敲检测 - 只检测字母键盘乱敲
         # 检测模式：连续键盘上相邻的字母（如 "rtyui", "asdfg", "qwerty"）
@@ -639,6 +716,21 @@ class ChatService:
                                 return True
 
                 # 方法2：检测字符分布是否均匀（乱码特征）
+                # 但先排除常见的有意义格式（包含单位的数字）
+                meaningful_patterns = [
+                    r'\d+kg',      # 体重：90kg
+                    r'\d+万',      # 收入：3万
+                    r'\d+cm',      # 身高：180cm
+                    r'\d+岁',      # 年龄：28岁
+                    r'\d+年',      # 年份：90年
+                    r'wx[a-zA-Z0-9]+',  # 微信号
+                    r'\d+[万千百]',  # 收入格式
+                ]
+                for pattern in meaningful_patterns:
+                    if re.search(pattern, text_stripped.lower()):
+                        logger.info(f"[无意义检测] 包含有意义格式({pattern})，跳过乱码检测: {text_stripped}")
+                        return False
+
                 # 如果相邻字符总是频繁切换字母/数字类型
                 type_switches = 0
                 prev_was_digit = text_stripped[0].isdigit()
@@ -712,6 +804,27 @@ class ChatService:
         key = f"{self._nonsense_count_prefix}{user_id}"
         await redis_service.delete(key)
 
+    async def _get_confirm_count(self, user_id: str) -> int:
+        """获取用户连续回复确认词的次数（针对联系方式询问）"""
+        from src.services.redis_service import redis_service
+        key = f"{self._confirm_count_prefix}{user_id}"
+        count = await redis_service.get(key)
+        return int(count) if count else 0
+
+    async def _increment_confirm_count(self, user_id: str) -> int:
+        """增加确认词回复计数"""
+        from src.services.redis_service import redis_service
+        key = f"{self._confirm_count_prefix}{user_id}"
+        count = await self._get_confirm_count(user_id) + 1
+        await redis_service.set(key, str(count), ttl=3600)  # 1小时过期
+        return count
+
+    async def _reset_confirm_count(self, user_id: str) -> None:
+        """重置确认词回复计数"""
+        from src.services.redis_service import redis_service
+        key = f"{self._confirm_count_prefix}{user_id}"
+        await redis_service.delete(key)
+
     async def _check_and_handle_nonsense(self, user_input: str, user_id: str, user_profile) -> Optional[str]:
         """
         检测并处理无意义输入
@@ -773,11 +886,29 @@ class ChatService:
         sex = user_profile.sex if user_profile else None
         call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
 
-        responses = [
-            f"{call_name}要不我们重新聊聊？你方便告诉我怎么称呼你吗？比如叫什么名字呀～",
-            f"好啦好啦～{call_name}是不是不太想聊这些呀？那我们先简单点，你是在哪个城市呢？",
-            f"嗯呢，{call_name}我们可以先认识一下嘛～你叫什么名字呀，方便告诉我吗？",
-        ]
+        # 根据已收集的信息，问未收集的内容
+        has_name = user_profile and user_profile.last_name
+        has_location = user_profile and user_profile.location
+
+        if has_name and not has_location:
+            # 已有称呼但没有地区
+            responses = [
+                f"好啦好啦～{call_name}是不是不太想聊这些呀？那我们先简单点，你是在哪个城市呢？",
+                f"没关系呀～{call_name}方便说下你在哪个城市吗？",
+            ]
+        elif has_name:
+            # 已有称呼，问其他信息
+            responses = [
+                f"好啦好啦～{call_name}是不是不太想聊这些呀？没关系，我们慢慢来～",
+                f"没关系呀～{call_name}我们换个话题聊聊？",
+            ]
+        else:
+            # 没有称呼，可以问称呼
+            responses = [
+                f"{call_name}要不我们重新聊聊？你方便告诉我怎么称呼你吗？比如叫什么名字呀～",
+                f"好啦好啦～{call_name}是不是不太想聊这些呀？那我们先简单点，你是在哪个城市呢？",
+                f"嗯呢，{call_name}我们可以先认识一下嘛～你叫什么名字呀，方便告诉我吗？",
+            ]
         import random
         return random.choice(responses)
 
@@ -806,3 +937,50 @@ class ChatService:
         ]
         import random
         return random.choice(responses)
+
+    def _get_confirm_word_response(self, user_profile, confirm_count: int) -> Optional[str]:
+        """
+        根据用户连续回复确认词的次数返回对应的回复
+
+        Args:
+            user_profile: 用户档案
+            confirm_count: 连续回复确认词的次数
+
+        Returns:
+            Optional[str]: 回复内容，如果返回None则继续正常AI对话
+        """
+        sex = user_profile.sex if user_profile else None
+        call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
+
+        import random
+
+        if confirm_count == 1:
+            # 第一次：解释电话用途 + 询问号码
+            responses = [
+                f"好的呢～电话只是用于系统登记哈，牵线的小伙伴才能对接到你，我们是不能私下去牵线的～那{call_name}电话号码是多少呀？",
+                f"嗯嗯～这个电话是用于系统登记的，这样牵线的小伙伴才能联系到你呢～{call_name}方便发一下电话号码吗？",
+                f"好哒～电话号码是用于系统登记哈，我们这边不能私下去牵线的，需要通过系统来对接～{call_name}发一下你的电话号码给我哈～",
+            ]
+            return random.choice(responses)
+
+        elif confirm_count == 2:
+            # 第二次：询问微信
+            responses = [
+                f"好的～那{call_name}留个微信也可以呀，有合适的人选我好联系你～",
+                f"嗯嗯～{call_name}不方便留电话的话，留个微信也可以呢～",
+                f"好哒～那{call_name}加个微信吧，我这边有合适的可以联系你～",
+            ]
+            return random.choice(responses)
+
+        elif confirm_count == 3:
+            # 第三次：委婉结束话题
+            responses = [
+                f"嗯嗯好的～那先这样哈，有需要再联系我呀～",
+                f"好哒{call_name}～那我们下次再聊，祝你早日脱单哦～",
+                f"嗯嗯～那先这样吧，{call_name}有空再联系我呀～",
+            ]
+            return random.choice(responses)
+
+        else:
+            # 第四次及以上：不再回复，返回空响应
+            return ""
