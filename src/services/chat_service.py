@@ -329,7 +329,7 @@ class ChatService:
             response = await self.ai_service.generate_response(
                 message=prompt,
                 system_prompt="你是一个说中文的AI助手，请用中文回复用户。",
-                timeout=60  # 60秒超时
+                timeout=120  # 120秒超时（豆包API响应较慢）
             )
             return response
         except AIServiceException as e:
@@ -442,6 +442,9 @@ class ChatService:
 
         # 增加消息计数
         await self.dialogue_manager.increment_message_count(account_id)
+
+        # 智能追问机制：追踪AI询问的字段
+        await self._track_ai_asked_fields(account_id, clean_response)
 
     async def _build_chat_response(
         self,
@@ -937,6 +940,50 @@ class ChatService:
         ]
         import random
         return random.choice(responses)
+
+    async def _track_ai_asked_fields(self, account_id: str, ai_response: str) -> None:
+        """
+        追踪AI询问的字段（智能追问机制）
+
+        分析AI回复，检测AI询问了哪个字段，然后增加该字段的追问计数
+
+        Args:
+            account_id: 用户ID
+            ai_response: AI回复内容
+        """
+        from src.config.settings import get_field_keywords
+
+        # 从配置获取字段关键词映射
+        field_keywords = get_field_keywords()
+
+        # 检测AI询问了哪个字段
+        asked_fields = []
+        ai_response_lower = ai_response.lower()
+
+        for field, keywords in field_keywords.items():
+            for keyword in keywords:
+                if keyword in ai_response_lower or keyword in ai_response:
+                    asked_fields.append(field)
+                    break
+
+        if not asked_fields:
+            return
+
+        # 获取用户档案
+        user_profile = await self.user_service.get_user_profile(account_id)
+
+        # 只追踪未收集的字段
+        for field in asked_fields:
+            is_collected = user_profile.collection_progress.get(field, False)
+            is_skipped = field in user_profile.skipped_fields
+
+            if not is_collected and not is_skipped:
+                # 增加追问计数
+                user_profile.increment_ask_count(field)
+                logger.info(f"[智能追问] AI询问了字段 {field}，当前追问次数: {user_profile.get_ask_count(field)}")
+
+        # 保存用户档案
+        await self.user_service.save_user_profile(account_id, user_profile)
 
     def _get_confirm_word_response(self, user_profile, confirm_count: int) -> Optional[str]:
         """

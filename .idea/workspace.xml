@@ -6,6 +6,14 @@
   <component name="ChangeListManager">
     <list default="true" id="dab58ba2-b9a5-4583-a575-0c0dcae04bd8" name="Changes" comment="Changes">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/对话流程规则说明.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/对话流程规则说明.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/settings.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/infrastructure/concurrency/rate_limiter.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/infrastructure/concurrency/rate_limiter.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/models/user_profile.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/user_profile.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/services/ai_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/ai_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/services/chat_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/chat_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/services/dialogue_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/dialogue_manager.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/services/prompts.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/prompts.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

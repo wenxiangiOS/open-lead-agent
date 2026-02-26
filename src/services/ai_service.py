@@ -435,15 +435,16 @@ class AIService:
         return system.strip()
               #健康检查
     async def health_check(self) -> bool:
-        """Check AI service health"""
+        """Check AI service health
+
+        注意：不调用外部 API 以避免：
+        1. 浪费 API 配额
+        2. 健康检查响应慢
+        只检查服务是否已初始化
+        """
         try:
-            # Simple health check with a minimal request
-            await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[{"role": "user", "content": "hi"}],
-                max_tokens=1
-            )
-            return True
+            # 只检查客户端是否已初始化，不调用外部 API
+            return self.client is not None and self.model_name is not None
         except Exception as e:
             logger.error(f"AI service health check failed: {e}")
             return False

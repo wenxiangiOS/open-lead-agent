@@ -73,6 +73,12 @@ class UserProfile(BaseModel):
         description="用户拒绝提供、永久跳过的字段"
     )
 
+    # 字段追问计数（智能追问机制）
+    field_ask_count: Dict[str, int] = Field(
+        default_factory=dict,
+        description="每个字段被问过的次数，用于智能追问机制"
+    )
+
     @validator('sex')
     def validate_sex(cls, v):
         """验证性别字段"""
@@ -201,6 +207,8 @@ class UserProfile(BaseModel):
                     logging.getLogger(__name__).warning(f"last_name 被设置为拼接字符串: {validated}")
                 setattr(self, field_name, validated)
                 self.collection_progress[field_name] = True
+                # 字段成功收集后，重置追问计数
+                self.reset_ask_count(field_name)
                 self.updated_at = datetime.now()
                 return True
 
@@ -319,6 +327,61 @@ class UserProfile(BaseModel):
         if field_name in self.error_count:
             self.error_count[field_name] = 0
 
+    def increment_ask_count(self, field_name: str) -> int:
+        """
+        增加字段追问计数
+
+        Args:
+            field_name: 字段名
+
+        Returns:
+            int: 当前的追问次数
+        """
+        self.field_ask_count[field_name] = self.field_ask_count.get(field_name, 0) + 1
+        return self.field_ask_count[field_name]
+
+    def reset_ask_count(self, field_name: str) -> None:
+        """
+        重置字段追问计数（字段被成功收集时调用）
+
+        Args:
+            field_name: 字段名
+        """
+        if field_name in self.field_ask_count:
+            self.field_ask_count[field_name] = 0
+
+    def get_ask_count(self, field_name: str) -> int:
+        """
+        获取字段追问次数
+
+        Args:
+            field_name: 字段名
+
+        Returns:
+            int: 追问次数
+        """
+        return self.field_ask_count.get(field_name, 0)
+
+    def get_fields_asked_multiple_times(self, min_times: int = 2) -> list:
+        """
+        获取被问过多次但未回答的字段列表
+
+        Args:
+            min_times: 最小追问次数
+
+        Returns:
+            list: 被问过多次的字段名列表
+        """
+        result = []
+        for field, count in self.field_ask_count.items():
+            if count >= min_times:
+                # 检查字段是否还未收集且未被跳过
+                is_collected = self.collection_progress.get(field, False)
+                is_skipped = self.skipped_fields.get(field, False)
+                if not is_collected and not is_skipped:
+                    result.append((field, count))
+        return result
+
     def get_greeting(self) -> str:
         """
         根据已收集的信息生成合适的称呼
@@ -359,6 +422,7 @@ class UserProfile(BaseModel):
             "progress_percentage": round(self.get_progress() * 100, 2),
             "missing_fields": self.get_missing_fields(),
             "skipped_fields": self.skipped_fields,
+            "field_ask_count": self.field_ask_count,
         }
 
     def get_collection_summary(self) -> str:

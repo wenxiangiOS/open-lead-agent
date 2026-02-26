@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from src.models.user_profile import UserProfile
 from src.models.personality import PersonalityProfile
-from src.services.prompts import get_main_dialogue, get_extraction, build_gender_instruction, build_contact_instruction
+from src.services.prompts import get_main_dialogue, get_extraction, build_gender_instruction, build_contact_instruction, build_skipped_fields_instruction, build_ask_count_instruction
 from src.services.user_service import UserService
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,13 @@ class DialogueManager:
             user_profile.collection_progress.get('contact', False)
         )
 
+        # 获取跳过字段指令（从 user_profile.skipped_fields 获取）
+        skipped_fields = set(user_profile.skipped_fields.keys()) if user_profile.skipped_fields else set()
+        skipped_fields_instruction = build_skipped_fields_instruction(skipped_fields)
+
+        # 获取追问次数指令（智能追问机制）
+        ask_count_instruction = build_ask_count_instruction(user_profile.field_ask_count)
+
         # 构建主提示词
         # 判断是否为首次对话：基于用户资料的收集进度
         # 如果已经收集了称呼和性别，就不再显示开场白
@@ -110,11 +117,15 @@ class DialogueManager:
         # 调试日志
         logger.info(f"[is_first_chat检查] has_name={has_name}(value={user_profile.last_name}), has_sex={has_sex}(value={user_profile.sex}), is_first_chat={is_first_chat}")
         logger.info(f"[已收集摘要] {collected_info}")
+        if skipped_fields:
+            logger.info(f"[跳过字段] {skipped_fields}")
 
         main_prompt = get_main_dialogue(
             collected_info=collected_info,
             gender_instruction=gender_instruction,
             contact_instruction=contact_instruction,
+            skipped_fields_instruction=skipped_fields_instruction,
+            ask_count_instruction=ask_count_instruction,
             is_first_chat=is_first_chat
         )
 

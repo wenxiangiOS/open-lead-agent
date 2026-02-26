@@ -116,6 +116,11 @@ class UnifiedRateLimiter:
     ) -> RateLimitResult:
         """使用 Redis 检查限流（滑动窗口）"""
         try:
+            # 检查 Redis 客户端是否可用
+            if not redis_service.client:
+                logger.warning("Redis client not available, falling back to memory")
+                return await self._check_memory(key, limit, window)
+
             redis_key = f"ratelimit:{key}"
             current_time = time.time()
             window_start = current_time - window
@@ -123,9 +128,9 @@ class UnifiedRateLimiter:
             # 使用 Lua 脚本保证原子性
             lua_script = """
                 local key = KEYS[1]
-                local window_start = ARGV[1]
-                local current_time = ARGV[2]
-                local limit = ARGV[3]
+                local window_start = tonumber(ARGV[1])
+                local current_time = tonumber(ARGV[2])
+                local limit = tonumber(ARGV[3])
 
                 -- 删除窗口外的记录
                 redis.call('ZREMRANGEBYSCORE', key, 0, window_start)
@@ -138,7 +143,7 @@ class UnifiedRateLimiter:
                     -- 添加当前请求
                     redis.call('ZADD', key, current_time, current_time)
                     -- 设置过期时间
-                    redis.call('EXPIRE', key, tonumber(limit))
+                    redis.call('EXPIRE', key, limit)
                     return {1, limit, limit - current_count - 1}
                 else
                     return {0, limit, 0}

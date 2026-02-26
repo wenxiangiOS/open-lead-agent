@@ -225,3 +225,97 @@ def reload_settings(env_file: Optional[str] = None) -> Settings:
     global settings
     settings = load_settings(env_file)
     return settings
+
+
+# ==================== 字段配置 ====================
+# 智能追问机制的字段配置（新增字段只需在此处添加）
+
+FIELD_CONFIG = {
+    'last_name': {
+        'chinese_name': '称呼',
+        'keywords': ['怎么称呼', '叫什么', '称呼你', '你的名字', '你叫什么'],
+        'follow_up_hint': '告诉我名字的话，到时候匹配到合适的人可以方便称呼你～',
+        'normal_question': '方便告诉我怎么称呼你呢',
+    },
+    'sex': {
+        'chinese_name': '性别',
+        'keywords': ['小哥哥还是小姐姐', '男生还是女生', '男的还是女的', '性别'],
+        'follow_up_hint': '知道你的性别才能帮你匹配呀～',
+        'normal_question': '我是叫你小哥哥还是小姐姐呀',
+    },
+    'age': {
+        'chinese_name': '年龄',
+        'keywords': ['多大', '几岁', '年龄', '哪年的', '出生', '90后', '80后', '00后'],
+        'follow_up_hint': '告诉我年龄的话，可以帮你匹配年龄合适的～',
+        'normal_question': '今年多大呀',
+    },
+    'height': {
+        'chinese_name': '身高',
+        'keywords': ['身高', '多高', 'cm', '厘米'],
+        'follow_up_hint': '这样我好帮你匹配身高合适的～',
+        'normal_question': '身高多少呀',
+    },
+    'weight': {
+        'chinese_name': '体重',
+        'keywords': ['体重', '多重', 'kg', '公斤', '斤'],
+        'follow_up_hint': '有些女生会比较在意这个呢～',
+        'normal_question': '体重多少呀',
+    },
+    'location': {
+        'chinese_name': '所在地',
+        'keywords': ['哪个城市', '在哪里', '坐标', '所在地', '在什么', '住哪'],
+        'follow_up_hint': '知道你的位置才能帮你匹配同城的呢～',
+        'normal_question': '在哪个城市呀',
+    },
+    'education': {
+        'chinese_name': '学历',
+        'keywords': ['学历', '什么学历', '本科', '硕士', '博士', '大专'],
+        'follow_up_hint': '这样匹配的时候可以考虑学历相当的～',
+        'normal_question': '学历是什么呀',
+    },
+    'occupation': {
+        'chinese_name': '职业',
+        'keywords': ['职业', '做什么', '工作', '干什么'],
+        'follow_up_hint': '职业稳定的话会更受欢迎呢～',
+        'normal_question': '做什么工作的呀',
+    },
+    'monthly_income': {
+        'chinese_name': '月收入',
+        'keywords': ['月收入', '收入', '月薪', '赚多少', '工资', '年薪'],
+        'follow_up_hint': '这样我能帮你筛选条件相当的对象～',
+        'normal_question': '月收入大概多少呀',
+    },
+    'marital_status': {
+        'chinese_name': '婚况',
+        'keywords': ['婚况', '单身', '离异', '感情状态', '结婚没', '已婚'],
+        'follow_up_hint': '这样我好帮你匹配节奏一致的人～',
+        'normal_question': '感情状态是单身吗',
+    },
+    'contact': {
+        'chinese_name': '联系方式',
+        'keywords': ['电话', '联系方式', '微信', '手机号', '号码'],
+        'follow_up_hint': '匹配合适的话需要联系你呢～',
+        'normal_question': '方便留个电话吗',
+    },
+    'partner_requirement': {
+        'chinese_name': '择偶要求',
+        'keywords': ['择偶要求', '找什么样的', '有什么要求', '要求对方', '另一半'],
+        'follow_up_hint': '告诉我你的要求，才能帮你精准匹配～',
+        'normal_question': '希望找什么样的呢',
+    },
+}
+
+
+def get_field_config(field_name: str) -> dict:
+    """获取单个字段配置"""
+    return FIELD_CONFIG.get(field_name, {})
+
+
+def get_all_field_names() -> dict:
+    """获取所有字段的中文名称映射 {英文名: 中文名}"""
+    return {k: v['chinese_name'] for k, v in FIELD_CONFIG.items()}
+
+
+def get_field_keywords() -> dict:
+    """获取所有字段的关键词映射 {英文名: 关键词列表}"""
+    return {k: v['keywords'] for k, v in FIELD_CONFIG.items()}
