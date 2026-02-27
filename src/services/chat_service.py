@@ -408,8 +408,7 @@ class ChatService:
             logger.info(f"[联系方式验证成功]")
             return success_msg or ai_response
         else:
-            # 撤销保存
-            user_profile = await self.user_service.get_user_profile(account_id)
+            # 撤销保存 - 直接修改传入的 user_profile 对象
             user_profile.contact = None
             user_profile.collection_progress['contact'] = False
             await self.user_service.save_user_profile(account_id, user_profile)

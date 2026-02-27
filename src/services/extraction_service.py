@@ -265,6 +265,41 @@ class ExtractionService:
                 # 检查字段是否需要更新
                 is_collected = user_profile.collection_progress.get(mapped_field, False)
                 current_value = getattr(user_profile, mapped_field, None)
+
+                # 特殊处理：择偶要求字段需要累积而不是覆盖
+                if mapped_field == "partner_requirement":
+                    # 结束信号词（表示用户没有其他要求了）
+                    ending_signals = ['无其他补充要求', '无特别要求', '没有了', '没其他', '就这些', '无要求']
+                    is_ending_signal = any(signal in value for signal in ending_signals)
+
+                    if is_ending_signal:
+                        # 结束信号不需要更新，保持原值
+                        logger.info(f"[择偶要求] 收到结束信号: {value}，保持原值")
+                        continue
+
+                    if current_value:
+                        # 已有旧值，需要累积追加
+                        # 检查新值是否已经存在于旧值中（去重）
+                        existing_requirements = [r.strip() for r in current_value.split(',')]
+
+                        # 规范化新值用于比较
+                        normalized_new = value.strip()
+                        is_duplicate = False
+                        for existing in existing_requirements:
+                            # 检查是否重复（包含关系）
+                            if normalized_new in existing or existing in normalized_new:
+                                is_duplicate = True
+                                break
+
+                        if is_duplicate:
+                            logger.info(f"[择偶要求] 跳过重复值: {value}")
+                            continue
+
+                        # 追加新值
+                        new_value = f"{current_value},{value}"
+                        logger.info(f"[择偶要求] 累积追加: {current_value} + {value} → {new_value}")
+                        value = new_value
+
                 needs_update = not is_collected or (current_value != value)
 
                 if needs_update:

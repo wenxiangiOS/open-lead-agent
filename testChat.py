@@ -7,6 +7,13 @@
 
 import os
 import sys
+
+# 清除代理环境变量（火山引擎 API 直连）
+for proxy_var in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']:
+    os.environ.pop(proxy_var, None)
+# 设置直连域名
+os.environ['NO_PROXY'] = '.bigmodel.cn,bigmodel.cn,.doubao.com,doubao.com,.volces.com,volces.com,localhost,127.0.0.1,::1,.cn'
+os.environ['no_proxy'] = '.bigmodel.cn,bigmodel.cn,.doubao.com,doubao.com,.volces.com,volces.com,localhost,127.0.0.1,::1,.cn'
 import asyncio
 import logging
 from datetime import datetime

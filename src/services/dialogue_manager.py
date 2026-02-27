@@ -129,8 +129,17 @@ class DialogueManager:
             is_first_chat=is_first_chat
         )
 
-        # 添加信息提取提示词
-        extraction_prompt = get_extraction(user_message)
+        # 获取上一轮 AI 回复（用于上下文感知提取）
+        last_ai_response = conversation_context.get('recent_responses', [])
+        last_question = last_ai_response[-1] if last_ai_response else ""
+        if last_question:
+            logger.info(f"[上下文提取] 上一轮AI回复: {last_question[:100]}...")
+
+        # 添加信息提取提示词（传递 last_question 用于上下文感知）
+        extraction_prompt = get_extraction(
+            user_message=user_message,
+            last_question=last_question
+        )
 
         # 组合完整提示词
         full_prompt = f"{main_prompt}\n\n{extraction_prompt}"
