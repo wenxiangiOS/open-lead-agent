@@ -269,7 +269,7 @@ class ExtractionService:
                 # 特殊处理：择偶要求字段需要累积而不是覆盖
                 if mapped_field == "partner_requirement":
                     # 结束信号词（表示用户没有其他要求了）
-                    ending_signals = ['无其他补充要求', '无特别要求', '没有了', '没其他', '就这些', '无要求']
+                    ending_signals = ['没有', '没有了', '没其他', '就这些', '无其他要求', '无其他补充要求', '无特别要求', '无要求', '暂时没有']
                     is_ending_signal = any(signal in value for signal in ending_signals)
 
                     if is_ending_signal:
