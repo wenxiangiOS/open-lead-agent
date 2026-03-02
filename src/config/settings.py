@@ -233,7 +233,7 @@ def reload_settings(env_file: Optional[str] = None) -> Settings:
 FIELD_CONFIG = {
     'last_name': {
         'chinese_name': '称呼',
-        'keywords': ['怎么称呼', '叫什么', '称呼你', '你的名字', '你叫什么'],
+        'keywords': ['怎么称呼', '叫什么', '称呼你', '你的名字', '你叫什么', '称呼'],
         'follow_up_hint': '告诉我名字的话，到时候匹配到合适的人可以方便称呼你～',
         'normal_question': '方便告诉我怎么称呼你呢',
     },

@@ -269,13 +269,30 @@ class ExtractionService:
                 # 特殊处理：择偶要求字段需要累积而不是覆盖
                 if mapped_field == "partner_requirement":
                     # 结束信号词（表示用户没有其他要求了）
-                    ending_signals = ['没有', '没有了', '没其他', '就这些', '无其他要求', '无其他补充要求', '无特别要求', '无要求', '暂时没有']
-                    is_ending_signal = any(signal in value for signal in ending_signals)
+                    # 注意：只有当值**完全匹配**这些结束信号时才跳过
+                    # 如果包含其他内容（如"看感觉"、"随缘"等），则需要收集
+                    pure_ending_signals = ['没有', '没有了', '没其他', '就这些', '无其他要求', '无要求', '暂时没有', '无']
+                    # 有价值的内容关键词（即使包含结束信号，也要收集这些内容）
+                    valuable_keywords = ['看感觉', '随缘', '看眼缘', '看缘分', '顺其自然', '都可以', '不限']
 
-                    if is_ending_signal:
-                        # 结束信号不需要更新，保持原值
-                        logger.info(f"[择偶要求] 收到结束信号: {value}，保持原值")
+                    # 检查是否包含有价值的内容
+                    has_valuable_content = any(kw in value for kw in valuable_keywords)
+
+                    # 只有当值纯粹是结束信号且不包含有价值内容时才跳过
+                    is_pure_ending = value.strip() in pure_ending_signals
+
+                    if is_pure_ending and not has_valuable_content:
+                        # 纯结束信号不需要更新，保持原值
+                        logger.info(f"[择偶要求] 收到纯结束信号: {value}，保持原值")
                         continue
+
+                    # 如果包含有价值内容，提取有价值部分
+                    if has_valuable_content:
+                        # 提取有价值的关键词
+                        extracted_values = [kw for kw in valuable_keywords if kw in value]
+                        if extracted_values:
+                            value = '、'.join(extracted_values)
+                            logger.info(f"[择偶要求] 提取有价值内容: {value}")
 
                     if current_value:
                         # 已有旧值，需要累积追加
@@ -337,6 +354,22 @@ class ExtractionService:
         Returns:
             str: 已收集信息摘要
         """
+        # 字段名映射（英文 -> 中文）
+        field_name_map = {
+            'last_name': '称呼',
+            'sex': '性别',
+            'age': '年龄',
+            'height': '身高',
+            'weight': '体重',
+            'location': '所在地',
+            'education': '学历',
+            'occupation': '职业',
+            'monthly_income': '月收入',
+            'marital_status': '婚况',
+            'contact': '联系方式',
+            'partner_requirement': '择偶要求'
+        }
+
         # 按固定顺序收集
         parts = []
         if user_profile.last_name:
@@ -363,6 +396,7 @@ class ExtractionService:
         if user_profile.marital_status:
             parts.append(str(user_profile.marital_status))
 
+        # 构建基础摘要
         if parts:
             # 添加择偶要求（如果有）- 在联系方式之前
             if user_profile.partner_requirement:
@@ -374,8 +408,25 @@ class ExtractionService:
                 # 确保 collection_progress 也被标记（用于 is_collection_complete()）
                 if not user_profile.collection_progress.get('contact', False):
                     user_profile.collection_progress['contact'] = True
-            return "【已收集】" + ",".join(parts)
-        return "【已收集】无"
+            summary = "【已收集】" + ",".join(parts)
+        else:
+            summary = "【已收集】无"
+
+        # 添加"已跳过"的字段列表（问了2次及以上未回答的字段）
+        skipped_fields = []
+        for field, count in user_profile.field_ask_count.items():
+            if count >= 2:
+                # 检查字段是否还未收集
+                is_collected = user_profile.collection_progress.get(field, False)
+                has_value = getattr(user_profile, field, None) is not None
+                if not is_collected and not has_value:
+                    field_cn = field_name_map.get(field, field)
+                    skipped_fields.append(f"{field_cn}({count}次未答)")
+
+        if skipped_fields:
+            summary += "\n【⚠️已跳过】" + "、".join(skipped_fields) + "（禁止再问这些字段！）"
+
+        return summary
 
     def get_recent_collected_info_prompt(
         self,

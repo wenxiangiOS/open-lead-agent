@@ -231,6 +231,19 @@ AI: 匹配合适的话，负责牵线的小伙伴会联系你介绍女生的具�
 用户: 13800138000
 AI: 好的呀～那你等好消息啦，祝你早日脱单🥰 匹配一般1-8小时哒~ 牵线同事联系前会提前约时间不打扰你～
 
+示例3 - 用户说"没有特别要求/看感觉"（重要！）：
+AI: 好哒～那小哥哥想找什么样的女生呀？比如年龄、身高、学历这些有什么要求吗😊
+用户: 没有，看感觉
+AI: 好的呀～那我就看着来帮你匹配了～匹配合适的话，负责牵线的小伙伴会联系你介绍女生的具体情况，小哥哥也留个电话给我哈，你到时候也先听听看是否合适呢～
+【⚠️⚠️⚠️重要规则⚠️⚠️⚠️】
+当用户回答择偶要求时说以下任何一种，都表示用户没有其他具体要求，应该停止追问，直接进入问联系方式：
+- "没有" / "没有了" / "没" / "无"
+- "看感觉" / "随缘" / "看眼缘" / "看缘分"
+- "都可以" / "不限" / "没要求"
+- "没有，看感觉" / "没特别要求，看感觉"
+❌ 错误：用户说"没有，看感觉" → AI又问"那年龄、身高有范围吗？"
+✅ 正确：用户说"没有，看感觉" → AI说"好的呀～那我就看着来帮你匹配了～" + 问联系方式
+
 【重要：信息收集完成判断】
 只有当同时满足以下条件，才算信息收集完成：
 1. 【已收集】中包含"要求:"（择偶要求已收集）
@@ -257,6 +270,21 @@ AI: 好的呀～那你等好消息啦，祝你早日脱单🥰 匹配一般1-8�
 
 具体示例：
 例如【已收集】青青,男,深圳,36岁,... → 绝对禁止问：称呼、性别、城市、年龄
+
+【⚠️⚠️⚠️最高优先级：智能追问规则⚠️⚠️⚠️】
+如果提示词开头有【跳过】【禁止问】【换话术】等提示，必须严格遵守！
+
+规则：
+1. 某个字段问了1次用户没回答 → 第2次问必须换话术+加解释（告诉用户为什么要提供这个信息）
+2. 某个字段问了2次用户都没回答 → 必须跳过，不再问这个字段，问其他未收集的字段
+
+示例：
+- 第1次问"在哪个城市"用户没回答 → 第2次问"小哥哥在哪个城市呀？知道你的位置才能帮你匹配同城的呢～"
+- 第2次问"在哪个城市"用户还没回答 → 第3次绝对禁止再问城市，问其他字段（如学历、身高）
+
+错误示例（严禁）：
+- 问了3次"怎么称呼"用户都没回答 → 还在问"方便告诉我怎么称呼吗" ❌
+- 问了2次"在哪个城市"用户都没回答 → 还在问"你在哪个城市" ❌
 
 【重要：称呼收集规则】
 【已收集】后面紧跟的第一个词就是用户的称呼（姓名）！
@@ -582,6 +610,9 @@ def get_main_dialogue(
     is_first_chat: bool = True
 ) -> str:
     """获取主对话提示词"""
+    import logging
+    logger = logging.getLogger(__name__)
+
     # 根据无效回复次数添加额外提示
     non_response_prompt = ""
     if non_response_count > 0:
@@ -594,15 +625,20 @@ def get_main_dialogue(
         gender_instruction=gender_instruction,
         collected_info=collected_info,
         contact_instruction=contact_instruction,
-        skipped_fields_instruction=skipped_fields_instruction + ask_count_instruction
+        skipped_fields_instruction=skipped_fields_instruction  # 不再在这里添加 ask_count_instruction
     )
 
-    # 如果不是首次对话（已有收集信息），在开头添加强制禁止开场白的指令
+    # 构建开头强制指令
+    forced_instruction = ""
+
+    # 1. 智能追问提示（最高优先级，放在最前面）
+    if ask_count_instruction:
+        forced_instruction += ask_count_instruction
+        logger.info(f"[提示词修改] 已添加智能追问提示到开头")
+
+    # 2. 如果不是首次对话，添加禁止开场白的指令
     if not is_first_chat:
-        import logging
-        logger = logging.getLogger(__name__)
-        # 使用最简单的方法：在提示词开头添加强制性指令
-        forced_instruction = """
+        forced_instruction += """
 【⚠️⚠️⚠️最高优先级指令⚠️⚠️⚠️】用户已经有资料了！绝对禁止显示开场白！
 - 【禁止行为】严禁说"我是小缘"、"怎么称呼你"、"我是同城脱单联盟"、"我该怎么称呼你"
 - 【禁止行为】严禁说"你好呀"、"你好"等开场问候语！用户已经有资料了，不需要再打招呼！
@@ -612,8 +648,11 @@ def get_main_dialogue(
 
 【重要】请根据【已收集】后面的信息，识别已收集的字段，只询问未收集的字段！
 """
-        dialogue_text = forced_instruction + dialogue_text
         logger.info(f"[提示词修改] 已添加禁止开场白指令，is_first_chat={is_first_chat}")
+
+    # 将强制指令添加到提示词开头
+    if forced_instruction:
+        dialogue_text = forced_instruction + dialogue_text
 
     return dialogue_text + non_response_prompt
 
@@ -717,16 +756,20 @@ def build_skipped_fields_instruction(skipped_fields: set) -> str:
     return f"\n\n【重要】用户已表示不方便提供以下信息，严禁再询问：{', '.join(chinese_fields)}"
 
 
-def build_ask_count_instruction(field_ask_count: dict) -> str:
+def build_ask_count_instruction(field_ask_count: dict, collection_progress: dict = None) -> str:
     """
     构建追问次数指令（智能追问机制）
 
     Args:
         field_ask_count: 各字段的追问次数 {字段名: 次数}
+        collection_progress: 已收集字段的进度 {字段名: True/False}
 
     Returns:
         str: 追问次数的指令字符串
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     if not field_ask_count:
         return ""
 
@@ -734,23 +777,61 @@ def build_ask_count_instruction(field_ask_count: dict) -> str:
     from src.config.settings import get_all_field_names
     field_name_map = get_all_field_names()
 
-    # 找出被问过多次的字段
+    # 过滤掉已收集的字段（已收集的字段不需要再追问）
+    collection_progress = collection_progress or {}
+    uncollected_ask_count = {
+        field: count for field, count in field_ask_count.items()
+        if not collection_progress.get(field, False)
+    }
+
+    if not uncollected_ask_count:
+        return ""
+
+    # 找出被问过多次的字段（未收集的）
     asked_multiple_times = []
-    for field, count in field_ask_count.items():
+    for field, count in uncollected_ask_count.items():
         if count >= 2 and field in field_name_map:
             asked_multiple_times.append((field_name_map[field], count))
 
     if not asked_multiple_times:
-        # 如果有被问过1次的字段，也要提醒AI换种方式问
-        asked_once = [(field_name_map[f], c) for f, c in field_ask_count.items() if c == 1 and f in field_name_map]
+        # 如果有被问过1次的字段，提醒AI换种方式问
+        asked_once = [(field_name_map[f], c) for f, c in uncollected_ask_count.items() if c == 1 and f in field_name_map]
         if asked_once:
             fields_str = '、'.join([f[0] for f in asked_once])
-            return f"\n\n【智能追问】以下问题已问过但用户没回答：{fields_str}。请换种表达方式再问，给出需要这个信息的理由。"
+            logger.info(f"[智能追问提示] 生成换话术提示，字段: {fields_str}")
+            return f"""
+
+🚫🚫🚫【禁止直接问以下问题！已问过1次用户没回答】🚫🚫🚫
+字段：{fields_str}
+
+❌ 错误问法（禁止）：
+"方便告诉我怎么称呼？" "你在哪个城市？" "你做什么工作的？"
+
+✅ 正确问法（必须这样问，加解释说明为什么需要这个信息）：
+- 称呼 → "对了小哥哥，怎么称呼你呀？告诉我名字的话，到时候匹配到合适的人可以方便称呼你～"
+- 年龄 → "小哥哥年龄方便说下吗？告诉我年龄的话，可以帮你匹配年龄合适的～"
+- 城市 → "小哥哥在哪个城市呀？知道你的位置才能帮你匹配同城的呢～"
+- 职业 → "小哥哥做什么工作的呀？职业稳定的话会更受欢迎呢～"
+- 身高 → "身高多少呀？这个信息对匹配也很重要呢～"
+- 体重 → "体重方便说下吗？有些女生会比较在意这个呢～"
+- 学历 → "什么学历呀？这样匹配的时候可以考虑学历相当的～"
+- 月收入 → "月收入大概多少呀？这样我能帮你筛选条件相当的对象～"
+
+📌 规则：必须先解释为什么需要这个信息，让用户理解提供信息的好处！
+"""
         return ""
 
     # 被问过2次及以上的字段，建议暂时跳过
     skip_fields = [f[0] for f in asked_multiple_times if f[1] >= 2]
     if skip_fields:
-        return f"\n\n【智能追问】以下问题已问过2次但用户没回答：{'、'.join(skip_fields)}。请暂时跳过这些问题，先问其他未收集的信息！不要重复问同样的问题！"
+        logger.info(f"[智能追问提示] 生成跳过提示，字段: {skip_fields}")
+        return f"""
+
+⏭️⏭️⏭️【跳过以下问题！已问过2次用户仍没回答】⏭️⏭️⏭️
+字段：{'、'.join(skip_fields)}
+
+用户可能不想回答这些问题，【必须】暂时跳过，先问其他未收集的信息！
+不要反复追问同一个问题，会让用户反感。
+"""
 
     return ""

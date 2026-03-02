@@ -105,7 +105,10 @@ class DialogueManager:
         skipped_fields_instruction = build_skipped_fields_instruction(skipped_fields)
 
         # 获取追问次数指令（智能追问机制）
-        ask_count_instruction = build_ask_count_instruction(user_profile.field_ask_count)
+        ask_count_instruction = build_ask_count_instruction(
+            user_profile.field_ask_count,
+            user_profile.collection_progress
+        )
 
         # 构建主提示词
         # 判断是否为首次对话：基于用户资料的收集进度

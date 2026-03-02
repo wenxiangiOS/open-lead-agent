@@ -460,20 +460,30 @@ class ChatService:
         # 获取消息计数
         message_count = await self.dialogue_manager.get_message_count(account_id)
 
+        # 辅助函数：获取字段显示值（区分"未留"和"已跳过"）
+        def get_field_display(field_name: str, value, default: str = "未留") -> str:
+            if value:
+                return str(value)
+            # 检查是否被跳过（问了2次及以上未回答）
+            ask_count = user_profile.field_ask_count.get(field_name, 0)
+            if ask_count >= 2:
+                return f"已跳过({ask_count}次未答)"
+            return default
+
         # 构建已收集信息（所有 12 个字段）
         collected_info = {
-            "sex": user_profile.sex or "未留",
-            "last_name": user_profile.last_name or "未留称呼",
-            "age": user_profile.age or "未留",
-            "height": user_profile.height or "未留",
-            "weight": user_profile.weight or "未留",
-            "location": user_profile.location or "未留",
-            "education": user_profile.education or "未留",
-            "marital_status": user_profile.marital_status or "未留",
-            "monthly_income": user_profile.monthly_income or "未留",
-            "occupation": user_profile.occupation or "未留",
-            "contact": user_profile.contact or "未留",
-            "partner_requirement": user_profile.partner_requirement or "未留"
+            "sex": get_field_display("sex", user_profile.sex),
+            "last_name": get_field_display("last_name", user_profile.last_name, "未留称呼"),
+            "age": get_field_display("age", user_profile.age),
+            "height": get_field_display("height", user_profile.height),
+            "weight": get_field_display("weight", user_profile.weight),
+            "location": get_field_display("location", user_profile.location),
+            "education": get_field_display("education", user_profile.education),
+            "marital_status": get_field_display("marital_status", user_profile.marital_status),
+            "monthly_income": get_field_display("monthly_income", user_profile.monthly_income),
+            "occupation": get_field_display("occupation", user_profile.occupation),
+            "contact": get_field_display("contact", user_profile.contact),
+            "partner_requirement": get_field_display("partner_requirement", user_profile.partner_requirement)
         }
 
         return {
@@ -955,11 +965,30 @@ class ChatService:
         # 从配置获取字段关键词映射
         field_keywords = get_field_keywords()
 
+        # 检测AI是否在问择偶要求（上下文检测）
+        # 如果AI在问择偶要求，则不追踪基本信息字段（身高、年龄、学历等）
+        partner_requirement_context_keywords = [
+            '找什么样的', '有什么要求', '择偶要求', '找什么类型',
+            '喜欢什么样的', '对...有要求', '要求对方', '对方的要求',
+            '想找', '希望找', '要求是', '有什么择偶'
+        ]
+        is_asking_partner_requirement = any(kw in ai_response for kw in partner_requirement_context_keywords)
+
+        # 在择偶要求上下文中，这些字段不应该被追踪（因为是在问对方的要求，不是用户自己的信息）
+        partner_requirement_fields = {'height', 'age', 'education', 'location', 'monthly_income', 'occupation'}
+
         # 检测AI询问了哪个字段
         asked_fields = []
         ai_response_lower = ai_response.lower()
 
         for field, keywords in field_keywords.items():
+            # 如果在问择偶要求，跳过基本信息字段
+            if is_asking_partner_requirement and field in partner_requirement_fields:
+                continue
+            # 跳过 partner_requirement 字段的追踪（它有自己的逻辑）
+            if field == 'partner_requirement':
+                continue
+
             for keyword in keywords:
                 if keyword in ai_response_lower or keyword in ai_response:
                     asked_fields.append(field)
