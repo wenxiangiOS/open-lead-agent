@@ -70,15 +70,27 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
         debug_mode = request.get("debug", False)
         logger.info(f"[DEBUG] debug_mode={debug_mode}, request keys={list(request.keys())}")
 
-        # Process the chat request
-        result = await chat_service.process_chat_request(chat_request)
-
-        # 如果是调试模式，添加已收集的用户信息
+        # 如果是调试模式，先获取追踪前的追问次数（用于判断"已跳过"）
+        field_ask_count_before = None
         if debug_mode:
             try:
                 profile_result = await chat_service.get_user_profile(chat_request.accountId)
-                profile = profile_result.get("profile", {})
-                debug_info = _format_debug_info(profile)
+                profile_before = profile_result.get("profile", {})
+                field_ask_count_before = profile_before.get("field_ask_count", {})
+            except Exception as e:
+                logger.warning(f"Failed to get profile before tracking: {e}")
+
+        # Process the chat request（内部会追踪 AI 询问的字段）
+        result = await chat_service.process_chat_request(chat_request)
+
+        # 如果是调试模式，获取最新的用户信息（包含刚提取的数据）
+        if debug_mode:
+            try:
+                profile_result = await chat_service.get_user_profile(chat_request.accountId)
+                profile_after = profile_result.get("profile", {})
+                # 使用追踪前的追问次数 + 追踪后的字段值
+                # 这样：用户刚提供的信息立即显示，但"已跳过"状态在下一轮才显示
+                debug_info = _format_debug_info_with_ask_count(profile_after, field_ask_count_before)
                 logger.info(f"[DEBUG] debug_info: {debug_info}")
                 result["debug_info"] = debug_info
             except Exception as e:
@@ -94,6 +106,58 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
     except Exception as e:
         logger.error(f"Chat processing error: {e}")
         raise HTTPException(status_code=500, detail="处理聊天请求时出错")
+
+
+def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_before: Dict[str, int] = None) -> str:
+    """
+    格式化用户已收集的信息为调试显示字符串
+
+    Args:
+        profile: 追踪后的完整 profile（包含刚提取的数据）
+        field_ask_count_before: 追踪前的追问次数（用于判断"已跳过"状态）
+
+    设计：
+        - 字段值使用追踪后的数据 → 用户刚提供的信息立即显示
+        - 追问次数使用追踪前的数据 → "已跳过"状态在下一轮才显示
+    """
+    # 字段中文名映射
+    field_names = {
+        "sex": "性别",
+        "last_name": "称呼",
+        "age": "年龄",
+        "height": "身高",
+        "weight": "体重",
+        "location": "坐标",
+        "education": "学历",
+        "marital_status": "婚况",
+        "monthly_income": "月薪",
+        "occupation": "职业",
+        "contact": "联系方式",
+        "partner_requirement": "择偶要求",
+    }
+
+    # 使用追踪前的追问次数（如果没有提供，则使用 profile 中的）
+    field_ask_count = field_ask_count_before if field_ask_count_before is not None else profile.get("field_ask_count", {})
+
+    # 使用换行格式显示
+    lines = ["\n[已收集信息]"]
+    for field, name in field_names.items():
+        value = profile.get(field)
+        if value is not None:
+            lines.append(f"  {name}: {value}")
+        else:
+            # 检查是否被跳过（用户明确拒绝）
+            skipped = profile.get("skipped_fields", {})
+            if skipped.get(field, False):
+                lines.append(f"  {name}: 跳过")
+            # 检查是否问了多次未回答（智能追问跳过）- 使用追踪前的追问次数
+            elif field_ask_count.get(field, 0) >= 2:
+                count = field_ask_count.get(field, 0)
+                lines.append(f"  {name}: 已跳过({count}次未答)")
+            else:
+                lines.append(f"  {name}: 未留")
+
+    return "\n".join(lines)
 
 
 def _format_debug_info(profile: Dict[str, Any]) -> str:
@@ -114,21 +178,28 @@ def _format_debug_info(profile: Dict[str, Any]) -> str:
         "partner_requirement": "择偶要求",
     }
 
-    items = ["[已收集:"]
+    # 获取追问次数（用于显示"已跳过(N次未答)"）
+    field_ask_count = profile.get("field_ask_count", {})
+
+    # 使用换行格式显示
+    lines = ["\n[已收集信息]"]
     for field, name in field_names.items():
         value = profile.get(field)
         if value is not None:
-            items.append(f"{name}:{value}")
+            lines.append(f"  {name}: {value}")
         else:
-            # 检查是否被跳过
+            # 检查是否被跳过（用户明确拒绝）
             skipped = profile.get("skipped_fields", {})
             if skipped.get(field, False):
-                items.append(f"{name}:跳过")
+                lines.append(f"  {name}: 跳过")
+            # 检查是否问了多次未回答（智能追问跳过）
+            elif field_ask_count.get(field, 0) >= 2:
+                count = field_ask_count.get(field, 0)
+                lines.append(f"  {name}: 已跳过({count}次未答)")
             else:
-                items.append(f"{name}:未留")
-    items.append("]")
+                lines.append(f"  {name}: 未留")
 
-    return " ".join(items)
+    return "\n".join(lines)
 
 
 @router.post(

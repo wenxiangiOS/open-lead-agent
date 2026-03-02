@@ -35,6 +35,7 @@ class ExtractionService:
         "学历": "education",
         "职业": "occupation",
         "月收入": "monthly_income",
+        "收入": "monthly_income",  # AI 可能简写为"收入"
         "婚况": "marital_status",
         "联系方式": "contact",
         "择偶要求": "partner_requirement",
@@ -59,6 +60,7 @@ class ExtractionService:
         " 身高": "height",
         " 体重": "weight",
         " 月收入": "monthly_income",
+        " 收入": "monthly_income",
         " 婚况": "marital_status",
         " 联系方式": "contact",
         " 择偶要求": "partner_requirement",
