@@ -96,6 +96,34 @@ class ChatService:
                 await self._reset_nonsense_count(account_id)
                 logger.info(f"[全新用户] 已重置无意义输入计数器: {account_id}")
 
+            # 1.6. 新用户说问候语时，返回预设开场白（不调用AI）
+            if is_empty:
+                user_input = request.question.strip()
+                # 问候词列表
+                greeting_variants = [
+                    '你好', '你好啊', '你好呀', '你好呢', '你好哦',
+                    '哈喽', '哈喽啊', '哈喽呀', '哈罗', '哈啰',
+                    '嗨', '嗨呀', '嗨啊',
+                    '在吗', '在吗呀', '有人吗', '在不在', '在不',
+                    '有人没', '诶', '哎',
+                    '您好', '您好呀', '您好啊',
+                    'hello', 'hi', 'Hello', 'Hi', 'HELLO', 'HI'
+                ]
+                # 时间问候词
+                time_greetings = ['早上好', '上午好', '中午好', '下午好', '晚上好', '早', '晚安']
+                # 判断是否是纯问候语
+                if user_input in greeting_variants or user_input in time_greetings:
+                    logger.info(f"[预设开场白] 新用户说问候语: {user_input}，返回预设开场白")
+                    # 预设开场白（不调用AI）
+                    preset_response = "你好呀～方便简单介绍一下自己吗？比如称呼、年龄、在哪个城市、做什么工作的，我好帮你匹配合适的对象哦～"
+                    return await self._build_chat_response(
+                        account_id,
+                        user_profile,
+                        preset_response,
+                        {"collected": False, "all_fields": []},
+                        request.dialogId
+                    )
+
             # 2. 检查信息是否已收集完成且用户只回复确认词（如"嗯"、"好"）
             # 如果是，直接返回空响应，避免死循环
             # 注意：只有联系方式已收集时才跳过，否则用户可能只是表示同意留电话
@@ -153,6 +181,25 @@ class ChatService:
             if not InputValidator.is_understandable(request.question):
                 error_response = "抱歉，我没太理解您的意思，能换个方式说吗？"
                 return self._success_response(error_response, request.dialogId)
+
+            # 4.4. 检测用户结束对话意图（"不说了"、"算了"等）
+            end_intent_keywords = [
+                '不说了', '不聊了', '不想聊', '算了', '算了算了',
+                '不填了', '不填', '不写了', '不写', '下次吧',
+                '先这样', '不用了', '不用', '不要了', '不要',
+                '没兴趣', '没意思', '太麻烦', '太复杂', '太细了',
+                '问的太细', '问的太多', '问题太多', '太费事'
+            ]
+            user_input_lower = request.question.strip().lower()
+            is_end_intent = any(kw in user_input_lower for kw in end_intent_keywords)
+
+            if is_end_intent:
+                # 增加结束意图计数
+                user_profile.increment_ask_count('conversation_end_intent')
+                end_count = user_profile.get_ask_count('conversation_end_intent')
+                logger.info(f"[结束意图检测] 用户说: {request.question}，结束意图计数: {end_count}")
+                # 保存用户档案
+                await self.user_service.save_user_profile(account_id, user_profile)
 
             # 4.5. 检测无意义输入（乱码、表情符号堆砌等）
             nonsense_response = await self._check_and_handle_nonsense(request.question, account_id, user_profile)
@@ -859,6 +906,39 @@ class ChatService:
 
         if is_nonsense:
             count = await self._increment_nonsense_count(user_id)
+
+            # ========== 挽留失败检测（用户在挽留阶段说"嗯"等简短确认) ==========
+            # 判断条件：
+            # 1. 有结束意图计数 >= 1（处于挽留阶段)
+            # 2. 用户输入是简短确认词（"嗯", "好的", "哦" 等)
+            # 3. 上一轮AI在挽留或接受结束（包含"慢慢来"等关键词)
+            end_intent_count = user_profile.get_ask_count('conversation_end_intent')
+            if end_intent_count >= 1:
+                last_ai_response = await self.dialogue_manager.get_last_response(user_id) or ""
+                # 挽留关键词（上一轮AI回复中包含这些词）
+                retention_keywords = [
+                    '随时可以', '随时', '想聊', '想聊了就聊', '什么时候都可以',
+                    '先这样', '下次再聊', '拜拜', '没关系', '不打扰',
+                    '慢慢来', '别急着', '不着急', '有什么不方便', '有什么顾虑',
+                    '怎么了', '可以和我说', '告诉我', '可以慢慢'
+                ]
+                # 判断上一轮AI是否在挽留/接受结束
+                if last_ai_response and any(kw in last_ai_response for kw in retention_keywords):
+                    # 检测到用户接受结束
+                    logger.info(f"[挽留失败检测] 用户接受结束，输入: {user_input}, 上一轮AI: {last_ai_response[:50]}...")
+
+                    # 重置无意义计数器（避免影响后续对话)
+                    await self._reset_nonsense_count(user_id)
+
+                    # 返回简短告别
+                    sex = user_profile.sex if user_profile else None
+                    call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
+                    responses = [
+                        f"好的～{call_name}，那先这样啦～有需要随时再来找我哦～拜拜👋",
+                        f"嗯嗯，好的～{call_name}，那我们下次再聊～拜拜啦👋",
+                    ]
+                    import random
+                    return random.choice(responses)
 
             # 第一次：友好提醒
             if count == 1:

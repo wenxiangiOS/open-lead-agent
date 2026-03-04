@@ -794,11 +794,51 @@ def build_ask_count_instruction(field_ask_count: dict, collection_progress: dict
     from src.config.settings import get_all_field_names
     field_name_map = get_all_field_names()
 
+    # 特殊处理：结束对话意图（用户想放弃/不聊了）- 最高优先级
+    end_intent_count = field_ask_count.get('conversation_end_intent', 0)
+    end_intent_instruction = ""
+
+    if end_intent_count == 1:
+        # 第1次想结束，挽留
+        end_intent_instruction = """
+
+【⚠️⚠️重要：用户想结束对话，必须挽留！⚠️⚠️】
+用户说"不聊了"或类似表达，你必须挽留，了解用户的顾虑！
+- 话术示例："怎么了？是有什么顾虑吗？可以和我说说～"
+- 话术示例："别急着走呀，是有什么不方便的吗？我们可以慢慢来～"
+- 禁止直接说结束语！必须先关心用户，了解原因！
+"""
+        logger.info(f"[结束对话意图] 用户第1次想结束，生成挽留指令")
+    elif end_intent_count == 2:
+        # 第2次想结束，再挽留
+        end_intent_instruction = """
+
+【⚠️重要：用户再次想结束对话，再挽留一次】
+用户再次说不想聊了，再挽留一次！
+- 话术示例："是不是我问得太多了？没关系，我们可以慢慢来，你什么时候方便再继续也行～"
+- 话术示例："没关系的，有什么问题可以告诉我，我们慢慢聊～"
+- 禁止直接说结束语！再挽留一次！
+"""
+        logger.info(f"[结束对话意图] 用户第2次想结束，生成再挽留指令")
+    elif end_intent_count >= 3:
+        # 第3次想结束，可以礼貌结束
+        end_intent_instruction = """
+
+【结束对话】用户多次想结束，可以礼貌结束对话。
+- 话术："好的呀～有需要随时来找我哦，祝你一切顺利～"
+"""
+        logger.info(f"[结束对话意图] 用户第3次想结束，生成结束语指令")
+
+    # 挽留期间禁止信息收集（当结束意图计数 >= 1 时，不再生成普通的信息收集提示)
+    if end_intent_count >= 1:
+        logger.info(f"[挽留期间] 结束意图计数={end_intent_count}，不生成信息收集提示")
+        return end_intent_instruction
+
     # 过滤掉已收集的字段（已收集的字段不需要再追问）
     collection_progress = collection_progress or {}
     uncollected_ask_count = {
         field: count for field, count in field_ask_count.items()
-        if not collection_progress.get(field, False)
+        if not collection_progress.get(field, False) and field not in ['phone_refusal', 'wechat_refusal', 'conversation_end_intent']
     }
 
     if not uncollected_ask_count:
