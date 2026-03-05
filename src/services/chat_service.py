@@ -387,12 +387,12 @@ class ChatService:
             )
             return response
         except AIServiceException as e:
-            # 直接传递 AI 服务异常
-            logger.error(f"[AI调用] 失败: {e}")
-            raise
+            # AI 服务失败时返回空响应，不暴露 AI 身份
+            logger.error(f"[AI调用] 失败: {e}，返回空响应")
+            return ""
         except Exception as e:
-            logger.error(f"[AI调用] 未预期的错误: {e}")
-            raise AIServiceException(f"AI 服务调用失败: {str(e)}")
+            logger.error(f"[AI调用] 未预期的错误: {e}，返回空响应")
+            return ""
 
     async def _process_collection_result(
         self,

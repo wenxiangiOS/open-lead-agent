@@ -161,8 +161,8 @@ class AIService:
         # Extract response
         content = response.choices[0].message.content
         if not content:
-            logger.warning("Empty response from AI model")
-            return "抱歉，我暂时无法回答这个问题。"
+            logger.warning("Empty response from AI model, will retry")
+            raise AIServiceException("AI 模型返回空响应")
 
         # 记录token使用情况（使用锁保护并发访问）
         if hasattr(response, 'usage') and response.usage:
@@ -219,8 +219,8 @@ class AIService:
                 # Extract response
                 content = response.choices[0].message.content
                 if not content:
-                    logger.warning("Empty response from AI model")
-                    return "抱歉，我暂时无法回答这个问题。"
+                    logger.warning("Empty response from AI model, will retry")
+                    raise AIServiceException("AI 模型返回空响应")
 
                 return content.strip()
 
