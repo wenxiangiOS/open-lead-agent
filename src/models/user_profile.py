@@ -79,6 +79,12 @@ class UserProfile(BaseModel):
         description="每个字段被问过的次数，用于智能追问机制"
     )
 
+    # 对话是否已结束（挽留失败后设置为 True）
+    conversation_ended: bool = Field(
+        default=False,
+        description="对话是否已结束（挽留失败后设置）"
+    )
+
     @validator('sex')
     def validate_sex(cls, v):
         """验证性别字段"""
@@ -92,14 +98,19 @@ class UserProfile(BaseModel):
 
     @validator('contact')
     def validate_contact(cls, v):
-        """验证联系方式（电话号码）"""
+        """验证联系方式（电话号码，支持中国大陆和香港）"""
         if v is not None:
             v = str(v).strip()
             # 移除非数字字符
             cleaned = ''.join(c for c in v if c.isdigit())
-            # 中国手机号验证
-            if len(cleaned) == 11 and cleaned.startswith('1'):
+            # 手机号验证：中国大陆(1开头+3-9,11位) 或 香港(5-9开头,8位)
+            import re
+            if re.match(r'^1[3-9]\d{9}$', cleaned):  # 中国大陆
                 return cleaned
+            if re.match(r'^[5-9]\d{7}$', cleaned):  # 香港
+                return cleaned
+            # 验证失败返回 None，拒绝无效号码
+            return None
         return v
 
     @validator('age')
@@ -423,6 +434,8 @@ class UserProfile(BaseModel):
             "missing_fields": self.get_missing_fields(),
             "skipped_fields": self.skipped_fields,
             "field_ask_count": self.field_ask_count,
+            "error_count": self.error_count,
+            "conversation_ended": self.conversation_ended,
         }
 
     def get_collection_summary(self) -> str:

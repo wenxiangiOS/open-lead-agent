@@ -94,35 +94,39 @@ class ChatService:
             logger.info(f"[用户档案检查] account_id={account_id}, is_empty={is_empty}, last_name={user_profile.last_name}")
             if is_empty:
                 await self._reset_nonsense_count(account_id)
-                logger.info(f"[全新用户] 已重置无意义输入计数器: {account_id}")
+                # 重置追问计数器（新用户不应该有之前的追问记录）
+                user_profile.field_ask_count = {}
+                # 重置对话结束状态（新用户重新开始）
+                user_profile.conversation_ended = False
+                # 立即保存重置的状态，避免后续异常导致丢失
+                await self.user_service.save_user_profile(account_id, user_profile)
+                logger.info(f"[全新用户] 已重置无意义输入计数器、追问计数器和对话结束状态: {account_id}")
 
-            # 1.6. 新用户说问候语时，返回预设开场白（不调用AI）
-            if is_empty:
-                user_input = request.question.strip()
-                # 问候词列表
-                greeting_variants = [
-                    '你好', '你好啊', '你好呀', '你好呢', '你好哦',
-                    '哈喽', '哈喽啊', '哈喽呀', '哈罗', '哈啰',
-                    '嗨', '嗨呀', '嗨啊',
-                    '在吗', '在吗呀', '有人吗', '在不在', '在不',
-                    '有人没', '诶', '哎',
-                    '您好', '您好呀', '您好啊',
-                    'hello', 'hi', 'Hello', 'Hi', 'HELLO', 'HI'
-                ]
-                # 时间问候词
-                time_greetings = ['早上好', '上午好', '中午好', '下午好', '晚上好', '早', '晚安']
-                # 判断是否是纯问候语
-                if user_input in greeting_variants or user_input in time_greetings:
-                    logger.info(f"[预设开场白] 新用户说问候语: {user_input}，返回预设开场白")
-                    # 预设开场白（不调用AI）
-                    preset_response = "你好呀～方便简单介绍一下自己吗？比如称呼、年龄、在哪个城市、做什么工作的，我好帮你匹配合适的对象哦～"
+            # 1.6. 检查对话是否已结束（挽留失败后）
+            # 如果已结束，用户再发消息时只返回简短告别，不再收集信息
+            if user_profile.conversation_ended:
+                logger.info(f"[对话已结束] 用户继续发消息，返回简短告别: {account_id}")
+                sex = user_profile.sex
+                call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
+                # 检查是否已经发送过告别（避免重复）
+                last_response = await self.dialogue_manager.get_last_response(account_id) or ""
+                if "有需要随时再来找我" in last_response or "下次再聊" in last_response:
+                    # 已经发送过告别，返回空响应
                     return await self._build_chat_response(
                         account_id,
                         user_profile,
-                        preset_response,
+                        "",
                         {"collected": False, "all_fields": []},
                         request.dialogId
                     )
+                # 返回简短告别
+                return await self._build_chat_response(
+                    account_id,
+                    user_profile,
+                    f"好的～{call_name}，那先这样啦～有需要随时再来找我哦～拜拜👋",
+                    {"collected": False, "all_fields": []},
+                    request.dialogId
+                )
 
             # 2. 检查信息是否已收集完成且用户只回复确认词（如"嗯"、"好"）
             # 如果是，直接返回空响应，避免死循环
@@ -188,7 +192,10 @@ class ChatService:
                 '不填了', '不填', '不写了', '不写', '下次吧',
                 '先这样', '不用了', '不用', '不要了', '不要',
                 '没兴趣', '没意思', '太麻烦', '太复杂', '太细了',
-                '问的太细', '问的太多', '问题太多', '太费事'
+                '问的太细', '问的太多', '问题太多', '太费事',
+                '不想说了', '豆不想说了', '不想填了', '拒绝了', '不再问了',
+                '不回答了', '不答了', '不聊', '不回', '不回复',
+                '不提供', '不给', '不愿意', '不方便', '不想给'
             ]
             user_input_lower = request.question.strip().lower()
             is_end_intent = any(kw in user_input_lower for kw in end_intent_keywords)
@@ -695,8 +702,9 @@ class ChatService:
 
         # 3. 纯数字或数字+符号（且不是手机号、年龄等有意义的数字）
         if re.match(r'^[\d\s\+\-\(\)\*#]{3,}$', text_stripped):
-            # 排除手机号格式
-            if re.match(r'^1[3-9]\d{9}$', re.sub(r'\s+', '', text_stripped)):
+            # 排除手机号格式（中国大陆11位或香港8位）
+            clean_num = re.sub(r'\s+', '', text_stripped)
+            if re.match(r'^1[3-9]\d{9}$', clean_num) or re.match(r'^[5-9]\d{7}$', clean_num):
                 logger.info(f"[无意义检测] 手机号格式，判定有意义: {text_stripped}")
                 return False
 
@@ -807,8 +815,8 @@ class ChatService:
         # 6. 字符熵检测 - 唯一字符太少说明大量重复
         # 但排除手机号（手机号可能有重复数字）
         if len(text_stripped) >= 8:
-            # 先检查是否是手机号格式
-            if re.match(r'^1[3-9]\d{9}$', text_stripped):
+            # 先检查是否是手机号格式（中国大陆11位或香港8位）
+            if re.match(r'^1[3-9]\d{9}$', text_stripped) or re.match(r'^[5-9]\d{7}$', text_stripped):
                 return False  # 手机号是有意义的
             unique_chars = set(text_stripped.lower())
             unique_ratio = len(unique_chars) / len(text_stripped)
@@ -926,6 +934,10 @@ class ChatService:
                 if last_ai_response and any(kw in last_ai_response for kw in retention_keywords):
                     # 检测到用户接受结束
                     logger.info(f"[挽留失败检测] 用户接受结束，输入: {user_input}, 上一轮AI: {last_ai_response[:50]}...")
+
+                    # 标记对话已结束（避免后续重复告别）
+                    user_profile.conversation_ended = True
+                    await self.user_service.save_user_profile(user_id, user_profile)
 
                     # 重置无意义计数器（避免影响后续对话)
                     await self._reset_nonsense_count(user_id)

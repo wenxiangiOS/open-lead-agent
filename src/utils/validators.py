@@ -14,14 +14,15 @@ logger = logging.getLogger(__name__)
 class PhoneValidator:
     """手机号验证器"""
 
-    # 中国大陆手机号正则：11位数字即可（简化验证，减少误判）
-    # 移动、联通、电信的号段都在变化，过于严格的验证会导致有效号码被拒绝
-    PATTERN = r'^\d{11}$'
+    # 中国大陆手机号：1开头，第二位3-9，共11位
+    # 香港手机号：5/6/7/8/9开头，共8位
+    PATTERN_MAINLAND = r'^1[3-9]\d{9}$'
+    PATTERN_HONGKONG = r'^[5-9]\d{7}$'
 
     @classmethod
     def is_valid(cls, phone: str) -> Tuple[bool, Optional[str]]:
         """
-        验证手机号格式
+        验证手机号格式（支持中国大陆和香港）
 
         Args:
             phone: 手机号
@@ -35,11 +36,13 @@ class PhoneValidator:
         # 移除可能的空格和横杠
         clean_phone = phone.replace(' ', '').replace('-', '')
 
-        # 检查是否是11位纯数字
-        if not re.match(cls.PATTERN, clean_phone):
-            return False, "这个号码好像位数不对呢～能确认下是11位手机号或微信号吗呀"
+        # 检查中国大陆手机号（11位）或香港手机号（8位）
+        if re.match(cls.PATTERN_MAINLAND, clean_phone):
+            return True, None
+        if re.match(cls.PATTERN_HONGKONG, clean_phone):
+            return True, None
 
-        return True, None
+        return False, "这个号码好像位数不对呢～能确认下是手机号或微信号吗呀"
 
 
 class WechatValidator:
