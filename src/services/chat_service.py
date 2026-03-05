@@ -8,8 +8,10 @@
 - ChatService: 主流程编排
 """
 
+import asyncio
 import logging
-from typing import Dict, Any, Optional
+import random
+from typing import Dict, Any, Optional, List
 
 from src.models.personality import PersonalityProfile
 from src.models.requests import ChatRequest
@@ -45,6 +47,61 @@ class ChatService:
     - 使用 DialogueManager 管理对话状态
     - 本类主要负责流程编排
     """
+
+    # 预设的打招呼回复列表（按类型分组）
+    GREETING_RESPONSES: Dict[str, List[str]] = {
+        'formal': [  # 正式打招呼（你好、您好）
+            "你好呀～有什么可以帮您的吗？",
+            "你好呀～是帮自己找对象吗？",
+            "你好呀～是帮自己找对象还是帮朋友问呀？",
+        ],
+        'casual': [  # 随意打招呼（哈喽、嗨）
+            "哈喽～是帮自己找对象还是帮朋友问呀？",
+            "哈喽～你也在深圳吗？",
+            "哈喽～有什么可以帮您的吗？",
+        ],
+        'time_morning': [  # 早上问候
+            "早上好呀～有什么可以帮您的吗？",
+            "早安～是帮自己找对象吗？",
+        ],
+        'time_afternoon': [  # 下午问候
+            "下午好呀～有什么可以帮您的吗？",
+            "下午好～是帮自己找对象吗？",
+        ],
+        'time_evening': [  # 晚上问候
+            "晚上好呀～有什么可以帮您的吗？",
+            "晚上好～是帮自己找对象吗？",
+        ],
+    }
+
+    # 幽默纠正回复（用户说错时间时使用）
+    TIME_CORRECTION_RESPONSES: Dict[str, List[str]] = {
+        'morning_to_afternoon': [  # 用户说早上好，但实际是下午
+            "哈哈，现在已经是下午啦～下午好呀～是帮自己找对象吗？",
+            "哎呀，现在下午了呢～下午好呀～有什么可以帮您的吗？",
+        ],
+        'morning_to_evening': [  # 用户说早上好，但实际是晚上
+            "哈哈，现在已经是晚上啦～晚上好呀～是帮自己找对象吗？",
+            "哎呀，现在晚上了呢～晚上好呀～有什么可以帮您的吗？",
+        ],
+        'afternoon_to_morning': [  # 用户说下午好，但实际是上午
+            "哈哈，现在还是上午呢～早上好呀～是帮自己找对象吗？",
+            "哎呀，现在是上午哦～早上好呀～有什么可以帮您的吗？",
+        ],
+        'afternoon_to_evening': [  # 用户说下午好，但实际是晚上
+            "哈哈，现在已经是晚上啦～晚上好呀～是帮自己找对象吗？",
+            "哎呀，现在晚上了呢～晚上好呀～有什么可以帮您的吗？",
+        ],
+    }
+
+    # 打招呼关键词（按类型分组）
+    GREETING_KEYWORDS: Dict[str, List[str]] = {
+        'formal': ['你好', '您好'],
+        'casual': ['哈喽', '哈罗', '嗨', 'hello', 'hi', 'Hi', '在吗', '在不在'],
+        'time_morning': ['早上好', '早安', '上午好'],
+        'time_afternoon': ['下午好'],
+        'time_evening': ['晚上好'],
+    }
 
     def __init__(
         self,
@@ -216,6 +273,20 @@ class ChatService:
                     account_id,
                     user_profile,
                     nonsense_response,
+                    {},
+                    request.dialogId
+                )
+
+            # 4.6. 检测打招呼（仅当用户档案为空时使用预设回复）
+            if is_empty and self._is_greeting(request.question):
+                greeting_response = self._get_greeting_response(request.question)
+                # 模拟真人打字时间（0.3-0.8秒），避免秒回显得像机器
+                await asyncio.sleep(random.uniform(0.3, 0.8))
+                logger.info(f"[打招呼检测] 用户打招呼: {request.question}，返回预设回复: {greeting_response}")
+                return await self._build_chat_response(
+                    account_id,
+                    user_profile,
+                    greeting_response,
                     {},
                     request.dialogId
                 )
@@ -641,6 +712,96 @@ class ChatService:
             "message": "对话已重置",
             "conversation_reset": True
         }
+
+    # ============ 打招呼检测 ============
+
+    def _detect_greeting_type(self, text: str) -> Optional[str]:
+        """
+        检测打招呼的类型
+
+        Args:
+            text: 用户输入文本
+
+        Returns:
+            Optional[str]: 打招呼类型（'formal', 'casual', 'time_morning', 'time_afternoon', 'time_evening'）
+                          如果不是打招呼则返回 None
+        """
+        text_stripped = text.strip().lower()
+
+        # 如果输入太长（超过10个字符），不认为是简单打招呼
+        if len(text_stripped) > 10:
+            return None
+
+        # 按优先级检测（时间问候 > 正式问候 > 随意问候）
+        for greeting_type in ['time_morning', 'time_afternoon', 'time_evening', 'formal', 'casual']:
+            keywords = self.GREETING_KEYWORDS.get(greeting_type, [])
+            for keyword in keywords:
+                if keyword.lower() in text_stripped:
+                    return greeting_type
+
+        return None
+
+    def _is_greeting(self, text: str) -> bool:
+        """
+        检测用户是否只是在打招呼
+
+        Args:
+            text: 用户输入文本
+
+        Returns:
+            bool: 是否是打招呼
+        """
+        return self._detect_greeting_type(text) is not None
+
+    def _get_current_time_period(self) -> str:
+        """
+        获取当前时间段
+
+        Returns:
+            str: 时间段（'morning', 'afternoon', 'evening'）
+        """
+        from datetime import datetime
+        hour = datetime.now().hour
+
+        if 5 <= hour < 12:
+            return 'morning'
+        elif 12 <= hour < 18:
+            return 'afternoon'
+        else:
+            return 'evening'
+
+    def _get_greeting_response(self, text: str) -> str:
+        """
+        获取预设的打招呼回复（根据用户输入类型匹配，支持时间纠正）
+
+        Args:
+            text: 用户输入文本
+
+        Returns:
+            str: 打招呼回复
+        """
+        greeting_type = self._detect_greeting_type(text)
+        current_period = self._get_current_time_period()
+
+        # 如果用户说的是时间问候，检查是否需要纠正
+        if greeting_type and greeting_type.startswith('time_'):
+            user_period = greeting_type.replace('time_', '')  # morning/afternoon/evening
+
+            # 如果用户说的时间与实际时间不符，使用幽默纠正
+            if user_period != current_period:
+                correction_key = f"{user_period}_to_{current_period}"
+                if correction_key in self.TIME_CORRECTION_RESPONSES:
+                    responses = self.TIME_CORRECTION_RESPONSES[correction_key]
+                    logger.info(f"[时间纠正] 用户说{user_period}，实际是{current_period}，使用幽默纠正")
+                    return random.choice(responses)
+
+        # 正常匹配或非时间问候
+        if greeting_type and greeting_type in self.GREETING_RESPONSES:
+            responses = self.GREETING_RESPONSES[greeting_type]
+            return random.choice(responses)
+
+        # 默认返回正式问候
+        return random.choice(self.GREETING_RESPONSES['formal'])
 
     # ============ 无意义输入检测 ============
 
