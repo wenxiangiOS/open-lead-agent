@@ -40,6 +40,7 @@ class UserProfile(BaseModel):
     monthly_income: Optional[str] = Field(None, description="月薪（月收入范围）")
     occupation: Optional[str] = Field(None, description="职业（做什么工作）")
     contact: Optional[str] = Field(None, description="联系方式（电话/微信）")
+    wechat: Optional[str] = Field(None, description="微信号（香港用户单独收集）")
     partner_requirement: Optional[str] = Field(None, description="择偶要求（年龄/身高/学历等）")
 
     # 收集状态跟踪
@@ -79,11 +80,19 @@ class UserProfile(BaseModel):
         description="每个字段被问过的次数，用于智能追问机制"
     )
 
-    # 对话是否已结束（挽留失败后设置为 True）
-    conversation_ended: bool = Field(
-        default=False,
-        description="对话是否已结束（挽留失败后设置）"
-    )
+    # 联系方式拒绝状态（用于提前拒绝场景和香港用户场景）
+    rejected_wechat: bool = Field(default=False, description="用户是否拒绝微信（提前拒绝或香港用户场景）")
+    rejected_phone: bool = Field(default=False, description="用户是否拒绝电话（提前拒绝或香港用户场景）")
+    # 场景1：提前拒绝时的争取状态
+    wechat_persuasion_attempted: bool = Field(default=False, description="提前拒绝场景：是否已尝试争取微信")
+    phone_persuasion_attempted: bool = Field(default=False, description="提前拒绝场景：是否已尝试争取电话")
+    # 场景2：香港用户相关状态
+    wechat_attempted: bool = Field(default=False, description="香港用户：是否已尝试问微信")
+    wechat_collected: bool = Field(default=False, description="香港用户：是否已收集微信")
+
+    # 对话状态
+    conversation_ended: bool = Field(default=False, description="对话是否已结束")
+    divorce_confirmed: bool = Field(default=False, description="离异手续是否已确认办妥")
 
     @validator('sex')
     def validate_sex(cls, v):
@@ -428,6 +437,7 @@ class UserProfile(BaseModel):
             "monthly_income": self.monthly_income,
             "occupation": self.occupation,
             "contact": self.contact,
+            "wechat": self.wechat,
             "partner_requirement": self.partner_requirement,
             "collection_progress": self.collection_progress,
             "progress_percentage": round(self.get_progress() * 100, 2),
@@ -436,6 +446,13 @@ class UserProfile(BaseModel):
             "field_ask_count": self.field_ask_count,
             "error_count": self.error_count,
             "conversation_ended": self.conversation_ended,
+            "divorce_confirmed": self.divorce_confirmed,
+            "rejected_wechat": self.rejected_wechat,
+            "rejected_phone": self.rejected_phone,
+            "wechat_persuasion_attempted": self.wechat_persuasion_attempted,
+            "phone_persuasion_attempted": self.phone_persuasion_attempted,
+            "wechat_attempted": self.wechat_attempted,
+            "wechat_collected": self.wechat_collected,
         }
 
     def get_collection_summary(self) -> str:

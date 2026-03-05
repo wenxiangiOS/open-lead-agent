@@ -53,10 +53,8 @@ class ChatService:
         'formal': [  # 正式打招呼（你好、您好）
             "你好呀～有什么可以帮您的吗？",
             "你好呀～是帮自己找对象吗？",
-            "你好呀～是帮自己找对象还是帮朋友问呀？",
         ],
         'casual': [  # 随意打招呼（哈喽、嗨）
-            "哈喽～是帮自己找对象还是帮朋友问呀？",
             "哈喽～你也在深圳吗？",
             "哈喽～有什么可以帮您的吗？",
         ],
@@ -265,6 +263,31 @@ class ChatService:
                 # 保存用户档案
                 await self.user_service.save_user_profile(account_id, user_profile)
 
+            # 4.4.1. 检测分居状态（用户直接说"分居中"、"正在分居"等）
+            # 分居状态说明用户还没离婚，不符合服务条件，需要结束对话
+            separation_keywords = [
+                '分居中', '正在分居', '分居状态', '分居的', '处于分居',
+                '已经分居', '目前分居', '现在分居', '还在分居'
+            ]
+            if any(kw in user_input_lower for kw in separation_keywords):
+                user_profile.conversation_ended = True
+                user_profile.marital_status = "离异（分居中）"
+                await self.user_service.save_user_profile(account_id, user_profile)
+                logger.info(f"[分居状态识别] 用户说: {request.question}，设置 conversation_ended=True, marital_status=离异（分居中）")
+
+                # 直接返回结束语，不调用 AI
+                end_responses = [
+                    "嗯嗯理解～分居中的话暂时还不符合我们的服务条件呢～等手续都办妥了再来找我吧，祝你顺利～",
+                    "好的呢～分居状态暂时还没法帮你匹配哦～等一切都处理好了再来，不着急的～如果后续有任何需要和帮助，欢迎随时找我呀～"
+                ]
+                return await self._build_chat_response(
+                    account_id,
+                    user_profile,
+                    random.choice(end_responses),
+                    {"collected": False, "all_fields": []},
+                    request.dialogId
+                )
+
             # 4.5. 检测无意义输入（乱码、表情符号堆砌等）
             nonsense_response = await self._check_and_handle_nonsense(request.question, account_id, user_profile)
             if nonsense_response:
@@ -280,8 +303,8 @@ class ChatService:
             # 4.6. 检测打招呼（仅当用户档案为空时使用预设回复）
             if is_empty and self._is_greeting(request.question):
                 greeting_response = self._get_greeting_response(request.question)
-                # 模拟真人打字时间（0.3-0.8秒），避免秒回显得像机器
-                await asyncio.sleep(random.uniform(0.3, 0.8))
+                # 模拟真人打字时间（1.0-2.0秒），像真人在思考+打字
+                await asyncio.sleep(random.uniform(1.0, 2.0))
                 logger.info(f"[打招呼检测] 用户打招呼: {request.question}，返回预设回复: {greeting_response}")
                 return await self._build_chat_response(
                     account_id,
@@ -291,10 +314,8 @@ class ChatService:
                     request.dialogId
                 )
 
-            # 5. 检测用户拒绝
-            await self._handle_refusal_detection(request.question, account_id)
-
-            # 5. 获取对话上下文
+            # 5. 检测用户拒绝（包含提前拒绝联系方式）
+            await self._handle_refusal_detection(request.question, account_id, user_profile)
             conversation_context = await self.dialogue_manager.get_conversation_context(account_id)
 
             # 6. 构建主对话提示词
@@ -399,6 +420,18 @@ class ChatService:
                 ai_response
             )
 
+            # 10.5. 香港用户：收集电话后询问微信
+            # 检查是否是香港用户且刚收集了电话但还没收集微信
+            is_hong_user = self._is_hong_user(user_profile.location)
+            contact_just_collected = any(
+                f.get('field') == 'contact' for f in collection_result.get('all_fields', [])
+            )
+            if is_hong_user and contact_just_collected and not user_profile.wechat:
+                # 香港用户刚提供了电话，需要询问微信
+                call_name = user_profile.get_greeting()
+                enhanced_response = f"好的呀～{call_name}的电话我记下啦😊 对了，方便再留个微信号吗？这样后续联系更方便呢～"
+                logger.info(f"[香港用户] 电话收集完成，生成询问微信的回复")
+
             # 11. 清理回复（移除 XML 标签）
             final_response = self._clean_response(enhanced_response)
 
@@ -425,8 +458,8 @@ class ChatService:
             error_response = handle_error(e, context="chat", user_id=account_id)
             return self._error_response(error_response.get('error', '处理失败'), request.dialogId)
 
-    async def _handle_refusal_detection(self, user_message: str, account_id: str) -> None:
-        """处理拒绝检测"""
+    async def _handle_refusal_detection(self, user_message: str, account_id: str, user_profile: UserProfile) -> None:
+        """处理拒绝检测，包括提前拒绝联系方式"""
         last_response = await self.dialogue_manager.get_last_response(account_id)
 
         # 检测用户是否拒绝
@@ -434,6 +467,80 @@ class ChatService:
         if is_refusing and last_response:
             refused_fields = self.extraction_service.infer_refused_fields(last_response)
             self._temp_refused_fields[account_id] = refused_fields
+
+        # === 提前拒绝联系方式的检测（场景1） ===
+        # 用户在还没到问联系方式阶段时，主动说不留微信或电话
+        # 这里必须在构建提示词之前执行，以便提示词能包含争取指令
+        user_message_lower = user_message.lower()
+
+        # 通用拒绝词（用于上下文感知检测）
+        general_refuse_keywords = ['不留', '不给', '不想留', '不方便', '不要', '不行', '不可以', '没']
+
+        # 显式拒绝关键词
+        wechat_refuse_keywords = ['不留微信', '不给微信', '不想留微信', '不想要微信', '没微信', '不用微信']
+        phone_refuse_keywords = ['不留电话', '不给电话', '不想留电话', '不留手机', '不给手机', '不想留手机']
+
+        # 判断是否是显式拒绝
+        is_explicit_wechat_refuse = any(kw in user_message_lower for kw in wechat_refuse_keywords)
+        is_explicit_phone_refuse = any(kw in user_message_lower for kw in phone_refuse_keywords)
+
+        # 只有在还没收集到联系方式时才处理
+        if not user_profile.collection_progress.get('contact', False):
+            # 调试日志：打印当前状态
+            logger.info(f"[拒绝检测] 用户消息: '{user_message}', is_explicit_wechat_refuse={is_explicit_wechat_refuse}, is_explicit_phone_refuse={is_explicit_phone_refuse}")
+            logger.info(f"[拒绝检测] 当前状态: wechat_persuasion_attempted={user_profile.wechat_persuasion_attempted}, phone_persuasion_attempted={user_profile.phone_persuasion_attempted}")
+            logger.info(f"[拒绝检测] 当前状态: rejected_wechat={user_profile.rejected_wechat}, rejected_phone={user_profile.rejected_phone}")
+
+            # === 显式拒绝微信（用户明确说"不留微信"等）===
+            # 显式拒绝检测优先执行，因为它更明确
+            if is_explicit_wechat_refuse:
+                if user_profile.wechat_persuasion_attempted:
+                    # 已经尝试争取过，用户还是拒绝，标记为最终拒绝
+                    user_profile.rejected_wechat = True
+                    await self.user_service.save_user_profile(account_id, user_profile)
+                    logger.info(f"[显式拒绝微信] 用户再次拒绝，标记为最终拒绝: {user_message}")
+                else:
+                    # 第一次拒绝，标记为已尝试争取（AI会尝试说服用户）
+                    user_profile.wechat_persuasion_attempted = True
+                    await self.user_service.save_user_profile(account_id, user_profile)
+                    logger.info(f"[显式拒绝微信] 用户首次拒绝，标记为已尝试争取: {user_message}")
+
+            # === 显式拒绝电话（用户明确说"不留电话"等）===
+            if is_explicit_phone_refuse:
+                if user_profile.phone_persuasion_attempted:
+                    # 已经尝试争取过，用户还是拒绝，标记为最终拒绝
+                    user_profile.rejected_phone = True
+                    await self.user_service.save_user_profile(account_id, user_profile)
+                    logger.info(f"[显式拒绝电话] 用户再次拒绝，标记为最终拒绝: {user_message}")
+                else:
+                    # 第一次拒绝，标记为已尝试争取（AI会尝试说服用户）
+                    user_profile.phone_persuasion_attempted = True
+                    await self.user_service.save_user_profile(account_id, user_profile)
+                    logger.info(f"[显式拒绝电话] 用户首次拒绝，标记为已尝试争取: {user_message}")
+
+            # === 上下文感知检测：用户说通用拒绝词 + 上一轮AI提到微信/电话 ===
+            # 只有当用户没有使用显式拒绝关键词时，才使用上下文检测
+            # 注意：这个检测在显式拒绝检测之后执行，确保显式拒绝已经设置了 persuasion_attempted 标志
+            if last_response and any(kw in user_message_lower for kw in general_refuse_keywords):
+                last_response_lower = last_response.lower()
+
+                # 检测是否在争取微信后用户拒绝（上一轮AI回复包含"微信"）
+                # 条件：用户没有使用显式拒绝微信关键词 + 已经尝试争取微信 + 还没有最终拒绝微信
+                if not is_explicit_wechat_refuse:
+                    if user_profile.wechat_persuasion_attempted and not user_profile.rejected_wechat:
+                        if '微信' in last_response_lower:
+                            user_profile.rejected_wechat = True
+                            await self.user_service.save_user_profile(account_id, user_profile)
+                            logger.info(f"[上下文拒绝] 用户在争取微信后说'{user_message}'，标记为最终拒绝微信")
+
+                # 检测是否在争取电话后用户拒绝（上一轮AI回复包含"电话"）
+                # 条件：用户没有使用显式拒绝电话关键词 + 已经尝试争取电话 + 还没有最终拒绝电话
+                if not is_explicit_phone_refuse:
+                    if user_profile.phone_persuasion_attempted and not user_profile.rejected_phone:
+                        if '电话' in last_response_lower:
+                            user_profile.rejected_phone = True
+                            await self.user_service.save_user_profile(account_id, user_profile)
+                            logger.info(f"[上下文拒绝] 用户在争取电话后说'{user_message}'，标记为最终拒绝电话")
 
     async def _call_ai(self, prompt: str, account_id: str) -> str:
         """
@@ -479,6 +586,35 @@ class ChatService:
             user_profile,
             extracted_data
         )
+
+        # 检测离异手续状态
+        # 注意：必须先检测"未办妥"的情况，再检测"已办妥"的情况
+        # 因为"还没办好"包含"办好"，如果先检测"办好"会误判
+
+        # 1. 手续未办妥的情况（优先检测）
+        divorce_incomplete_keywords = [
+            '还没办好', '还没办妥', '还没办', '正在办', '办理中',
+            '正在办理', '手续没办', '还没离', '办手续中', '分居中', '正在分居'
+        ]
+        if user_profile.marital_status == '离异' or '离异' in str(user_profile.marital_status):
+            if any(kw in user_message for kw in divorce_incomplete_keywords):
+                # 手续未办妥，设置对话结束
+                user_profile.marital_status = "离异（手续未办妥）"
+                user_profile.conversation_ended = True
+                await self.user_service.save_user_profile(account_id, user_profile)
+                logger.info(f"[离异手续未办妥] 用户说: {user_message}，设置 conversation_ended=True, marital_status=离异（手续未办妥）")
+            else:
+                # 2. 手续已办妥的情况（只有在不包含未办妥关键词时才检测）
+                divorce_complete_keywords = [
+                    '办妥了', '办好了', '已办妥', '已办好', '办完了', '已经办妥', '已经办好',
+                    '手续办了', '手续好了', '办妥', '办好', '离了', '办了'
+                ]
+                if any(kw in user_message for kw in divorce_complete_keywords):
+                    # 用户确认手续已办妥，更新婚况状态
+                    user_profile.marital_status = "离异（手续已办妥）"
+                    user_profile.divorce_confirmed = True
+                    await self.user_service.save_user_profile(account_id, user_profile)
+                    logger.info(f"[离异手续已办妥] 用户说: {user_message}，更新 marital_status=离异（手续已办妥）")
 
         # 处理拒绝字段
         if account_id in self._temp_refused_fields:
@@ -704,8 +840,11 @@ class ChatService:
         }
 
     async def reset_user_conversation(self, user_id: str) -> Dict[str, Any]:
-        """重置用户对话"""
+        """重置用户对话（包括清除用户资料）"""
         await self.dialogue_manager.clear_conversation(user_id)
+
+        # 清除用户资料（重置为全新用户状态）
+        await self.user_service.delete_user_profile(user_id)
 
         return {
             "success": True,
@@ -1312,3 +1451,10 @@ class ChatService:
         else:
             # 第四次及以上：不再回复，返回空响应
             return ""
+
+    def _is_hong_user(self, location: Optional[str]) -> bool:
+        """判断用户是否是香港用户"""
+        if not location:
+            return False
+        location_lower = location.lower()
+        return '香港' in location_lower or 'hk' in location_lower

@@ -270,23 +270,11 @@ class ExtractionService:
 
                 # 特殊处理：择偶要求字段需要累积而不是覆盖
                 if mapped_field == "partner_requirement":
-                    # 结束信号词（表示用户没有其他要求了）
-                    # 注意：只有当值**完全匹配**这些结束信号时才跳过
-                    # 如果包含其他内容（如"看感觉"、"随缘"等），则需要收集
-                    pure_ending_signals = ['没有', '没有了', '没其他', '就这些', '无其他要求', '无要求', '暂时没有', '无']
                     # 有价值的内容关键词（即使包含结束信号，也要收集这些内容）
                     valuable_keywords = ['看感觉', '随缘', '看眼缘', '看缘分', '顺其自然', '都可以', '不限']
 
                     # 检查是否包含有价值的内容
                     has_valuable_content = any(kw in value for kw in valuable_keywords)
-
-                    # 只有当值纯粹是结束信号且不包含有价值内容时才跳过
-                    is_pure_ending = value.strip() in pure_ending_signals
-
-                    if is_pure_ending and not has_valuable_content:
-                        # 纯结束信号不需要更新，保持原值
-                        logger.info(f"[择偶要求] 收到纯结束信号: {value}，保持原值")
-                        continue
 
                     # 如果包含有价值内容，提取有价值部分
                     if has_valuable_content:
@@ -295,6 +283,21 @@ class ExtractionService:
                         if extracted_values:
                             value = '、'.join(extracted_values)
                             logger.info(f"[择偶要求] 提取有价值内容: {value}")
+                    else:
+                        # 没有有价值内容，检查是否是"没有特别要求"的表达
+                        no_requirement_signals = ['没有', '没有了', '没', '无', '无特别要求', '没要求', '没特别', '暂时没有', '就这些']
+                        # 检查是否完全匹配"没有要求"的意思
+                        value_stripped = value.strip()
+                        if value_stripped in no_requirement_signals or any(value_stripped == sig for sig in no_requirement_signals):
+                            # 用户明确表示没有特别要求，设置为"无特别要求"
+                            # 注意：这是第一次说"没有"时，需要设置值
+                            if not current_value:
+                                value = "无特别要求"
+                                logger.info(f"[择偶要求] 用户表示没有特别要求: {value_stripped} → 设置为'无特别要求'")
+                            else:
+                                # 已经有值了，用户说"没有"表示没有其他补充，保持原值
+                                logger.info(f"[择偶要求] 用户表示没有其他补充，保持原值: {current_value}")
+                                continue
 
                     if current_value:
                         # 已有旧值，需要累积追加
@@ -403,13 +406,37 @@ class ExtractionService:
             # 添加择偶要求（如果有）- 在联系方式之前
             if user_profile.partner_requirement:
                 parts.append(f"要求:{user_profile.partner_requirement}")
+
+            # 检查是否是香港用户（根据 location 字段判断）
+            is_hong_user = False
+            if user_profile.location:
+                location_lower = user_profile.location.lower()
+                is_hong_user = '香港' in location_lower or 'hk' in location_lower
+
             # 检查是否已收集联系方式（信息收集完成的标志）- 最后显示
             # 只检查 contact 字段是否有值，不依赖 collection_progress
             if user_profile.contact and user_profile.contact != "":
-                parts.append("已留联系")
-                # 确保 collection_progress 也被标记（用于 is_collection_complete()）
-                if not user_profile.collection_progress.get('contact', False):
-                    user_profile.collection_progress['contact'] = True
+                if is_hong_user:
+                    # 香港用户：需要电话和微信都收集了才算"已留联系"
+                    if user_profile.wechat and user_profile.wechat != "":
+                        parts.append("已留联系")
+                        # 确保 collection_progress 也被标记
+                        if not user_profile.collection_progress.get('contact', False):
+                            user_profile.collection_progress['contact'] = True
+                    else:
+                        # 香港用户只收集了电话，还需要微信
+                        parts.append(f"电话:{user_profile.contact}")
+                        parts.append("需微信")
+                else:
+                    # 非香港用户：只收集电话即可
+                    parts.append("已留联系")
+                    # 确保 collection_progress 也被标记（用于 is_collection_complete()）
+                    if not user_profile.collection_progress.get('contact', False):
+                        user_profile.collection_progress['contact'] = True
+
+            # 添加离异确认标记（如果用户是离异且已确认）
+            if user_profile.marital_status == '离异' and hasattr(user_profile, 'divorce_confirmed') and user_profile.divorce_confirmed:
+                parts.append("离异确认")
             summary = "【已收集】" + ",".join(parts)
         else:
             summary = "【已收集】无"

@@ -225,6 +225,30 @@ class UserService:
 
         return success
 
+    async def delete_user_profile(self, account_id: str) -> bool:
+        """
+        删除用户档案
+
+        Args:
+            account_id: 用户账号ID
+
+        Returns:
+            bool: 是否删除成功
+        """
+        if self.use_redis:
+            try:
+                await redis_service.delete(f"user_profile:{account_id}")
+                logger.info(f"[删除用户档案] Redis: {account_id}")
+            except Exception as e:
+                logger.error(f"Redis delete error: {e}")
+
+        # 同时清除内存缓存
+        if account_id in self._memory_profiles:
+            del self._memory_profiles[account_id]
+            logger.info(f"[删除用户档案] 内存: {account_id}")
+
+        return True
+
     async def get_user_profile_dict(self, account_id: str) -> Dict[str, Any]:
         """
         获取用户信息的字典形式

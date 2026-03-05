@@ -11,6 +11,7 @@ from src.models.user_profile import UserProfile
 from src.models.personality import PersonalityProfile
 from src.services.prompts import get_main_dialogue, get_extraction, build_gender_instruction, build_contact_instruction, build_skipped_fields_instruction, build_ask_count_instruction
 from src.services.user_service import UserService
+from src.config.settings import get_all_field_names
 
 logger = logging.getLogger(__name__)
 
@@ -95,10 +96,28 @@ class DialogueManager:
         # 获取性别指令
         gender_instruction = build_gender_instruction(user_profile.sex)
 
-        # 获取联系方式指令
+        # 判断是否是香港用户
+        is_hong_user = self._is_hong_user(user_profile.location)
+
+        # 调试日志：香港用户场景
+        logger.info(f"[香港用户检测] is_hong_user={is_hong_user}, location={user_profile.location}")
+        logger.info(f"[联系方式状态] contact={user_profile.contact}, contact_collected={user_profile.collection_progress.get('contact', False)}, wechat={user_profile.wechat}, wechat_collected={user_profile.wechat_collected}")
+
+        # 获取联系方式指令（支持场景1和场景2）
         contact_instruction = build_contact_instruction(
-            user_profile.collection_progress.get('contact', False)
+            contact_collected=user_profile.collection_progress.get('contact', False),
+            rejected_wechat=user_profile.rejected_wechat,
+            rejected_phone=user_profile.rejected_phone,
+            wechat_persuasion_attempted=user_profile.wechat_persuasion_attempted,
+            phone_persuasion_attempted=user_profile.phone_persuasion_attempted,
+            is_hong_user=is_hong_user,
+            wechat_collected=user_profile.wechat_collected,
+            wechat_attempted=user_profile.wechat_attempted
         )
+        logger.info(f"[联系方式指令] rejected_wechat={user_profile.rejected_wechat}, rejected_phone={user_profile.rejected_phone}, wechat_persuasion_attempted={user_profile.wechat_persuasion_attempted}, phone_persuasion_attempted={user_profile.phone_persuasion_attempted}")
+        logger.info(f"[联系方式指令结果] 长度={len(contact_instruction)}, 内容前200字符: {contact_instruction[:200] if contact_instruction else '(空)'}")
+        if contact_instruction:
+            logger.info(f"[联系方式指令内容] {contact_instruction[:100]}...")
 
         # 获取跳过字段指令（从 user_profile.skipped_fields 获取）
         skipped_fields = set(user_profile.skipped_fields.keys()) if user_profile.skipped_fields else set()
@@ -123,13 +142,21 @@ class DialogueManager:
         if skipped_fields:
             logger.info(f"[跳过字段] {skipped_fields}")
 
+        # 获取缺失字段列表
+        missing_fields_list = user_profile.get_missing_fields()
+        # 从配置获取字段名映射（英文 -> 中文）
+        field_name_map = get_all_field_names()
+        missing_fields_cn = [field_name_map.get(f, f) for f in missing_fields_list if f in field_name_map]
+        missing_fields_str = "、".join(missing_fields_cn) if missing_fields_cn else "无"
+
         main_prompt = get_main_dialogue(
             collected_info=collected_info,
             gender_instruction=gender_instruction,
             contact_instruction=contact_instruction,
             skipped_fields_instruction=skipped_fields_instruction,
             ask_count_instruction=ask_count_instruction,
-            is_first_chat=is_first_chat
+            is_first_chat=is_first_chat,
+            missing_fields=missing_fields_str
         )
 
         # 获取上一轮 AI 回复（用于上下文感知提取）
@@ -328,3 +355,18 @@ class DialogueManager:
         }
         await self.user_service.save_conversation_context(account_id, context)
         logger.info(f"[对话清除] 已清除用户 {account_id} 的对话历史")
+
+    def _is_hong_user(self, location: Optional[str]) -> bool:
+        """
+        判断用户是否是香港用户
+
+        Args:
+            location: 用户所在地
+
+        Returns:
+            bool: 是否是香港用户
+        """
+        if not location:
+            return False
+        location_lower = location.lower()
+        return '香港' in location_lower or 'hk' in location_lower
