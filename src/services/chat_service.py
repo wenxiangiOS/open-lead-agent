@@ -51,6 +51,22 @@ class ChatService:
     # 核心字段定义（必须收集的字段）
     CORE_FIELDS = ['sex', 'age', 'education', 'occupation', 'location', 'contact']
 
+    # 常见单字姓氏白名单（中国前100大姓）
+    COMMON_SURNAMES = frozenset({
+        '李', '王', '张', '刘', '陈', '杨', '赵', '黄', '周', '吴',
+        '徐', '孙', '胡', '朱', '高', '林', '何', '郭', '马', '罗',
+        '梁', '宋', '郑', '谢', '韩', '唐', '冯', '于', '董', '萧',
+        '程', '曹', '袁', '邓', '许', '傅', '沈', '曾', '彭', '吕',
+        '苏', '卢', '蒋', '蔡', '贾', '丁', '魏', '薛', '叶', '阎',
+        '余', '潘', '杜', '戴', '夏', '钟', '汪', '田', '任', '姜',
+        '范', '方', '石', '姚', '谭', '廖', '邹', '熊', '金', '陆',
+        '郝', '孔', '白', '崔', '康', '毛', '邱', '秦', '江', '史',
+        '顾', '侯', '邵', '孟', '龙', '万', '段', '雷', '钱', '汤',
+        '尹', '黎', '易', '常', '武', '乔', '贺', '赖', '龚', '文',
+        # 常见复姓
+        '欧阳', '司马', '上官', '诸葛', '东方', '皇甫', '令狐', '夏侯',
+    })
+
     # 预设的打招呼回复列表（按类型分组）
     GREETING_RESPONSES: Dict[str, List[str]] = {
         'formal': [  # 正式打招呼（你好、您好）
@@ -140,7 +156,10 @@ class ChatService:
         Returns:
             Dict[str, Any]: 响应数据
         """
+        import time
+        start_time = time.time()
         account_id = request.accountId
+        logger.info(f"[⏱️ 性能] 开始处理请求: account_id={account_id}")
 
         try:
             # 1. 获取用户档案
@@ -436,7 +455,9 @@ class ChatService:
                 logger.info(f"[香港用户] 电话收集完成，生成询问微信的回复")
 
             # 11. 清理回复（移除 XML 标签）
-            final_response = self._clean_response(enhanced_response)
+            # 如果 enhanced_response 为 None，表示使用原 AI 回复
+            response_to_clean = enhanced_response if enhanced_response is not None else ai_response
+            final_response = self._clean_response(response_to_clean)
 
             # 12. 更新对话状态
             await self._update_conversation_state(
@@ -446,7 +467,12 @@ class ChatService:
                 ai_response
             )
 
-            # 13. 构建响应
+            # 13. 重新获取最新的用户档案（包含刚更新的 field_ask_count）
+            user_profile = await self.user_service.get_user_profile(account_id)
+
+            # 14. 构建响应
+            total_duration = time.time() - start_time
+            logger.info(f"[⏱️ 性能] 请求处理完成: account_id={account_id}, 总耗时={total_duration:.3f}秒")
             return await self._build_chat_response(
                 account_id,
                 user_profile,
@@ -456,7 +482,8 @@ class ChatService:
             )
 
         except Exception as e:
-            logger.error(f"[对话处理] 错误: {e}")
+            total_duration = time.time() - start_time
+            logger.error(f"[⏱️ 性能] 请求处理异常: account_id={account_id}, 总耗时={total_duration:.3f}秒, 错误={e}")
             from src.core.error_handler import handle_error
             error_response = handle_error(e, context="chat", user_id=account_id)
             return self._error_response(error_response.get('error', '处理失败'), request.dialogId)
@@ -558,6 +585,10 @@ class ChatService:
         Raises:
             AIServiceException: AI 调用失败或超时
         """
+        import time
+        ai_start_time = time.time()
+        logger.info(f"[⏱️ 性能] 开始调用AI: account_id={account_id}")
+
         try:
             # 使用简单的系统提示词确保用中文回复
             response = await self.ai_service.generate_response(
@@ -565,6 +596,9 @@ class ChatService:
                 system_prompt="你是一个说中文的AI助手，请用中文回复用户。",
                 timeout=120  # 120秒超时（豆包API响应较慢）
             )
+            ai_end_time = time.time()
+            ai_duration = ai_end_time - ai_start_time
+            logger.info(f"[⏱️ 性能] AI调用完成: account_id={account_id}, 耗时={ai_duration:.3f}秒")
             return response
         except AIServiceException as e:
             # AI 服务失败时返回空响应，不暴露 AI 身份
@@ -588,6 +622,138 @@ class ChatService:
             user_profile,
             extracted_data
         )
+
+        # === 年龄限制检查 ===
+        # 如果用户年龄低于24岁，直接返回拒绝话术
+        if collection_result.get("under_limit"):
+            logger.info(f"[年龄限制] 用户年龄 {collection_result.get('value')} 岁，不符合服务条件")
+            user_profile.conversation_ended = True
+            await self.user_service.save_user_profile(account_id, user_profile)
+            # 返回温和拒绝话术
+            return {
+                "success": True,
+                "response": "哇你才这个年纪呀😊 我们的服务面向24岁以上的单身人士哦～等你再长大一点，变得更成熟了再来找我吧！现在好好读书/工作，未来一定会遇到更合适的人的～",
+                "dialogId": request.dialogId,
+                "collected_info": {},
+                "collected": False
+            }
+
+        # === LGBT 用户检测 ===
+        # 检测用户是否表明是同性恋/百合
+        lgbt_keywords = [
+            '同性恋', 'gay', '拉拉', 'les', 'lesbian', '百合', '女同',
+            '我喜欢女生', '我喜欢男的', '喜欢同性', '我是les', 'les群体',
+            '我是gay', 'gay群体', '同志', '同性行为'
+        ]
+        user_message_lower = user_message.lower()
+        for keyword in lgbt_keywords:
+            if keyword.lower() in user_message_lower:
+                logger.info(f"[LGBT检测] 用户表明: {keyword}")
+                user_profile.lgbt_user = True
+                user_profile.conversation_ended = True
+                await self.user_service.save_user_profile(account_id, user_profile)
+                # 返回温和引导话术
+                return {
+                    "success": True,
+                    "response": "谢谢你的坦诚呀😊 我们这边是做异性相亲服务的，可能不太适合你的需求呢～建议你可以去看看一些专门的交友平台，希望你能找到属于你的幸福！祝你好运～",
+                    "dialogId": request.dialogId,
+                    "collected_info": {},
+                    "collected": False
+                }
+
+        # === 已婚用户检测 ===
+        married_keywords = [
+            '我结婚了', '我已经结婚了', '我有老公', '我有老婆', '我有丈夫', '我有妻子',
+            '我已婚', '已婚了', '结婚了的', '家里有老婆', '家里有老公',
+            '我有爱人', '我有对象', '我不是单身', '我有伴了'
+        ]
+        for keyword in married_keywords:
+            if keyword in user_message:
+                logger.info(f"[已婚检测] 用户表明已婚: {keyword}")
+                user_profile.already_married = True
+                user_profile.conversation_ended = True
+                await self.user_service.save_user_profile(account_id, user_profile)
+                return {
+                    "success": True,
+                    "response": "哎呀～原来你已经结婚了呀😊 那我们这边可能帮不了你了呢～我们只服务单身人士哦，祝你婚姻幸福！",
+                    "dialogId": request.dialogId,
+                    "collected_info": {},
+                    "collected": False
+                }
+
+        # === 代相亲检测 ===
+        proxy_keywords = [
+            '帮朋友', '帮我家', '帮我朋友', '帮我亲戚', '帮亲戚', '帮同事',
+            '替朋友', '替我家', '替我朋友', '代替朋友', '帮别人问',
+            '给我朋友问', '给我朋友打听', '帮我问问', '帮人问', '替人问',
+            '我朋友想找', '我亲戚想找', '我同事想找', '帮我弟', '帮我妹',
+            '帮我哥', '帮我姐', '帮儿子', '帮女儿', '帮孩子'
+        ]
+        for keyword in proxy_keywords:
+            if keyword in user_message:
+                logger.info(f"[代相亲检测] 用户表明代问: {keyword}")
+                user_profile.proxy_user = True
+                user_profile.conversation_ended = True
+                await self.user_service.save_user_profile(account_id, user_profile)
+                return {
+                    "success": True,
+                    "response": "好的呀～不过建议让你的朋友/家人直接来和我聊会更好呢😊 这样我能更准确地了解TA的需求，帮TA找到更合适的人选～",
+                    "dialogId": request.dialogId,
+                    "collected_info": {},
+                    "collected": False
+                }
+
+        # === 骚扰/广告检测 ===
+        spam_keywords = [
+            '加微信', '加我微信', '加个微信', '加我v', '加我V',
+            '互推', '推广', '广告', '合作', '商务合作',
+            '代理', '兼职', '赚钱', '月入', '日赚',
+            '优惠', '折扣', '特价', '促销',
+            '刷单', '刷好评', '刷评论',
+            '贷款', '借钱', '放贷', '网贷',
+            '代开发票', '办证', '刻章',
+        ]
+        for keyword in spam_keywords:
+            if keyword in user_message:
+                logger.info(f"[骚扰/广告检测] 检测到可疑内容: {keyword}")
+                user_profile.spam_user = True
+                user_profile.conversation_ended = True
+                await self.user_service.save_user_profile(account_id, user_profile)
+                return {
+                    "success": True,
+                    "response": "",
+                    "dialogId": request.dialogId,
+                    "collected_info": {},
+                    "collected": False,
+                    "silent": True  # 静默处理，不回复
+                }
+
+        # === 虚假信息检测 ===
+        # 检测明显不合理的信息
+        fake_info_patterns = [
+            ('age', [999, 1000, 123, 111, 222, 333, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),  # 明显假的年龄
+            ('height', [300, 400, 500, 50, 30, 20, 10]),  # 明显假的身高
+        ]
+        # 如果刚收集到的数据在虚假信息列表中
+        for field, fake_values in fake_info_patterns:
+            collected_value = collection_result.get('value') if collection_result.get('field') == field else None
+            if collected_value is not None:
+                try:
+                    # 尝试转换为数字
+                    num_value = int(str(collected_value).replace('岁', '').replace('cm', '').replace('CM', '').strip())
+                    if num_value in fake_values:
+                        logger.info(f"[虚假信息检测] 检测到虚假{field}: {num_value}")
+                        user_profile.conversation_ended = True
+                        await self.user_service.save_user_profile(account_id, user_profile)
+                        return {
+                            "success": True,
+                            "response": "哈哈，这个信息有点意思😊 不过我们还是要认真对待相亲这件事的～如果你是真心想找对象，请告诉我真实的信息哦！",
+                            "dialogId": request.dialogId,
+                            "collected_info": {},
+                            "collected": False
+                        }
+                except (ValueError, AttributeError):
+                    pass
 
         # 检测离异手续状态
         # 注意：必须先检测"未办妥"的情况，再检测"已办妥"的情况
@@ -641,24 +807,68 @@ class ChatService:
         ai_response: str
     ) -> str:
         """处理联系方式验证"""
-        # 检查是否收集到联系方式
+        # 检查是否收集到联系方式（电话或微信）
         collected_contact = None
+        collected_wechat = None
         for field_info in collection_result.get('all_fields', []):
             if field_info.get('field') == 'contact':
                 collected_contact = field_info.get('value')
-                break
+            elif field_info.get('field') == 'wechat':
+                collected_wechat = field_info.get('value')
 
-        logger.info(f"[联系方式检查] collected_contact={collected_contact}, all_fields={collection_result.get('all_fields', [])}")
+        logger.info(f"[联系方式检查] collected_contact={collected_contact}, collected_wechat={collected_wechat}, all_fields={collection_result.get('all_fields', [])}")
 
-        if collected_contact is None:
+        # 如果收集到微信，设置 wechat_collected 标志
+        if collected_wechat:
+            user_profile.wechat_collected = True
+            # 非香港用户：微信也可以作为联系方式
+            is_hong_user = self._is_hong_user(user_profile.location)
+            if not is_hong_user:
+                user_profile.collection_progress['contact'] = True
+            await self.user_service.save_user_profile(account_id, user_profile)
+            logger.info(f"[微信收集] 设置 wechat_collected=True, 香港用户={is_hong_user}")
+
+        # 如果没有收集到任何联系方式，返回原回复
+        if collected_contact is None and collected_wechat is None:
             return ai_response
 
-        # 用户提供了联系方式，重置确认词计数器
+        # 用户提供了联系方式（电话或微信），重置确认词计数器
         await self._reset_confirm_count(account_id)
         logger.info(f"[联系方式验证] 用户提供了联系方式，重置确认词计数器")
 
-        # 验证联系方式
-        logger.info(f"[联系方式验证] 开始验证: {collected_contact}")
+        # 如果只收集到微信（没有电话），尝试争取电话
+        if collected_contact is None and collected_wechat:
+            # 微信已在上面的代码中处理（设置 wechat_collected=True）
+            # 检查是否可以收尾
+            contact_collected = (
+                user_profile.collection_progress.get('contact', False) or
+                (user_profile.wechat and user_profile.wechat_collected)
+            )
+            core_fields_to_check = ['sex', 'age', 'education', 'occupation', 'location']
+            all_core_collected = all([
+                user_profile.collection_progress.get(field, False)
+                for field in core_fields_to_check
+            ])
+
+            # === 新增：争取电话号码 ===
+            # 如果用户没有提供电话，且还没争取过电话，则再问一次电话
+            if not user_profile.phone_persuasion_attempted:
+                # 标记已争取过电话
+                user_profile.phone_persuasion_attempted = True
+                await self.user_service.save_user_profile(account_id, user_profile)
+                logger.info(f"[微信收集] 尝试争取电话号码")
+                call_name = user_profile.get_greeting()
+                return f"好的呀～微信我记下啦😊 对啦，方便再留个电话号码吗？电话联系会更方便及时呢～"
+
+            # 已经争取过电话，用户还是只留微信，继续收尾流程
+            if all_core_collected and contact_collected:
+                logger.info(f"[微信收集] 核心字段全部收集完成，准备收尾")
+                await self._mark_remaining_fields_as_skipped(account_id, user_profile)
+                return ai_response
+            return ai_response
+
+        # 验证电话号码
+        logger.info(f"[联系方式验证] 开始验证电话: {collected_contact}")
 
         is_valid, error_msg, success_msg = await self.validation_service.validate_contact(
             collected_contact,
@@ -757,12 +967,34 @@ class ChatService:
             if value:
                 return str(value)
             # 检查是否被跳过（问了2次及以上未回答）
-            ask_count = user_profile.field_ask_count.get(field_name, 0)
+            # 安全检查：确保 field_ask_count 不是 None
+            ask_count_dict = user_profile.field_ask_count if user_profile.field_ask_count is not None else {}
+            ask_count = ask_count_dict.get(field_name, 0)
             if ask_count >= 2:
                 return f"已跳过({ask_count}次未答)"
             return default
 
-        # 构建已收集信息（所有 12 个字段）
+        # 构建联系方式显示值（合并电话和微信）
+        def get_contact_display() -> str:
+            phone = user_profile.contact
+            wechat = user_profile.wechat
+            if phone and wechat:
+                return f"{phone}/{wechat}"
+            elif phone:
+                return str(phone)
+            elif wechat:
+                return str(wechat)
+            else:
+                # 两者都没有，检查是否跳过
+                ask_count_dict = user_profile.field_ask_count if user_profile.field_ask_count is not None else {}
+                # 检查 contact 或 wechat 是否被跳过
+                contact_ask_count = ask_count_dict.get("contact", 0)
+                wechat_ask_count = ask_count_dict.get("wechat", 0)
+                if contact_ask_count >= 2 or wechat_ask_count >= 2:
+                    return f"已跳过({max(contact_ask_count, wechat_ask_count)}次未答)"
+                return "未留"
+
+        # 构建已收集信息（12 个字段，联系方式合并显示）
         collected_info = {
             "sex": get_field_display("sex", user_profile.sex),
             "last_name": get_field_display("last_name", user_profile.last_name, "未留称呼"),
@@ -774,18 +1006,19 @@ class ChatService:
             "marital_status": get_field_display("marital_status", user_profile.marital_status),
             "monthly_income": get_field_display("monthly_income", user_profile.monthly_income),
             "occupation": get_field_display("occupation", user_profile.occupation),
-            "contact": get_field_display("contact", user_profile.contact),
+            "contact": get_contact_display(),
             "partner_requirement": get_field_display("partner_requirement", user_profile.partner_requirement)
         }
 
+        # 返回响应
         return {
             "success": True,
             "response": response,
+            "dialogId": dialog_id,
             "collected_info": collected_info,
-            "collection_complete": user_profile.is_collection_complete(),
-            "is_refusal": is_refusal,
-            "message_count": message_count,
-            "dialogId": dialog_id
+            "collected": collection_result.get("collected", False) if collection_result else False,
+            "field": collection_result.get("field") if collection_result else None,
+            "value": collection_result.get("value") if collection_result else None
         }
 
     def _success_response(self, response: str, dialog_id: Optional[str]) -> Dict[str, Any]:
@@ -1001,6 +1234,11 @@ class ChatService:
 
         # 1. 长度过短（1-2个字符且不是有意义的内容）
         if len(text_stripped) <= 2:
+            # 如果是常见姓氏，认为是有意义的
+            if text_stripped in self.COMMON_SURNAMES:
+                logger.info(f"[无意义检测] 判定为有意义（常见姓氏）: {text_stripped}")
+                return False
+
             # 检查是否是中文或英文单词
             pattern = r'[\u4e00-\u9fa5]{2,}|[a-zA-Z]{2,}'
             match = re.search(pattern, text_stripped)
@@ -1094,6 +1332,11 @@ class ChatService:
                 if re.match(wechat_pattern, text_stripped):
                     logger.info(f"[无意义检测] 判定为有意义（微信号格式）: {text_stripped}")
                     return False
+                # 新增：从输入中提取可能的微信号（不要求整个输入匹配）
+                potential_wechat = re.search(r'[a-zA-Z][a-zA-Z0-9_-]{5,19}', text_stripped)
+                if potential_wechat:
+                    logger.info(f"[无意义检测] 包含可能的微信号格式: {potential_wechat.group()}")
+                    return False
                 # 方法1：检测是否有重复的短模式（2-4字符）
                 # 排除常见的数字组合（如年龄、体重等）
                 # 只有当重复模式占比很高时才认为是乱码
@@ -1117,12 +1360,11 @@ class ChatService:
                 # 但先排除常见的有意义格式（包含单位的数字）
                 meaningful_patterns = [
                     r'\d+kg',      # 体重：90kg
-                    r'\d+万',      # 收入：3万
                     r'\d+cm',      # 身高：180cm
                     r'\d+岁',      # 年龄：28岁
                     r'\d+年',      # 年份：90年
                     r'wx[a-zA-Z0-9]+',  # 微信号
-                    r'\d+[万千百]',  # 收入格式
+                    r'\d+\.?\d*[wW万千百]',  # 收入格式（支持小数）：1.4w、1.4万、3w、3万
                 ]
                 for pattern in meaningful_patterns:
                     if re.search(pattern, text_stripped.lower()):

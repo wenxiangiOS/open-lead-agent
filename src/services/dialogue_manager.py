@@ -103,7 +103,8 @@ class DialogueManager:
         logger.info(f"[联系方式状态] 香港用户={is_hong_user}({user_profile.location}), 电话={user_profile.contact}(已收集={user_profile.collection_progress.get('contact', False)}), 微信={user_profile.wechat}(已收集={user_profile.wechat_collected})")
 
         # 获取联系方式指令（支持场景1和场景2）
-        contact_instruction = build_contact_instruction(
+        # build_contact_instruction 现在返回 (instruction, flags_to_set) 元组
+        contact_instruction, flags_to_set = build_contact_instruction(
             contact_collected=user_profile.collection_progress.get('contact', False),
             rejected_wechat=user_profile.rejected_wechat,
             rejected_phone=user_profile.rejected_phone,
@@ -113,6 +114,12 @@ class DialogueManager:
             wechat_collected=user_profile.wechat_collected,
             wechat_attempted=user_profile.wechat_attempted
         )
+
+        # 如果有需要设置的标志，更新用户档案（不保存，由调用方保存）
+        if flags_to_set:
+            for flag_name, flag_value in flags_to_set.items():
+                setattr(user_profile, flag_name, flag_value)
+                logger.info(f"[联系方式标志] 设置 {flag_name} = {flag_value}（将在处理完成后保存）")
         # 简化日志：合并状态信息
         logger.debug(f"[联系方式状态] 拒(微信={user_profile.rejected_wechat},电话={user_profile.rejected_phone}), 争取过(微信={user_profile.wechat_persuasion_attempted},电话={user_profile.phone_persuasion_attempted})")
         # 简化日志：只显示指令类型，不显示完整内容

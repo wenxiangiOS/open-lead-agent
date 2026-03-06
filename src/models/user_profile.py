@@ -93,6 +93,11 @@ class UserProfile(BaseModel):
     # 对话状态
     conversation_ended: bool = Field(default=False, description="对话是否已结束")
     divorce_confirmed: bool = Field(default=False, description="离异手续是否已确认办妥")
+    age_under_limit: bool = Field(default=False, description="年龄是否低于服务限制（24岁以下）")
+    lgbt_user: bool = Field(default=False, description="是否是LGBT用户（同性恋/百合）")
+    already_married: bool = Field(default=False, description="用户是否已婚")
+    proxy_user: bool = Field(default=False, description="是否是代相亲（帮别人问）")
+    spam_user: bool = Field(default=False, description="是否是骚扰/广告用户")
 
     @validator('sex')
     def validate_sex(cls, v):
@@ -447,6 +452,11 @@ class UserProfile(BaseModel):
             "error_count": self.error_count,
             "conversation_ended": self.conversation_ended,
             "divorce_confirmed": self.divorce_confirmed,
+            "age_under_limit": self.age_under_limit,
+            "lgbt_user": self.lgbt_user,
+            "already_married": self.already_married,
+            "proxy_user": self.proxy_user,
+            "spam_user": self.spam_user,
             "rejected_wechat": self.rejected_wechat,
             "rejected_phone": self.rejected_phone,
             "wechat_persuasion_attempted": self.wechat_persuasion_attempted,

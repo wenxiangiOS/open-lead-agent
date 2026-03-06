@@ -47,12 +47,6 @@ class PersonalityProfile:
         self.has_given_closing = False  # 是否已给出过收尾语（收尾后保持沉默）
         self.no_response_count = 0  # 无响应计数
 
-        # 行为模拟：延迟时间（秒）
-        self.typing_delay_min = 2  # 最短打字延迟
-        self.typing_delay_max = 5  # 最长打字延迟
-        self.multi_message_delay_min = 5  # 多条消息间隔
-        self.multi_message_delay_max = 8  # 多条消息间隔上限
-
     def set_user_sex(self, sex: Optional[str]) -> None:
         """
         设置用户性别 - 一旦确认，终身锁定

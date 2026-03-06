@@ -120,7 +120,7 @@ def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_b
         - 字段值使用追踪后的数据 → 用户刚提供的信息立即显示
         - 追问次数使用追踪前的数据 → "已跳过"状态在下一轮才显示
     """
-    # 字段中文名映射
+    # 字段中文名映射（不包含 wechat，联系方式统一显示在 contact）
     field_names = {
         "sex": "性别",
         "last_name": "称呼",
@@ -142,27 +142,52 @@ def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_b
     # 使用换行格式显示
     lines = ["\n[已收集信息]"]
     for field, name in field_names.items():
-        value = profile.get(field)
-        if value is not None:
-            lines.append(f"  {name}: {value}")
-        else:
-            # 检查是否被跳过（用户明确拒绝）
-            skipped = profile.get("skipped_fields", {})
-            if skipped.get(field, False):
-                lines.append(f"  {name}: 跳过")
-            # 检查是否问了多次未回答（智能追问跳过）- 使用追踪前的追问次数
-            elif field_ask_count.get(field, 0) >= 2:
-                count = field_ask_count.get(field, 0)
-                lines.append(f"  {name}: 已跳过({count}次未答)")
+        # 特殊处理 contact 字段：合并电话和微信
+        if field == "contact":
+            phone = profile.get("contact")
+            wechat = profile.get("wechat")
+            if phone and wechat:
+                lines.append(f"  {name}: {phone}/{wechat}")
+            elif phone:
+                lines.append(f"  {name}: {phone}")
+            elif wechat:
+                lines.append(f"  {name}: {wechat}")
             else:
-                lines.append(f"  {name}: 未留")
+                # 两者都没有，检查是否跳过
+                skipped = profile.get("skipped_fields", {})
+                contact_skipped = skipped.get("contact", False)
+                wechat_skipped = skipped.get("wechat", False)
+                contact_ask_count = field_ask_count.get("contact", 0)
+                wechat_ask_count = field_ask_count.get("wechat", 0)
+                if contact_skipped or wechat_skipped:
+                    lines.append(f"  {name}: 跳过")
+                elif contact_ask_count >= 2 or wechat_ask_count >= 2:
+                    count = max(contact_ask_count, wechat_ask_count)
+                    lines.append(f"  {name}: 已跳过({count}次未答)")
+                else:
+                    lines.append(f"  {name}: 未留")
+        else:
+            value = profile.get(field)
+            if value is not None:
+                lines.append(f"  {name}: {value}")
+            else:
+                # 检查是否被跳过（用户明确拒绝）
+                skipped = profile.get("skipped_fields", {})
+                if skipped.get(field, False):
+                    lines.append(f"  {name}: 跳过")
+                # 检查是否问了多次未回答（智能追问跳过）- 使用追踪前的追问次数
+                elif field_ask_count.get(field, 0) >= 2:
+                    count = field_ask_count.get(field, 0)
+                    lines.append(f"  {name}: 已跳过({count}次未答)")
+                else:
+                    lines.append(f"  {name}: 未留")
 
     return "\n".join(lines)
 
 
 def _format_debug_info(profile: Dict[str, Any]) -> str:
     """格式化用户已收集的信息为调试显示字符串"""
-    # 字段中文名映射
+    # 字段中文名映射（不包含 wechat，联系方式统一显示在 contact）
     field_names = {
         "sex": "性别",
         "last_name": "称呼",
@@ -184,20 +209,45 @@ def _format_debug_info(profile: Dict[str, Any]) -> str:
     # 使用换行格式显示
     lines = ["\n[已收集信息]"]
     for field, name in field_names.items():
-        value = profile.get(field)
-        if value is not None:
-            lines.append(f"  {name}: {value}")
-        else:
-            # 检查是否被跳过（用户明确拒绝）
-            skipped = profile.get("skipped_fields", {})
-            if skipped.get(field, False):
-                lines.append(f"  {name}: 跳过")
-            # 检查是否问了多次未回答（智能追问跳过）
-            elif field_ask_count.get(field, 0) >= 2:
-                count = field_ask_count.get(field, 0)
-                lines.append(f"  {name}: 已跳过({count}次未答)")
+        # 特殊处理 contact 字段：合并电话和微信
+        if field == "contact":
+            phone = profile.get("contact")
+            wechat = profile.get("wechat")
+            if phone and wechat:
+                lines.append(f"  {name}: {phone}/{wechat}")
+            elif phone:
+                lines.append(f"  {name}: {phone}")
+            elif wechat:
+                lines.append(f"  {name}: {wechat}")
             else:
-                lines.append(f"  {name}: 未留")
+                # 两者都没有，检查是否跳过
+                skipped = profile.get("skipped_fields", {})
+                contact_skipped = skipped.get("contact", False)
+                wechat_skipped = skipped.get("wechat", False)
+                contact_ask_count = field_ask_count.get("contact", 0)
+                wechat_ask_count = field_ask_count.get("wechat", 0)
+                if contact_skipped or wechat_skipped:
+                    lines.append(f"  {name}: 跳过")
+                elif contact_ask_count >= 2 or wechat_ask_count >= 2:
+                    count = max(contact_ask_count, wechat_ask_count)
+                    lines.append(f"  {name}: 已跳过({count}次未答)")
+                else:
+                    lines.append(f"  {name}: 未留")
+        else:
+            value = profile.get(field)
+            if value is not None:
+                lines.append(f"  {name}: {value}")
+            else:
+                # 检查是否被跳过（用户明确拒绝）
+                skipped = profile.get("skipped_fields", {})
+                if skipped.get(field, False):
+                    lines.append(f"  {name}: 跳过")
+                # 检查是否问了多次未回答（智能追问跳过）
+                elif field_ask_count.get(field, 0) >= 2:
+                    count = field_ask_count.get(field, 0)
+                    lines.append(f"  {name}: 已跳过({count}次未答)")
+                else:
+                    lines.append(f"  {name}: 未留")
 
     return "\n".join(lines)
 

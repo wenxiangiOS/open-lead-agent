@@ -38,6 +38,10 @@ class ExtractionService:
         "收入": "monthly_income",  # AI 可能简写为"收入"
         "婚况": "marital_status",
         "联系方式": "contact",
+        "电话": "contact",
+        "电话号码": "contact",
+        "微信": "wechat",
+        "微信号": "wechat",
         "择偶要求": "partner_requirement",
         "择偶": "partner_requirement",
         "要求": "partner_requirement",
@@ -53,6 +57,7 @@ class ExtractionService:
         "monthly_income": "monthly_income",
         "marital_status": "marital_status",
         "contact": "contact",
+        "wechat": "wechat",
         "partner_requirement": "partner_requirement",
         # 带空格的字段名（AI 可能返回）
         " 职业": "occupation",
@@ -63,6 +68,8 @@ class ExtractionService:
         " 收入": "monthly_income",
         " 婚况": "marital_status",
         " 联系方式": "contact",
+        " 电话": "contact",
+        " 微信": "wechat",
         " 择偶要求": "partner_requirement",
     }
 
@@ -252,9 +259,9 @@ class ExtractionService:
 
                 # 检查是否为无效值
                 if mapped_field == "last_name":
-                    # 名字必须是2-4个字符
-                    if len(value) <= 1 or len(value) > 4:
-                        logger.info(f"[名字验证] 长度不符合要求(2-4字符): {value}")
+                    # 名字必须是1-4个字符（允许单字姓氏如"李"、"王"）
+                    if len(value) < 1 or len(value) > 4:
+                        logger.info(f"[名字验证] 长度不符合要求(1-4字符): {value}")
                         continue
                     # 名字不能在无效名称列表中
                     if value in self.INVALID_NAMES:
@@ -264,6 +271,23 @@ class ExtractionService:
                     if value.isdigit():
                         logger.info(f"[名字验证] 不能全是数字: {value}")
                         continue
+
+                # 年龄限制检查：用户必须年满24岁
+                if mapped_field == "age":
+                    parsed_age = self._parse_age(value)
+                    if parsed_age is not None and parsed_age < 24:
+                        logger.info(f"[年龄限制] 用户年龄 {parsed_age} 岁低于24岁，不符合服务条件")
+                        # 设置年龄限制标志
+                        user_profile.age_under_limit = True
+                        user_profile.age = parsed_age
+                        await self.user_service.save_user_profile(account_id, user_profile)
+                        # 返回特殊结果，通知调用方
+                        return {
+                            "collected": True,
+                            "field": "age",
+                            "value": parsed_age,
+                            "under_limit": True
+                        }
 
                 # 检查字段是否需要更新
                 is_collected = user_profile.collection_progress.get(mapped_field, False)

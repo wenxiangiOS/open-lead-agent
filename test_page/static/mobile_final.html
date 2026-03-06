@@ -33,9 +33,12 @@
 
         .header {
             background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            padding: 20px;
+            padding: 15px 20px;
             color: white;
             text-align: center;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         .header h1 {
@@ -46,6 +49,32 @@
         .header p {
             font-size: 14px;
             opacity: 0.9;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .toggle-info-btn {
+            padding: 5px 12px;
+            border: none;
+            border-radius: 15px;
+            background: rgba(255,255,255,0.2);
+            color: white;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .toggle-info-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .toggle-info-btn.hidden {
+            background: rgba(150,150,150,0.5);
+            color: rgba(255,255,255,0.8);
         }
 
         .status {
@@ -171,15 +200,54 @@
         .input-row {
             display: flex;
             gap: 10px;
-            margin-bottom: 10px;
+            align-items: flex-end;
         }
 
-        .input-row input {
+        .input-wrapper {
             flex: 1;
+            position: relative;
+        }
+
+        .input-row textarea {
+            width: 100%;
             padding: 12px 16px;
+            padding-bottom: 28px;
             border: 2px solid #e0e0e0;
-            border-radius: 25px;
+            border-radius: 20px;
             font-size: 15px;
+            font-family: inherit;
+            resize: none;
+            outline: none;
+            line-height: 1.5;
+            min-height: 46px;
+            max-height: 100px;
+            overflow-y: auto;
+            box-sizing: border-box;
+            transition: border-color 0.2s;
+        }
+
+        .input-row textarea:focus {
+            border-color: #667eea;
+        }
+
+        .input-row textarea.over-limit {
+            border-color: #ff4757;
+        }
+
+        .char-count {
+            position: absolute;
+            bottom: 8px;
+            right: 12px;
+            font-size: 12px;
+            color: #999;
+        }
+
+        .char-count.warning {
+            color: #ff9500;
+        }
+
+        .char-count.error {
+            color: #ff4757;
         }
 
         .send-btn {
@@ -191,17 +259,13 @@
             font-size: 15px;
             font-weight: 600;
             cursor: pointer;
+            flex-shrink: 0;
+            height: 46px;
         }
 
-        .reset-btn {
-            width: 100%;
-            padding: 10px;
-            border: none;
-            border-radius: 25px;
-            background: #f0f0f0;
-            color: #666;
-            font-size: 14px;
-            cursor: pointer;
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         .typing-indicator {
@@ -213,6 +277,31 @@
 
         .typing-indicator.show {
             display: block;
+        }
+
+        .toggle-info-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.3s;
+            z-index: 10;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        .toggle-info-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        .toggle-info-btn.hidden {
+            background: #999;
         }
 
         .welcome-message {
@@ -232,8 +321,11 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>💕 AI红娘小缘</h1>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h1>💕 AI红娘小缘</h1>
+            </div>
             <p>同城脱单联盟 · 温暖牵线</p>
+            <button class="toggle-info-btn" id="toggleInfoBtn">📋 隐藏已收集信息</button>
         </div>
 
         <div class="status" id="status">
@@ -260,10 +352,14 @@
 
         <div class="input-area" id="inputArea">
             <div class="input-row">
-                <input type="text" id="messageInput" placeholder="输入消息..." autocomplete="off">
+                <div class="input-wrapper">
+                    <textarea id="messageInput" placeholder="输入消息..." autocomplete="off" rows="1" maxlength="500"></textarea>
+                    <div class="input-footer">
+                        <span class="char-count" id="charCount">0/500</span>
+                    </div>
+                </div>
                 <button class="send-btn" id="sendBtn">发送</button>
             </div>
-            <button class="reset-btn" id="resetBtn">重新开始</button>
         </div>
     </div>
 
@@ -272,6 +368,8 @@
         let accountId = '';
         let isProcessing = false;
         let hasStarted = false;
+        let showDebugInfo = true;  // 默认显示已收集信息
+        document.getElementById('toggleInfoBtn').style.display = 'block';
 
         // 生成随机用户ID
         function generateUserId() {
@@ -336,6 +434,8 @@
             document.getElementById('welcomeCard').style.display = 'none';
             document.getElementById('chatBox').style.display = 'block';
             document.getElementById('inputArea').style.display = 'block';
+            // 显示切换按钮
+            document.getElementById('toggleInfoBtn').style.display = 'block';
 
             // 清空输入框并确保没有焦点
             const input = document.getElementById('messageInput');
@@ -395,12 +495,12 @@
                 hideTyping();
 
                 if (data.silent) {
-                    // 429配额错误，静默处理，不显示任何消息
+                    // 429配额错误， 静默处理，不显示任何消息
                     console.log('服务暂时不可用（配额限制），已静默处理');
                 } else if (data.success && data.response) {
-                    // 永远显示调试信息
                     let displayText = data.response;
-                    if (data.debug_info) {
+                    // 根据状态决定是否显示调试信息
+                    if (showDebugInfo && data.debug_info) {
                         displayText += data.debug_info;
                     }
                     addMessage('ai', displayText);
@@ -417,31 +517,64 @@
             isProcessing = false;
         }
 
-        // 重新开始
-        function resetChat() {
-            document.getElementById('chatBox').innerHTML = '';
-            document.getElementById('welcomeCard').style.display = 'block';
-            document.getElementById('chatBox').style.display = 'none';
-            document.getElementById('inputArea').style.display = 'none';
-            document.getElementById('startBtn').textContent = '开始聊天';
-            document.getElementById('startBtn').disabled = false;
-            hasStarted = false;
-            isProcessing = false;
-            accountId = generateUserId();
-            document.getElementById('accountId').value = accountId;
-        }
-
         // 事件监听
         document.getElementById('startBtn').addEventListener('click', startChat);
         document.getElementById('sendBtn').addEventListener('click', sendMessage);
-        document.getElementById('resetBtn').addEventListener('click', resetChat);
 
-        // 回车发送（但需要用户明确在输入框中按回车）
-        document.getElementById('messageInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter' && !isProcessing) {
-                sendMessage();
+        // 切换已收集信息显示
+        document.getElementById('toggleInfoBtn').addEventListener('click', function() {
+            showDebugInfo = !showDebugInfo;
+            const btn = document.getElementById('toggleInfoBtn');
+            btn.textContent = showDebugInfo ? '📋 隐藏已收集信息' : '📋 显示已收集信息';
+            btn.classList.toggle('hidden', !showDebugInfo);
+        });
+
+        // 输入框自适应高度和字数统计
+        const messageInput = document.getElementById('messageInput');
+        const charCount = document.getElementById('charCount');
+        const sendBtn = document.getElementById('sendBtn');
+        const MAX_CHARS = 500;
+
+        function updateCharCount() {
+            const length = messageInput.value.length;
+            charCount.textContent = `${length}/${MAX_CHARS}`;
+
+            // 更新样式
+            charCount.classList.remove('warning', 'error');
+            if (length > MAX_CHARS * 0.8) {
+                charCount.classList.add('warning');
+            }
+            if (length >= MAX_CHARS) {
+                charCount.classList.add('error');
+                sendBtn.disabled = true;
+            } else {
+                sendBtn.disabled = false;
+            }
+        }
+
+        function autoResize() {
+            messageInput.style.height = 'auto';
+            const newHeight = Math.min(messageInput.scrollHeight, 100); // 最大高度约4行
+            messageInput.style.height = newHeight + 'px';
+        }
+
+        messageInput.addEventListener('input', function() {
+            updateCharCount();
+            autoResize();
+        });
+
+        // 回车发送（阻止默认换行）
+        messageInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey && !isProcessing) {
+                e.preventDefault(); // 阻止换行
+                if (messageInput.value.trim() && messageInput.value.length <= MAX_CHARS) {
+                    sendMessage();
+                }
             }
         });
+
+        // 初始化字数显示
+        updateCharCount();
 
         // 初始化
         accountId = generateUserId();
