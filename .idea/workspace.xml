@@ -8,7 +8,7 @@
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/chat_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/chat_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/extraction_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/extraction_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test_page/static/mobile_final.html" beforeDir="false" afterPath="$PROJECT_DIR$/test_page/static/mobile_final.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/services/prompts.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/prompts.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

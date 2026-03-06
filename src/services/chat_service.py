@@ -833,8 +833,33 @@ class ChatService:
             await self.user_service.save_user_profile(account_id, user_profile)
             logger.info(f"[微信收集] 设置 wechat_collected=True, 香港用户={is_hong_user}")
 
-        # 如果没有收集到任何联系方式，返回原回复
+        # 如果没有收集到任何联系方式，检查是否所有字段都已完成
         if collected_contact is None and collected_wechat is None:
+            # 检查核心字段是否全部收集
+            core_fields_to_check = ['sex', 'age', 'education', 'occupation', 'location']
+            all_core_collected = all([
+                user_profile.collection_progress.get(field, False)
+                for field in core_fields_to_check
+            ])
+
+            contact_collected = (
+                user_profile.collection_progress.get('contact', False) or
+                (user_profile.wechat and user_profile.wechat_collected)
+            )
+
+            # 检查是否有择偶要求
+            has_partner_requirement = (
+                user_profile.partner_requirement is not None and
+                user_profile.partner_requirement != ""
+            )
+
+            # 如果所有字段都完成了，返回收尾回复
+            if all_core_collected and contact_collected and has_partner_requirement:
+                logger.info(f"[收尾检查] 所有字段已完成，生成收尾回复")
+                call_name = user_profile.get_greeting()
+                return f"好的呀～{call_name}的信息我都记下啦😊 有合适的我会尽快联系你的～"
+
+            # 否则返回原回复
             return ai_response
 
         # 用户提供了联系方式（电话或微信），重置确认词计数器
@@ -865,12 +890,33 @@ class ChatService:
                 call_name = user_profile.get_greeting()
                 return f"好的呀～微信我记下啦😊 对啦，方便再留个电话号码吗？电话联系会更方便及时呢～"
 
-            # 已经争取过电话，用户还是只留微信，继续收尾流程
+            # 已经争取过电话，用户还是只留微信，检查是否可以收尾
             if all_core_collected and contact_collected:
                 logger.info(f"[微信收集] 核心字段全部收集完成，准备收尾")
                 await self._mark_remaining_fields_as_skipped(account_id, user_profile)
                 return ai_response
-            return ai_response
+            else:
+                # === 核心字段未全部收集，必须继续收集 ===
+                missing_fields = [f for f in core_fields_to_check
+                               if not user_profile.collection_progress.get(f, False)]
+                logger.info(f"[微信收集] 核心字段还有 {len(missing_fields)} 个未收集: {missing_fields}，生成继续收集的回复")
+
+                # 生成继续收集的回复（不让 AI 使用收尾话术）
+                call_name = user_profile.get_greeting()
+                field_names = {
+                    'sex': '是小哥哥还是小姐姐呀',
+                    'age': '今年多大呢',
+                    'education': '学历是什么呀',
+                    'occupation': '做什么工作的呀',
+                    'location': '在哪个城市呢'
+                }
+                # 选择第一个未收集的字段询问
+                first_missing = missing_fields[0] if missing_fields else None
+                if first_missing and first_missing in field_names:
+                    question = field_names[first_missing]
+                    return f"好的呀～微信我记下啦😊 对啦，{question}？"
+                else:
+                    return f"好的呀～微信我记下啦😊 方便再简单介绍一下自己吗？"
 
         # 验证电话号码
         logger.info(f"[联系方式验证] 开始验证电话: {collected_contact}")
@@ -884,6 +930,12 @@ class ChatService:
 
         if is_valid:
             logger.info(f"[联系方式验证成功]")
+
+            # === 重置争取电话的状态（用户已提供电话，无需再争取）===
+            if user_profile.phone_persuasion_attempted:
+                user_profile.phone_persuasion_attempted = False
+                logger.info(f"[联系方式验证] 重置 phone_persuasion_attempted = False")
+                await self.user_service.save_user_profile(account_id, user_profile)
 
             # === 核心字段完成度检查 ===
             # 检查核心字段是否全部收集（联系方式：电话或微信有一个即可）
@@ -909,11 +961,27 @@ class ChatService:
                 # 返回收尾回复
                 return success_msg or ai_response
             else:
-                # === 核心字段未全部收集，不收尾 ===
+                # === 核心字段未全部收集，必须继续收集 ===
                 missing_fields = [f for f in core_fields_to_check
                                if not user_profile.collection_progress.get(f, False)]
-                logger.info(f"[核心字段] 还有 {len(missing_fields)} 个未收集: {missing_fields}，继续收集")
-                return None  # 返回 None，让调用方使用原 AI 回复
+                logger.info(f"[核心字段] 还有 {len(missing_fields)} 个未收集: {missing_fields}，生成继续收集的回复")
+
+                # 生成继续收集的回复（不让 AI 使用收尾话术）
+                call_name = user_profile.get_greeting()
+                field_names = {
+                    'sex': '是小哥哥还是小姐姐呀',
+                    'age': '今年多大呢',
+                    'education': '学历是什么呀',
+                    'occupation': '做什么工作的呀',
+                    'location': '在哪个城市呢'
+                }
+                # 选择第一个未收集的字段询问
+                first_missing = missing_fields[0] if missing_fields else None
+                if first_missing and first_missing in field_names:
+                    question = field_names[first_missing]
+                    return f"好的呀～{call_name}的联系方式我记下啦😊 对啦，{question}？"
+                else:
+                    return f"好的呀～{call_name}的联系方式我记下啦😊 方便再简单介绍一下自己吗？"
         else:
             # 撤销保存 - 直接修改传入的 user_profile 对象
             user_profile.contact = None

@@ -202,6 +202,64 @@ class ExtractionService:
 
         return result
 
+    def _parse_age(self, value) -> Optional[int]:
+        """
+        从值中解析年龄
+
+        支持：
+        - 数字（如 28）
+        - "XX岁" 格式（如 28岁）
+        - "XX后" 格式（如 90后，计算年龄）
+        - 出生年份（如 1990，计算年龄）
+
+        Args:
+            value: 年龄值（字符串或数字）
+
+        Returns:
+            Optional[int]: 解析后的年龄，失败返回 None
+        """
+        if value is None:
+            return None
+
+        # 如果已经是数字，直接返回
+        if isinstance(value, int):
+            return value
+
+        value_str = str(value).strip()
+
+        # 1. 尝试匹配 "XX岁" 格式
+        match = re.search(r'(\d{1,3})\s*岁', value_str)
+        if match:
+            return int(match.group(1))
+
+        # 2. 尝试匹配 "XX后" 格式（如 90后 = 1990 年代出生）
+        match = re.search(r'(\d{2})后', value_str)
+        if match:
+            year_suffix = int(match.group(1))
+            # 假设是 19XX 年代
+            birth_year = 1900 + year_suffix
+            from datetime import datetime
+            current_year = datetime.now().year
+            return current_year - birth_year
+
+        # 3. 尝试匹配 4 位数字（可能是出生年份）
+        match = re.search(r'^(19\d{2}|20\d{2})$', value_str)
+        if match:
+            birth_year = int(match.group(1))
+            from datetime import datetime
+            current_year = datetime.now().year
+            return current_year - birth_year
+
+        # 4. 尝试提取任意数字
+        match = re.search(r'(\d{1,3})', value_str)
+        if match:
+            age = int(match.group(1))
+            # 年龄应该在合理范围内（18-100）
+            if 18 <= age <= 100:
+                return age
+
+        return None
+
     def infer_refused_fields(self, last_question: str) -> List[str]:
         """
         根据上一个问题推断用户拒绝的字段
@@ -439,21 +497,30 @@ class ExtractionService:
                 is_hong_user = '香港' in location_lower or 'hk' in location_lower
 
             # 检查是否已收集联系方式（信息收集完成的标志）- 最后显示
-            # 只检查 contact 字段是否有值，不依赖 collection_progress
-            if user_profile.contact and user_profile.contact != "":
+            # 使用 collection_progress['contact'] 来判断，而不是 user_profile.contact
+            # 因为微信收集时也会设置 collection_progress['contact'] = True
+            contact_progress = user_profile.collection_progress.get('contact', False)
+            has_contact_value = user_profile.contact and user_profile.contact != ""
+            has_wechat_value = user_profile.wechat and user_profile.wechat != ""
+
+            if contact_progress or (has_contact_value or has_wechat_value):
                 if is_hong_user:
                     # 香港用户：需要电话和微信都收集了才算"已留联系"
-                    if user_profile.wechat and user_profile.wechat != "":
+                    if has_contact_value and has_wechat_value:
                         parts.append("已留联系")
                         # 确保 collection_progress 也被标记
                         if not user_profile.collection_progress.get('contact', False):
                             user_profile.collection_progress['contact'] = True
-                    else:
+                    elif has_contact_value:
                         # 香港用户只收集了电话，还需要微信
                         parts.append(f"电话:{user_profile.contact}")
                         parts.append("需微信")
+                    elif has_wechat_value:
+                        # 香港用户只收集了微信，还需要电话
+                        parts.append(f"微信:{user_profile.wechat}")
+                        parts.append("需电话")
                 else:
-                    # 非香港用户：只收集电话即可
+                    # 非香港用户：电话或微信有一个即可
                     parts.append("已留联系")
                     # 确保 collection_progress 也被标记（用于 is_collection_complete()）
                     if not user_profile.collection_progress.get('contact', False):
