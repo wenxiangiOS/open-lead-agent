@@ -479,6 +479,7 @@
 
             // 发送到服务器
             try {
+                const startTime = Date.now();  // 记录开始时间
                 showTyping();
                 const response = await fetch(`${API_BASE}/api/doubao/chat`, {
                     method: 'POST',
@@ -492,6 +493,8 @@
                 });
 
                 const data = await response.json();
+                const endTime = Date.now();  // 记录结束时间
+                const duration = ((endTime - startTime) / 1000).toFixed(2);  // 计算耗时（秒）
                 hideTyping();
 
                 if (data.silent) {
@@ -503,6 +506,8 @@
                     if (showDebugInfo && data.debug_info) {
                         displayText += data.debug_info;
                     }
+                    // 添加耗时信息
+                    displayText += `\n\n⏱️ 耗时: ${duration}秒`;
                     addMessage('ai', displayText);
                 } else if (data.error) {
                     addMessage('ai', '抱歉：' + data.error);

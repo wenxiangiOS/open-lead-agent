@@ -466,19 +466,20 @@ class ExtractionService:
         else:
             summary = "【已收集】无"
 
-        # 添加"已跳过"的字段列表（问了2次及以上未回答的字段）
-        skipped_fields = []
-        for field, count in user_profile.field_ask_count.items():
-            if count >= 2:
-                # 检查字段是否还未收集
-                is_collected = user_profile.collection_progress.get(field, False)
-                has_value = getattr(user_profile, field, None) is not None
-                if not is_collected and not has_value:
-                    field_cn = field_name_map.get(field, field)
-                    skipped_fields.append(f"{field_cn}({count}次未答)")
+        # 添加"已跳过"的字段列表（使用 skipped_fields 字典，而不是 field_ask_count）
+        # 字段被标记为跳过的条件：AI 问了 2 次用户都没回答
+        skipped_list = []
+        for field in user_profile.skipped_fields.keys():
+            # 检查字段是否还未收集
+            is_collected = user_profile.collection_progress.get(field, False)
+            has_value = getattr(user_profile, field, None) is not None
+            if not is_collected and not has_value:
+                field_cn = field_name_map.get(field, field)
+                count = user_profile.field_ask_count.get(field, 2)
+                skipped_list.append(f"{field_cn}({count}次未答)")
 
-        if skipped_fields:
-            summary += "\n【⚠️已跳过】" + "、".join(skipped_fields) + "（禁止再问这些字段！）"
+        if skipped_list:
+            summary += "\n【⚠️已跳过】" + "、".join(skipped_list) + "（禁止再问这些字段！）"
 
         return summary
 

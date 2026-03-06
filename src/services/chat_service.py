@@ -171,13 +171,13 @@ class ChatService:
             logger.info(f"[用户档案检查] account_id={account_id}, is_empty={is_empty}, last_name={user_profile.last_name}")
             if is_empty:
                 await self._reset_nonsense_count(account_id)
-                # 重置追问计数器（新用户不应该有之前的追问记录）
-                user_profile.field_ask_count = {}
                 # 重置对话结束状态（新用户重新开始）
                 user_profile.conversation_ended = False
+                # 注意：不重置 field_ask_count，因为它记录的是当前对话的追问次数
+                # 即使档案为空（Redis过期），追问计数也应该保持，因为这是当前对话的上下文
                 # 立即保存重置的状态，避免后续异常导致丢失
                 await self.user_service.save_user_profile(account_id, user_profile)
-                logger.info(f"[全新用户] 已重置无意义输入计数器、追问计数器和对话结束状态: {account_id}")
+                logger.info(f"[全新用户] 已重置无意义输入计数器和对话结束状态: {account_id}")
 
             # 1.6. 检查对话是否已结束（挽留失败后）
             # 如果已结束，用户再发消息时只返回简短告别，不再收集信息
@@ -459,6 +459,10 @@ class ChatService:
             response_to_clean = enhanced_response if enhanced_response is not None else ai_response
             final_response = self._clean_response(response_to_clean)
 
+            # 11.5. 保存 field_ask_count 快照（在 _track_ai_asked_fields 增加计数之前）
+            # 用于"已跳过"显示逻辑：使用"增加前"的值，这样用户还有机会回答当前问题
+            field_ask_count_before = dict(user_profile.field_ask_count) if user_profile.field_ask_count else {}
+
             # 12. 更新对话状态
             await self._update_conversation_state(
                 account_id,
@@ -478,7 +482,8 @@ class ChatService:
                 user_profile,
                 final_response,
                 collection_result,
-                request.dialogId
+                request.dialogId,
+                field_ask_count_before  # 传递"增加前"的快照，用于正确显示"已跳过"时机
             )
 
         except Exception as e:
@@ -953,23 +958,31 @@ class ChatService:
         user_profile: UserProfile,
         response: str,
         collection_result: Dict[str, Any],
-        dialog_id: Optional[str]
+        dialog_id: Optional[str],
+        field_ask_count_before: Dict[str, int] = None
     ) -> Dict[str, Any]:
-        """构建聊天响应"""
+        """构建聊天响应
+
+        Args:
+            field_ask_count_before: AI询问前的字段计数快照，用于正确显示"已跳过"时机
+                                   （使用"增加前"的值，这样用户还有机会回答当前问题）
+        """
         # 检查是否拒绝
         is_refusal = RefusalDetector.is_refusing(response)
 
         # 获取消息计数
         message_count = await self.dialogue_manager.get_message_count(account_id)
 
+        # 使用"增加前"的快照来判断"已跳过"显示（如果没有快照，使用当前值）
+        ask_count_snapshot = field_ask_count_before if field_ask_count_before is not None else {}
+
         # 辅助函数：获取字段显示值（区分"未留"和"已跳过"）
         def get_field_display(field_name: str, value, default: str = "未留") -> str:
             if value:
                 return str(value)
             # 检查是否被跳过（问了2次及以上未回答）
-            # 安全检查：确保 field_ask_count 不是 None
-            ask_count_dict = user_profile.field_ask_count if user_profile.field_ask_count is not None else {}
-            ask_count = ask_count_dict.get(field_name, 0)
+            # 使用"增加前"的快照值，这样用户还有机会回答当前问题
+            ask_count = ask_count_snapshot.get(field_name, 0)
             if ask_count >= 2:
                 return f"已跳过({ask_count}次未答)"
             return default
@@ -985,11 +998,9 @@ class ChatService:
             elif wechat:
                 return str(wechat)
             else:
-                # 两者都没有，检查是否跳过
-                ask_count_dict = user_profile.field_ask_count if user_profile.field_ask_count is not None else {}
-                # 检查 contact 或 wechat 是否被跳过
-                contact_ask_count = ask_count_dict.get("contact", 0)
-                wechat_ask_count = ask_count_dict.get("wechat", 0)
+                # 两者都没有，检查是否跳过（使用"增加前"的快照值）
+                contact_ask_count = ask_count_snapshot.get("contact", 0)
+                wechat_ask_count = ask_count_snapshot.get("wechat", 0)
                 if contact_ask_count >= 2 or wechat_ask_count >= 2:
                     return f"已跳过({max(contact_ask_count, wechat_ask_count)}次未答)"
                 return "未留"
@@ -1695,7 +1706,13 @@ class ChatService:
             if not is_collected and not is_skipped:
                 # 增加追问计数
                 user_profile.increment_ask_count(field)
-                logger.info(f"[智能追问] AI询问了字段 {field}，当前追问次数: {user_profile.get_ask_count(field)}")
+                current_count = user_profile.get_ask_count(field)
+                logger.info(f"[智能追问] AI询问了字段 {field}，当前追问次数: {current_count}")
+
+                # 如果问了2次还没回答，自动跳过该字段（下一轮不再问）
+                if current_count >= 2:
+                    user_profile.skipped_fields[field] = True
+                    logger.info(f"[智能追问] 字段 {field} 已问2次未回答，自动标记为跳过")
 
         # 保存用户档案
         await self.user_service.save_user_profile(account_id, user_profile)
