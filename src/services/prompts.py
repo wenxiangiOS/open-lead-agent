@@ -684,16 +684,17 @@ def get_main_dialogue(
 
     # 构建开头强制指令
     forced_instruction = ""
+    prompt_mods = []  # 记录提示词修改
 
     # 1. 联系方式的"立即执行"指令（最高优先级，放在最前面）
     if contact_instruction and "立即执行" in contact_instruction:
         forced_instruction += contact_instruction + "\n\n"
-        logger.info(f"[提示词修改] 已添加联系方式立即执行指令到开头")
+        prompt_mods.append("联系方式立即执行")
 
     # 2. 智能追问提示（高优先级，放在最前面）
     if ask_count_instruction:
         forced_instruction += ask_count_instruction
-        logger.info(f"[提示词修改] 已添加智能追问提示到开头")
+        prompt_mods.append("智能追问")
 
     # 2. 如果不是首次对话，添加禁止开场白的指令
     if not is_first_chat:

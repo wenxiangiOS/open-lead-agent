@@ -113,7 +113,8 @@ class ExtractionService:
             return {}
 
         # 调试：显示 AI 原始回复（限制长度）
-        logger.info(f"[AI原始回复] {repr(response[:500])}")
+        # 简化日志：只记录回复长度和前50字符
+        logger.debug(f"[AI回复] 长度={len(response)}, 摘要={response[:50]}...")
 
         # 1. 优先匹配 <extract>...</extract> XML 标签格式
         extract_pattern = r'<extract>\s*\n?(.*?)\n?</extract>'
@@ -121,12 +122,12 @@ class ExtractionService:
         if match:
             content = match.group(1).strip()
             # 调试：显示原始内容（限制长度）
-            logger.info(f"[提取原始] {repr(content[:200])}")
+            logger.debug(f"[提取原始] 长度={len(content)}")
             extracted = self._parse_extract_content(content)
             if extracted:
                 # 简化日志：只显示提取到的非空字段
                 non_empty = {k: v for k, v in extracted.items() if v not in [None, '', 'null']}
-                logger.info(f"[提取] {non_empty}")
+                logger.debug(f"[提取] 字段数={len(non_empty)}")
                 return extracted
         else:
             logger.warning(f"[提取失败] AI 回复中没有找到 <extract> 标签！")
@@ -282,7 +283,7 @@ class ExtractionService:
                         extracted_values = [kw for kw in valuable_keywords if kw in value]
                         if extracted_values:
                             value = '、'.join(extracted_values)
-                            logger.info(f"[择偶要求] 提取有价值内容: {value}")
+                            logger.debug(f"[择偶要求] 提取有价值内容: {value}")
                     else:
                         # 没有有价值内容，检查是否是"没有特别要求"的表达
                         no_requirement_signals = ['没有', '没有了', '没', '无', '无特别要求', '没要求', '没特别', '暂时没有', '就这些']
@@ -293,10 +294,10 @@ class ExtractionService:
                             # 注意：这是第一次说"没有"时，需要设置值
                             if not current_value:
                                 value = "无特别要求"
-                                logger.info(f"[择偶要求] 用户表示没有特别要求: {value_stripped} → 设置为'无特别要求'")
+                                logger.debug(f"[择偶要求] 设置为'无特别要求'")
                             else:
                                 # 已经有值了，用户说"没有"表示没有其他补充，保持原值
-                                logger.info(f"[择偶要求] 用户表示没有其他补充，保持原值: {current_value}")
+                                logger.debug(f"[择偶要求] 无补充，保持原值")
                                 continue
 
                     if current_value:
@@ -314,12 +315,12 @@ class ExtractionService:
                                 break
 
                         if is_duplicate:
-                            logger.info(f"[择偶要求] 跳过重复值: {value}")
+                            logger.debug(f"[择偶要求] 跳过重复值")
                             continue
 
                         # 追加新值
                         new_value = f"{current_value},{value}"
-                        logger.info(f"[择偶要求] 累积追加: {current_value} + {value} → {new_value}")
+                        logger.debug(f"[择偶要求] 累积: +{value}")
                         value = new_value
 
                 needs_update = not is_collected or (current_value != value)

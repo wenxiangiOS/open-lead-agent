@@ -48,6 +48,9 @@ class ChatService:
     - 本类主要负责流程编排
     """
 
+    # 核心字段定义（必须收集的字段）
+    CORE_FIELDS = ['sex', 'age', 'education', 'occupation', 'location', 'contact']
+
     # 预设的打招呼回复列表（按类型分组）
     GREETING_RESPONSES: Dict[str, List[str]] = {
         'formal': [  # 正式打招呼（你好、您好）
@@ -487,9 +490,8 @@ class ChatService:
         # 只有在还没收集到联系方式时才处理
         if not user_profile.collection_progress.get('contact', False):
             # 调试日志：打印当前状态
-            logger.info(f"[拒绝检测] 用户消息: '{user_message}', is_explicit_wechat_refuse={is_explicit_wechat_refuse}, is_explicit_phone_refuse={is_explicit_phone_refuse}")
-            logger.info(f"[拒绝检测] 当前状态: wechat_persuasion_attempted={user_profile.wechat_persuasion_attempted}, phone_persuasion_attempted={user_profile.phone_persuasion_attempted}")
-            logger.info(f"[拒绝检测] 当前状态: rejected_wechat={user_profile.rejected_wechat}, rejected_phone={user_profile.rejected_phone}")
+            # 合并日志
+            logger.debug(f"[拒绝检测] 消息='{user_message[:20]}...', 显式拒(微信={is_explicit_wechat_refuse},电话={is_explicit_phone_refuse}), 争取过(微信={user_profile.wechat_persuasion_attempted},电话={user_profile.phone_persuasion_attempted}), 已拒(微信={user_profile.rejected_wechat},电话={user_profile.rejected_phone})")
 
             # === 显式拒绝微信（用户明确说"不留微信"等）===
             # 显式拒绝检测优先执行，因为它更明确
@@ -667,7 +669,36 @@ class ChatService:
 
         if is_valid:
             logger.info(f"[联系方式验证成功]")
-            return success_msg or ai_response
+
+            # === 核心字段完成度检查 ===
+            # 检查核心字段是否全部收集（联系方式：电话或微信有一个即可）
+            contact_collected = (
+                user_profile.collection_progress.get('contact', False) or
+                (user_profile.wechat and user_profile.wechat_collected)
+            )
+
+            # 核心字段检查（排除contact，因为上面单独检查了
+            core_fields_to_check = ['sex', 'age', 'education', 'occupation', 'location']
+            all_core_collected = all([
+                user_profile.collection_progress.get(field, False)
+                for field in core_fields_to_check
+            ])
+
+            if all_core_collected and contact_collected:
+                # === 核心字段全部收集完成，收尾 ===
+                logger.info(f"[核心字段] 全部收集完成，准备收尾")
+
+                # 标记剩余未收集字段为"跳过"
+                await self._mark_remaining_fields_as_skipped(account_id, user_profile)
+
+                # 返回收尾回复
+                return success_msg or ai_response
+            else:
+                # === 核心字段未全部收集，不收尾 ===
+                missing_fields = [f for f in core_fields_to_check
+                               if not user_profile.collection_progress.get(f, False)]
+                logger.info(f"[核心字段] 还有 {len(missing_fields)} 个未收集: {missing_fields}，继续收集")
+                return None  # 返回 None，让调用方使用原 AI 回复
         else:
             # 撤销保存 - 直接修改传入的 user_profile 对象
             user_profile.contact = None
@@ -1341,6 +1372,28 @@ class ChatService:
         ]
         import random
         return random.choice(responses)
+
+    async def _mark_remaining_fields_as_skipped(self, account_id: str, user_profile: UserProfile) -> None:
+        """
+        收尾时，标记所有未收集字段为"跳过"
+
+        这样用户下次进入时，不会重复询问这些字段
+        """
+        all_fields = [
+            'sex', 'last_name', 'age', 'height', 'weight',
+            'location', 'education', 'marital_status', 'monthly_income',
+            'occupation', 'contact', 'partner_requirement'
+        ]
+
+        skipped_count = 0
+        for field in all_fields:
+            if not user_profile.collection_progress.get(field, False):
+                user_profile.skipped_fields[field] = True
+                skipped_count += 1
+
+        if skipped_count > 0:
+            await self.user_service.save_user_profile(account_id, user_profile)
+            logger.info(f"[收尾] 已标记 {skipped_count} 个未收集字段为跳过")
 
     async def _track_ai_asked_fields(self, account_id: str, ai_response: str) -> None:
         """

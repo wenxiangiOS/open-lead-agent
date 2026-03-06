@@ -99,9 +99,8 @@ class DialogueManager:
         # 判断是否是香港用户
         is_hong_user = self._is_hong_user(user_profile.location)
 
-        # 调试日志：香港用户场景
-        logger.info(f"[香港用户检测] is_hong_user={is_hong_user}, location={user_profile.location}")
-        logger.info(f"[联系方式状态] contact={user_profile.contact}, contact_collected={user_profile.collection_progress.get('contact', False)}, wechat={user_profile.wechat}, wechat_collected={user_profile.wechat_collected}")
+        # 调试日志：香港用户场景（合并为一行）
+        logger.info(f"[联系方式状态] 香港用户={is_hong_user}({user_profile.location}), 电话={user_profile.contact}(已收集={user_profile.collection_progress.get('contact', False)}), 微信={user_profile.wechat}(已收集={user_profile.wechat_collected})")
 
         # 获取联系方式指令（支持场景1和场景2）
         contact_instruction = build_contact_instruction(
@@ -114,10 +113,13 @@ class DialogueManager:
             wechat_collected=user_profile.wechat_collected,
             wechat_attempted=user_profile.wechat_attempted
         )
-        logger.info(f"[联系方式指令] rejected_wechat={user_profile.rejected_wechat}, rejected_phone={user_profile.rejected_phone}, wechat_persuasion_attempted={user_profile.wechat_persuasion_attempted}, phone_persuasion_attempted={user_profile.phone_persuasion_attempted}")
-        logger.info(f"[联系方式指令结果] 长度={len(contact_instruction)}, 内容前200字符: {contact_instruction[:200] if contact_instruction else '(空)'}")
+        # 简化日志：合并状态信息
+        logger.debug(f"[联系方式状态] 拒(微信={user_profile.rejected_wechat},电话={user_profile.rejected_phone}), 争取过(微信={user_profile.wechat_persuasion_attempted},电话={user_profile.phone_persuasion_attempted})")
+        # 简化日志：只显示指令类型，不显示完整内容
         if contact_instruction:
-            logger.info(f"[联系方式指令内容] {contact_instruction[:100]}...")
+            # 提取指令类型（第一行通常包含指令类型）
+            instruction_type = contact_instruction.strip().split('\n')[0][:50] if contact_instruction else '(空)'
+            logger.debug(f"[联系方式指令] {instruction_type}...")
 
         # 获取跳过字段指令（从 user_profile.skipped_fields 获取）
         skipped_fields = set(user_profile.skipped_fields.keys()) if user_profile.skipped_fields else set()
@@ -136,11 +138,10 @@ class DialogueManager:
         has_sex = user_profile.sex is not None
         is_first_chat = not (has_name or has_sex)
 
-        # 调试日志
-        logger.info(f"[is_first_chat检查] has_name={has_name}(value={user_profile.last_name}), has_sex={has_sex}(value={user_profile.sex}), is_first_chat={is_first_chat}")
-        logger.info(f"[已收集摘要] {collected_info}")
+        # 调试日志（合并为一行）
+        logger.debug(f"[对话状态] 首次={is_first_chat}, 已收集={collected_info[:80]}...")
         if skipped_fields:
-            logger.info(f"[跳过字段] {skipped_fields}")
+            logger.debug(f"[跳过字段] {skipped_fields}")
 
         # 获取缺失字段列表
         missing_fields_list = user_profile.get_missing_fields()
@@ -163,7 +164,7 @@ class DialogueManager:
         last_ai_response = conversation_context.get('recent_responses', [])
         last_question = last_ai_response[-1] if last_ai_response else ""
         if last_question:
-            logger.info(f"[上下文提取] 上一轮AI回复: {last_question[:100]}...")
+            logger.debug(f"[上下文] 上一轮AI: {last_question[:50]}...")
 
         # 添加信息提取提示词（传递 last_question 用于上下文感知）
         extraction_prompt = get_extraction(
