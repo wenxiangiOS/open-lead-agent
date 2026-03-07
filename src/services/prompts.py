@@ -924,14 +924,16 @@ def build_contact_instruction(
 ✅ 只争取电话，等用户回复后再处理
 """, {})  # 不再设置 phone_persuasion_attempted，让 _handle_refusal_detection 在用户拒绝时设置
 
-    # === 电话被拒绝，正常问微信（不是争取） ===
-    if rejected_phone and not rejected_wechat:
-        if wechat_persuasion_attempted:
-            # 已经尝试争取过微信，用户还是拒绝
-            return ("\n\n【重要】用户已拒绝提供微信和电话，严禁再询问任何联系方式！", {})
-        else:
-            # 电话被拒绝，正常问微信（不是争取）
-            return ("""
+    # === 电话被拒绝，微信也被最终拒绝 → 结束对话 ===
+    if rejected_phone and rejected_wechat:
+        return ("\n\n【重要】用户已拒绝提供微信和电话，严禁再询问任何联系方式！", {})
+
+    # === 电话被拒绝，微信还没开始问 → 正常问微信 ===
+    # 如果 wechat_persuasion_attempted=True，说明用户已拒绝微信一次，应该争取
+    # 让代码继续执行到后面的"争取微信"逻辑
+    if rejected_phone and not rejected_wechat and not wechat_persuasion_attempted:
+        # 电话被拒绝，还没开始问微信，正常问微信
+        return ("""
 
 【联系方式-微信】
 电话已被拒绝，现在正常询问微信！
