@@ -14,6 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 class ExtractionService:
+    # 预编译正则表达式（性能优化）
+    _EXTRACT_PATTERN = re.compile(r'<extract>\s*\n?(.*?)\n?</extract>', re.DOTALL)
+    _JSON_PATTERN = re.compile(r'```json\s*\n?(.*?)\n?```', re.DOTALL)
+    _FIELD_VALUE_PATTERN = re.compile(r'^([^:]+)\s*:\s*(.+)$')
+    _AGE_PATTERN = re.compile(r'(\d{1,3})\s*岁')
+    _YEAR_SUFFIX_PATTERN = re.compile(r'(\d{2})后')
+    _BIRTH_YEAR_PATTERN = re.compile(r'^(19\d{2}|20\d{2})$')
+    _EXTRACT_NUMBER_PATTERN = re.compile(r'(\d{1,3})')
     """
     信息提取服务
 
@@ -124,8 +132,7 @@ class ExtractionService:
         logger.debug(f"[AI回复] 长度={len(response)}, 摘要={response[:50]}...")
 
         # 1. 优先匹配 <extract>...</extract> XML 标签格式
-        extract_pattern = r'<extract>\s*\n?(.*?)\n?</extract>'
-        match = re.search(extract_pattern, response, re.DOTALL)
+        match = self._EXTRACT_PATTERN.search(response)
         if match:
             content = match.group(1).strip()
             # 调试：显示原始内容（限制长度）
@@ -140,8 +147,7 @@ class ExtractionService:
             logger.warning(f"[提取失败] AI 回复中没有找到 <extract> 标签！")
 
         # 2. 尝试匹配 ```json...``` 代码块格式
-        json_pattern = r'```json\s*\n?(.*?)\n?```'
-        match = re.search(json_pattern, response, re.DOTALL)
+        match = self._JSON_PATTERN.search(response)
         if match:
             import json
             try:
@@ -190,7 +196,7 @@ class ExtractionService:
                 continue
 
             # 匹配 field:value 格式
-            match = re.match(r'^([^:]+)\s*:\s*(.+)$', part)
+            match = self._FIELD_VALUE_PATTERN.match(part)
             if match:
                 field, value = match.groups()
                 # 清理值中的引号
