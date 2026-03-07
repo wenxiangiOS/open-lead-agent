@@ -503,26 +503,60 @@ class ExtractionService:
             has_contact_value = user_profile.contact and user_profile.contact != ""
             has_wechat_value = user_profile.wechat and user_profile.wechat != ""
 
-            if contact_progress or (has_contact_value or has_wechat_value):
+            # 检查拒绝状态
+            rejected_wechat = user_profile.rejected_wechat
+            rejected_phone = user_profile.rejected_phone
+
+            if contact_progress or (has_contact_value or has_wechat_value) or rejected_wechat or rejected_phone:
                 if is_hong_user:
-                    # 香港用户：需要电话和微信都收集了才算"已留联系"
+                    # 香港用户：需要电话和微信都收集了才算完成
                     if has_contact_value and has_wechat_value:
-                        parts.append("已留联系")
-                        # 确保 collection_progress 也被标记
+                        # 都有
+                        parts.append(f"电话:{user_profile.contact}/微信:{user_profile.wechat}")
                         if not user_profile.collection_progress.get('contact', False):
                             user_profile.collection_progress['contact'] = True
+                    elif has_contact_value and rejected_wechat and not has_wechat_value:
+                        # 有电话，拒绝微信
+                        parts.append(f"不愿留微信,电话:{user_profile.contact}")
+                        if not user_profile.collection_progress.get('contact', False):
+                            user_profile.collection_progress['contact'] = True
+                    elif has_wechat_value and rejected_phone and not has_contact_value:
+                        # 有微信，拒绝电话
+                        parts.append(f"不愿留电话,微信:{user_profile.wechat}")
+                        if not user_profile.collection_progress.get('contact', False):
+                            user_profile.collection_progress['contact'] = True
+                    elif rejected_wechat and rejected_phone and not has_contact_value and not has_wechat_value:
+                        # 都拒绝
+                        parts.append("不愿留微信,不愿留电话")
                     elif has_contact_value:
-                        # 香港用户只收集了电话，还需要微信
+                        # 只有电话，还需要微信
                         parts.append(f"电话:{user_profile.contact}")
                         parts.append("需微信")
                     elif has_wechat_value:
-                        # 香港用户只收集了微信，还需要电话
+                        # 只有微信，还需要电话
                         parts.append(f"微信:{user_profile.wechat}")
                         parts.append("需电话")
                 else:
-                    # 非香港用户：电话或微信有一个即可
-                    parts.append("已留联系")
-                    # 确保 collection_progress 也被标记（用于 is_collection_complete()）
+                    # 非香港用户
+                    if has_contact_value and rejected_wechat and not has_wechat_value:
+                        # 有电话，拒绝微信
+                        parts.append(f"不愿留微信,电话:{user_profile.contact}")
+                    elif has_wechat_value and rejected_phone and not has_contact_value:
+                        # 有微信，拒绝电话
+                        parts.append(f"不愿留电话,微信:{user_profile.wechat}")
+                    elif rejected_wechat and rejected_phone and not has_contact_value and not has_wechat_value:
+                        # 都拒绝
+                        parts.append("不愿留微信,不愿留电话")
+                    elif has_contact_value and has_wechat_value:
+                        # 都有
+                        parts.append(f"电话:{user_profile.contact}/微信:{user_profile.wechat}")
+                    elif has_contact_value:
+                        # 只有电话
+                        parts.append(f"电话:{user_profile.contact}")
+                    elif has_wechat_value:
+                        # 只有微信
+                        parts.append(f"微信:{user_profile.wechat}")
+                    # 确保 collection_progress 也被标记
                     if not user_profile.collection_progress.get('contact', False):
                         user_profile.collection_progress['contact'] = True
 

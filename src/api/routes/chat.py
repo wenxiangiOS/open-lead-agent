@@ -88,6 +88,10 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
             try:
                 profile_result = await chat_service.get_user_profile(chat_request.accountId)
                 profile_after = profile_result.get("profile", {})
+                # 调试：打印 profile 中的联系方式相关字段
+                logger.info(f"[DEBUG] profile_after keys: {list(profile_after.keys())}")
+                logger.info(f"[DEBUG] wechat_persuasion_attempted={profile_after.get('wechat_persuasion_attempted')}, rejected_wechat={profile_after.get('rejected_wechat')}")
+                logger.info(f"[DEBUG] phone_persuasion_attempted={profile_after.get('phone_persuasion_attempted')}, rejected_phone={profile_after.get('rejected_phone')}")
                 # 使用追踪前的追问次数 + 追踪后的字段值
                 # 这样：用户刚提供的信息立即显示，但"已跳过"状态在下一轮才显示
                 debug_info = _format_debug_info_with_ask_count(profile_after, field_ask_count_before)
@@ -106,6 +110,59 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
     except Exception as e:
         logger.error(f"Chat processing error: {e}")
         raise HTTPException(status_code=500, detail="处理聊天请求时出错")
+
+
+def _format_contact_display(profile: Dict[str, Any]) -> str:
+    """
+    格式化联系方式显示（简化版）
+
+    状态定义：
+    - 已留：有值
+    - 已拒绝：rejected_xxx=True
+    - 争取中：xxx_persuasion_attempted=True 且无值且未拒绝
+    - 未问：不显示
+
+    Returns:
+        str: 联系方式显示字符串
+    """
+    parts = []
+
+    # === 微信号部分 ===
+    wechat = profile.get("wechat")
+    rejected_wechat = profile.get("rejected_wechat", False)
+    wechat_persuasion_attempted = profile.get("wechat_persuasion_attempted", False)
+
+    if wechat:
+        # 已留
+        parts.append(f"微信:{wechat}")
+    elif rejected_wechat:
+        # 已拒绝
+        parts.append("不愿留微信")
+    elif wechat_persuasion_attempted:
+        # 争取中
+        parts.append("微信争取中")
+    # 未问：不显示
+
+    # === 电话部分 ===
+    phone = profile.get("contact")
+    rejected_phone = profile.get("rejected_phone", False)
+    phone_persuasion_attempted = profile.get("phone_persuasion_attempted", False)
+
+    if phone:
+        # 已留
+        parts.append(f"电话:{phone}")
+    elif rejected_phone:
+        # 已拒绝
+        parts.append("不愿留电话")
+    elif phone_persuasion_attempted:
+        # 争取中
+        parts.append("电话争取中")
+    # 未问：不显示
+
+    # === 组合结果 ===
+    if parts:
+        return ", ".join(parts)
+    return "未留"
 
 
 def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_before: Dict[str, int] = None) -> str:
@@ -142,30 +199,10 @@ def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_b
     # 使用换行格式显示
     lines = ["\n[已收集信息]"]
     for field, name in field_names.items():
-        # 特殊处理 contact 字段：合并电话和微信
+        # 特殊处理 contact 字段：使用简化版显示逻辑
         if field == "contact":
-            phone = profile.get("contact")
-            wechat = profile.get("wechat")
-            if phone and wechat:
-                lines.append(f"  {name}: {phone}/{wechat}")
-            elif phone:
-                lines.append(f"  {name}: {phone}")
-            elif wechat:
-                lines.append(f"  {name}: {wechat}")
-            else:
-                # 两者都没有，检查是否跳过
-                skipped = profile.get("skipped_fields", {})
-                contact_skipped = skipped.get("contact", False)
-                wechat_skipped = skipped.get("wechat", False)
-                contact_ask_count = field_ask_count.get("contact", 0)
-                wechat_ask_count = field_ask_count.get("wechat", 0)
-                if contact_skipped or wechat_skipped:
-                    lines.append(f"  {name}: 跳过")
-                elif contact_ask_count >= 2 or wechat_ask_count >= 2:
-                    count = max(contact_ask_count, wechat_ask_count)
-                    lines.append(f"  {name}: 已跳过({count}次未答)")
-                else:
-                    lines.append(f"  {name}: 未留")
+            contact_display = _format_contact_display(profile)
+            lines.append(f"  {name}: {contact_display}")
         else:
             value = profile.get(field)
             if value is not None:
@@ -209,30 +246,10 @@ def _format_debug_info(profile: Dict[str, Any]) -> str:
     # 使用换行格式显示
     lines = ["\n[已收集信息]"]
     for field, name in field_names.items():
-        # 特殊处理 contact 字段：合并电话和微信
+        # 特殊处理 contact 字段：使用简化版显示逻辑
         if field == "contact":
-            phone = profile.get("contact")
-            wechat = profile.get("wechat")
-            if phone and wechat:
-                lines.append(f"  {name}: {phone}/{wechat}")
-            elif phone:
-                lines.append(f"  {name}: {phone}")
-            elif wechat:
-                lines.append(f"  {name}: {wechat}")
-            else:
-                # 两者都没有，检查是否跳过
-                skipped = profile.get("skipped_fields", {})
-                contact_skipped = skipped.get("contact", False)
-                wechat_skipped = skipped.get("wechat", False)
-                contact_ask_count = field_ask_count.get("contact", 0)
-                wechat_ask_count = field_ask_count.get("wechat", 0)
-                if contact_skipped or wechat_skipped:
-                    lines.append(f"  {name}: 跳过")
-                elif contact_ask_count >= 2 or wechat_ask_count >= 2:
-                    count = max(contact_ask_count, wechat_ask_count)
-                    lines.append(f"  {name}: 已跳过({count}次未答)")
-                else:
-                    lines.append(f"  {name}: 未留")
+            contact_display = _format_contact_display(profile)
+            lines.append(f"  {name}: {contact_display}")
         else:
             value = profile.get(field)
             if value is not None:

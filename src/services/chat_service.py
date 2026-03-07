@@ -323,7 +323,9 @@ class ChatService:
                 )
 
             # 4.6. 检测打招呼（仅当用户档案为空时使用预设回复）
-            if is_empty and self._is_greeting(request.question):
+            # 但如果用户同时表达了拒绝联系方式，则跳过打招呼检测，让拒绝检测处理
+            has_contact_refusal = any(kw in request.question for kw in ['不留微信', '不留电话', '不留联系方式', '不给微信', '不给电话'])
+            if is_empty and self._is_greeting(request.question) and not has_contact_refusal:
                 greeting_response = self._get_greeting_response(request.question)
                 # 模拟真人打字时间（1.0-2.0秒），像真人在思考+打字
                 await asyncio.sleep(random.uniform(1.0, 2.0))
@@ -511,16 +513,19 @@ class ChatService:
         # 通用拒绝词（用于上下文感知检测）
         general_refuse_keywords = ['不留', '不给', '不想留', '不方便', '不要', '不行', '不可以', '没']
 
-        # 显式拒绝关键词
-        wechat_refuse_keywords = ['不留微信', '不给微信', '不想留微信', '不想要微信', '没微信', '不用微信']
-        phone_refuse_keywords = ['不留电话', '不给电话', '不想留电话', '不留手机', '不给手机', '不想留手机']
+        # 显式拒绝关键词（不包含通用的"不留"，避免误判）
+        wechat_refuse_keywords = ['不留微信', '不给微信', '不想留微信', '不想要微信', '没微信', '不用微信', '不愿留微信']
+        phone_refuse_keywords = ['不留电话', '不给电话', '不想留电话', '不留手机', '不给手机', '不想留手机', '不愿留电话']
 
         # 判断是否是显式拒绝
         is_explicit_wechat_refuse = any(kw in user_message_lower for kw in wechat_refuse_keywords)
         is_explicit_phone_refuse = any(kw in user_message_lower for kw in phone_refuse_keywords)
 
-        # 只有在还没收集到联系方式时才处理
-        if not user_profile.collection_progress.get('contact', False):
+        # 只有在还没完全收集联系方式时才处理
+        # 注意：如果用户拒绝了电话但还没问微信，应该继续检测微信拒绝
+        # 所以条件是：没有同时拒绝电话和微信
+        both_rejected = user_profile.rejected_phone and user_profile.rejected_wechat
+        if not both_rejected:
             # 调试日志：打印当前状态
             # 合并日志
             logger.debug(f"[拒绝检测] 消息='{user_message[:20]}...', 显式拒(微信={is_explicit_wechat_refuse},电话={is_explicit_phone_refuse}), 争取过(微信={user_profile.wechat_persuasion_attempted},电话={user_profile.phone_persuasion_attempted}), 已拒(微信={user_profile.rejected_wechat},电话={user_profile.rejected_phone})")
@@ -555,26 +560,56 @@ class ChatService:
             # === 上下文感知检测：用户说通用拒绝词 + 上一轮AI提到微信/电话 ===
             # 只有当用户没有使用显式拒绝关键词时，才使用上下文检测
             # 注意：这个检测在显式拒绝检测之后执行，确保显式拒绝已经设置了 persuasion_attempted 标志
-            if last_response and any(kw in user_message_lower for kw in general_refuse_keywords):
+            has_general_refuse = any(kw in user_message_lower for kw in general_refuse_keywords)
+            logger.info(f"[上下文检测] last_response={'有' if last_response else '无'}, 通用拒绝={has_general_refuse}, 消息={user_message[:20]}")
+
+            # === 简化检测：如果已经尝试争取过，用户说通用拒绝词，直接标记为最终拒绝 ===
+            # 这解决了 last_response 被覆盖的问题
+            # 注意：只有在用户没有使用显式拒绝关键词时才执行（因为显式拒绝已经处理过了）
+            if has_general_refuse and not is_explicit_wechat_refuse and not is_explicit_phone_refuse:
+                # 微信：如果已经尝试争取过 + 还没有最终拒绝，标记为最终拒绝
+                if user_profile.wechat_persuasion_attempted and not user_profile.rejected_wechat:
+                    user_profile.rejected_wechat = True
+                    await self.user_service.save_user_profile(account_id, user_profile)
+                    logger.info(f"[简化拒绝检测] 用户拒绝微信（已尝试争取过），标记为最终拒绝")
+
+                # 电话：如果已经尝试争取过 + 还没有最终拒绝，标记为最终拒绝
+                if user_profile.phone_persuasion_attempted and not user_profile.rejected_phone:
+                    user_profile.rejected_phone = True
+                    await self.user_service.save_user_profile(account_id, user_profile)
+                    logger.info(f"[简化拒绝检测] 用户拒绝电话（已尝试争取过），标记为最终拒绝")
+
+            # === 保留原有的上下文检测（用于首次拒绝场景）===
+            if last_response and has_general_refuse:
                 last_response_lower = last_response.lower()
+                logger.info(f"[上下文检测] last_response内容: {last_response[:100]}...")
 
-                # 检测是否在争取微信后用户拒绝（上一轮AI回复包含"微信"）
-                # 条件：用户没有使用显式拒绝微信关键词 + 已经尝试争取微信 + 还没有最终拒绝微信
-                if not is_explicit_wechat_refuse:
-                    if user_profile.wechat_persuasion_attempted and not user_profile.rejected_wechat:
-                        if '微信' in last_response_lower:
-                            user_profile.rejected_wechat = True
-                            await self.user_service.save_user_profile(account_id, user_profile)
-                            logger.info(f"[上下文拒绝] 用户在争取微信后说'{user_message}'，标记为最终拒绝微信")
+                # 检测是否在问微信后用户拒绝（上一轮AI回复包含"微信"）
+                # 条件：用户没有使用显式拒绝微信关键词 + 还没有最终拒绝微信 + 还没有尝试争取过
+                if not is_explicit_wechat_refuse and not user_profile.rejected_wechat and not user_profile.wechat_persuasion_attempted:
+                    if '微信' in last_response_lower:
+                        # 第一次拒绝，标记为已尝试争取
+                        user_profile.wechat_persuasion_attempted = True
+                        logger.info(f"[上下文拒绝] 微信首次被拒，标记为已尝试争取")
+                        await self.user_service.save_user_profile(account_id, user_profile)
 
-                # 检测是否在争取电话后用户拒绝（上一轮AI回复包含"电话"）
-                # 条件：用户没有使用显式拒绝电话关键词 + 已经尝试争取电话 + 还没有最终拒绝电话
-                if not is_explicit_phone_refuse:
-                    if user_profile.phone_persuasion_attempted and not user_profile.rejected_phone:
-                        if '电话' in last_response_lower:
-                            user_profile.rejected_phone = True
-                            await self.user_service.save_user_profile(account_id, user_profile)
-                            logger.info(f"[上下文拒绝] 用户在争取电话后说'{user_message}'，标记为最终拒绝电话")
+                # 检测是否在问电话后用户拒绝（上一轮AI回复包含"电话"）
+                # 条件：用户没有使用显式拒绝电话关键词 + 还没有最终拒绝电话 + 还没有尝试争取过
+                if not is_explicit_phone_refuse and not user_profile.rejected_phone and not user_profile.phone_persuasion_attempted:
+                    if '电话' in last_response_lower:
+                        # 第一次拒绝，标记为已尝试争取
+                        user_profile.phone_persuasion_attempted = True
+                        logger.info(f"[上下文拒绝] 电话首次被拒，标记为已尝试争取")
+                        await self.user_service.save_user_profile(account_id, user_profile)
+
+        # === 检查是否应该结束对话 ===
+        # 如果用户拒绝了微信和电话，这是无效用户，应该结束对话
+        if user_profile.rejected_wechat and user_profile.rejected_phone:
+            if not user_profile.conversation_ended:
+                user_profile.conversation_ended = True
+                user_profile.spam_user = True  # 标记为无效用户
+                await self.user_service.save_user_profile(account_id, user_profile)
+                logger.info(f"[无效用户] 用户拒绝了微信和电话，标记为无效用户并结束对话")
 
     async def _call_ai(self, prompt: str, account_id: str) -> str:
         """
@@ -1055,23 +1090,27 @@ class ChatService:
                 return f"已跳过({ask_count}次未答)"
             return default
 
-        # 构建联系方式显示值（合并电话和微信）
+        # 构建联系方式显示值（简化版逻辑）
         def get_contact_display() -> str:
-            phone = user_profile.contact
-            wechat = user_profile.wechat
-            if phone and wechat:
-                return f"{phone}/{wechat}"
-            elif phone:
-                return str(phone)
-            elif wechat:
-                return str(wechat)
-            else:
-                # 两者都没有，检查是否跳过（使用"增加前"的快照值）
-                contact_ask_count = ask_count_snapshot.get("contact", 0)
-                wechat_ask_count = ask_count_snapshot.get("wechat", 0)
-                if contact_ask_count >= 2 or wechat_ask_count >= 2:
-                    return f"已跳过({max(contact_ask_count, wechat_ask_count)}次未答)"
-                return "未留"
+            parts = []
+            # 微信号部分
+            if user_profile.wechat:
+                parts.append(f"微信:{user_profile.wechat}")
+            elif user_profile.rejected_wechat:
+                parts.append("不愿留微信")
+            elif user_profile.wechat_persuasion_attempted:
+                parts.append("微信争取中")
+            # 电话部分
+            if user_profile.contact:
+                parts.append(f"电话:{user_profile.contact}")
+            elif user_profile.rejected_phone:
+                parts.append("不愿留电话")
+            elif user_profile.phone_persuasion_attempted:
+                parts.append("电话争取中")
+            # 组合结果
+            if parts:
+                return ", ".join(parts)
+            return "未留"
 
         # 构建已收集信息（12 个字段，联系方式合并显示）
         collected_info = {
@@ -1772,6 +1811,54 @@ class ChatService:
             is_skipped = field in user_profile.skipped_fields
 
             if not is_collected and not is_skipped:
+                # === 特殊处理 contact 字段：分开追踪电话和微信 ===
+                if field == 'contact':
+                    phone_keywords = ['电话', '手机号', '号码']
+                    wechat_keywords = ['微信']
+
+                    # 检查是否在问电话
+                    asked_phone = any(kw in ai_response_lower for kw in phone_keywords)
+                    # 检查是否在问微信
+                    asked_wechat = any(kw in ai_response_lower for kw in wechat_keywords)
+
+                    # 追踪电话询问
+                    if asked_phone and not user_profile.contact:
+                        user_profile.increment_ask_count('phone')
+                        phone_count = user_profile.get_ask_count('phone')
+                        logger.info(f"[智能追问] AI询问了电话，当前追问次数: {phone_count}")
+
+                        # 如果问了2次还没回答，标记为拒绝
+                        # 但如果用户已经明确拒绝过（正在争取中），则不通过此逻辑标记为最终拒绝
+                        if phone_count >= 2 and not user_profile.rejected_phone and not user_profile.phone_persuasion_attempted:
+                            user_profile.rejected_phone = True
+                            user_profile.skipped_fields['phone'] = True
+                            logger.info(f"[智能追问] 电话已问{phone_count}次未回答，标记为拒绝")
+
+                    # 追踪微信询问
+                    if asked_wechat and not user_profile.wechat:
+                        user_profile.increment_ask_count('wechat')
+                        wechat_count = user_profile.get_ask_count('wechat')
+                        logger.info(f"[智能追问] AI询问了微信，当前追问次数: {wechat_count}")
+
+                        # 如果问了2次还没回答，标记为拒绝
+                        # 但如果用户已经明确拒绝过（正在争取中），则不通过此逻辑标记为最终拒绝
+                        if wechat_count >= 2 and not user_profile.rejected_wechat and not user_profile.wechat_persuasion_attempted:
+                            user_profile.rejected_wechat = True
+                            user_profile.skipped_fields['wechat'] = True
+                            logger.info(f"[智能追问] 微信已问{wechat_count}次未回答，标记为拒绝")
+
+                    # 如果电话和微信都被拒绝，标记 contact 为跳过，并标记为无效用户
+                    if user_profile.rejected_phone and user_profile.rejected_wechat:
+                        user_profile.skipped_fields['contact'] = True
+                        # 标记为无效用户并结束对话
+                        if not user_profile.conversation_ended:
+                            user_profile.conversation_ended = True
+                            user_profile.spam_user = True
+                            logger.info(f"[智能追问] 电话和微信都已拒绝，标记为无效用户并结束对话")
+                        logger.info(f"[智能追问] 电话和微信都已拒绝，标记 contact 为跳过")
+
+                    continue  # 跳过原有的 contact 字段追踪逻辑
+
                 # 增加追问计数
                 user_profile.increment_ask_count(field)
                 current_count = user_profile.get_ask_count(field)
