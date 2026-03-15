@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 
 from src.config.settings import settings
-from src.services.redis_service import redis_service
+from src.services.data.redis_service import redis_service
 
 logger = logging.getLogger(__name__)
 

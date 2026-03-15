@@ -1,0 +1,318 @@
+{
+  "scenarios": [
+    {
+      "id": "contact_phone_then_wechat_prompt",
+      "category": "contact",
+      "tags": ["smoke", "critical", "contact_phone"],
+      "description": "用户主动一次性提供资料和电话后，系统应记录电话并自然追问微信。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生，我电话17688654321"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "phone" },
+        { "type": "profile_field_not_equals", "field": "occupation", "expected": "值" },
+        { "type": "final_response_contains_any", "values": ["微信", "留一个", "沟通"] }
+      ]
+    },
+    {
+      "id": "contact_phone_and_wechat_same_turn",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "contact_wechat"],
+      "description": "用户同一轮同时提供电话和微信时，两者都应尽量入档。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生，我电话17688654321，微信wx123456"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "phone" },
+        { "type": "profile_field_truthy", "field": "wechat" }
+      ]
+    },
+    {
+      "id": "contact_wechat_rejection_should_not_end",
+      "category": "contact",
+      "tags": ["critical", "contact_wechat"],
+      "description": "用户拒绝微信但已留电话时，不应直接结束对话。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生，我电话17688654321",
+        "不留微信"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "phone" },
+        { "type": "profile_field_equals", "field": "rejected_wechat", "expected": true },
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": false }
+      ]
+    },
+    {
+      "id": "contact_phone_after_wechat_rejection_should_not_end",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "contact_wechat"],
+      "description": "非香港用户已留微信后拒绝电话，不应直接结束。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生，我微信wx123456",
+        "不留电话"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "wechat" },
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": false }
+      ]
+    },
+    {
+      "id": "contact_phone_refused_then_wechat_fallback",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "contact_wechat"],
+      "description": "用户拒绝电话后，应尽量转为微信联系方式。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "不留电话",
+        "还是不想留电话"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 3, "values": ["微信"] },
+        { "type": "response_not_contains_any", "turn": 3, "values": ["电话号码是多少", "继续留电话"] }
+      ]
+    },
+    {
+      "id": "contact_phone_refused_then_user_provides_wechat",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "contact_wechat"],
+      "description": "用户拒绝电话后主动给微信，应成功收集微信。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "不留电话",
+        "还是不想留电话",
+        "那我微信wx123456"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "wechat" },
+        { "type": "profile_field_equals", "field": "rejected_phone", "expected": true }
+      ]
+    },
+    {
+      "id": "contact_wechat_only_then_ask_phone",
+      "category": "contact",
+      "tags": ["critical", "contact_wechat", "contact_phone"],
+      "description": "用户主动提供微信后，系统应尝试争取电话。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生，我微信wx123456"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "wechat" },
+        { "type": "final_response_contains_any", "values": ["电话", "号码", "联系"] }
+      ]
+    },
+    {
+      "id": "contact_wechat_only_then_phone_refusal",
+      "category": "contact",
+      "tags": ["contact_wechat", "contact_phone"],
+      "description": "用户已提供微信后拒绝电话，不应丢失微信。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生，我微信wx123456",
+        "电话先不留"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "wechat" },
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": false }
+      ]
+    },
+    {
+      "id": "contact_phone_invalid_should_retry",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "retry"],
+      "description": "用户给出无效电话时，应提示重新确认，而不是直接当成功。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "我电话12345"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "phone" },
+        { "type": "final_response_contains_any", "values": ["电话", "确认", "重新"] }
+      ]
+    },
+    {
+      "id": "contact_phone_invalid_then_valid",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "retry"],
+      "description": "用户先给无效电话，再给有效电话时，最终应成功收集电话。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "我电话12345",
+        "那我号码17688654321"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "phone" },
+        { "type": "profile_field_equals", "field": "phone_collected", "expected": true }
+      ]
+    },
+    {
+      "id": "contact_phone_with_spaces_should_collect",
+      "category": "contact",
+      "tags": ["contact_phone", "normalization"],
+      "description": "用户带空格输入手机号时，应尽量归一化后收集成功。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "我电话 176 8865 4321"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "phone" }
+      ]
+    },
+    {
+      "id": "contact_hk_phone_then_wechat",
+      "category": "contact",
+      "tags": ["critical", "contact_hk"],
+      "description": "香港用户提供电话后，应继续询问微信。",
+      "messages": [
+        "我是女生，28岁，在香港，本科，文员，单身，想找男生",
+        "电话56789012"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "location", "expected": "香港" },
+        { "type": "profile_field_truthy", "field": "phone" },
+        { "type": "final_response_contains_any", "values": ["微信", "留一个"] }
+      ]
+    },
+    {
+      "id": "contact_hk_phone_then_wechat_rejected_not_end",
+      "category": "contact",
+      "tags": ["critical", "contact_hk", "contact_wechat"],
+      "description": "香港用户已留电话后拒绝微信，不应立即结束。",
+      "messages": [
+        "我是女生，28岁，在香港，本科，文员，单身，想找男生",
+        "电话56789012",
+        "微信先不留"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "phone" },
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": false }
+      ]
+    },
+    {
+      "id": "contact_confirm_word_after_phone_prompt",
+      "category": "contact",
+      "tags": ["critical", "contact_confirm", "contact_phone"],
+      "description": "系统进入联系方式阶段后，用户只回确认词，不应被误判为已留电话。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "好"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "phone" },
+        { "type": "final_response_contains_any", "values": ["电话", "号码", "联系"] }
+      ]
+    },
+    {
+      "id": "contact_confirm_word_then_wechat_fallback",
+      "category": "contact",
+      "tags": ["critical", "contact_confirm"],
+      "description": "用户连续确认但不留电话时，系统可退而争取微信。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "好",
+        "嗯"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "phone" },
+        { "type": "response_contains_any", "turn": 3, "values": ["微信", "沟通", "联系"] }
+      ]
+    },
+    {
+      "id": "contact_user_asks_wechat_instead_of_phone",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "contact_wechat", "faq_priority"],
+      "description": "用户明确表示不留电话但愿意留微信时，应接住微信方案。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "电话不方便，留微信可以吗",
+        "可以，我微信wx123456"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["微信"] },
+        { "type": "profile_field_truthy", "field": "wechat" }
+      ]
+    },
+    {
+      "id": "contact_user_questions_privacy_before_phone",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "faq_priority"],
+      "description": "用户对电话用途有顾虑时，应先解释用途，再决定是否留电话。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "为什么一定要电话"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["联系", "登记", "打扰", "放心"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["你的电话号码是多少"] }
+      ]
+    },
+    {
+      "id": "contact_user_provides_phone_after_privacy_question",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "faq_priority"],
+      "description": "用户先问电话用途，再愿意提供电话时，应成功收集电话。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "为什么一定要电话",
+        "那我号码17688654321"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "phone" },
+        { "type": "profile_field_equals", "field": "phone_collected", "expected": true }
+      ]
+    },
+    {
+      "id": "contact_user_provides_wechat_after_phone_prompt",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "contact_wechat"],
+      "description": "系统先争取电话时，用户转而给微信，应该接住微信并入档。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "我先给微信吧，wx123456"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "wechat" },
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": false }
+      ]
+    },
+    {
+      "id": "contact_user_says_no_contact_at_all",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "contact_wechat"],
+      "description": "用户明确表示不留任何联系方式时，应逐步进入联系方式收尾流程。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "联系方式都不留",
+        "还是都不留"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["电话", "微信", "联系"] },
+        { "type": "response_contains_any", "turn": 3, "values": ["微信", "电话", "联系"] }
+      ]
+    },
+    {
+      "id": "contact_hk_user_provides_wechat_only",
+      "category": "contact",
+      "tags": ["critical", "contact_hk", "contact_wechat", "contact_phone"],
+      "description": "香港用户先给微信后，系统仍应尝试补电话。",
+      "messages": [
+        "我是女生，28岁，在香港，本科，文员，单身，想找男生，我微信wx123456"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "wechat" },
+        { "type": "final_response_contains_any", "values": ["电话", "号码", "联系"] }
+      ]
+    },
+    {
+      "id": "contact_phone_with_text_prefix_should_collect",
+      "category": "contact",
+      "tags": ["contact_phone", "normalization"],
+      "description": "用户用带前缀的自然表达给电话时，应尽量成功提取。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "你记一下哈，我手机号是17688654321"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "phone" }
+      ]
+    }
+  ]
+}

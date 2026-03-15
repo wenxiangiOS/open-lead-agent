@@ -105,7 +105,7 @@ LOG_LEVEL=INFO
 pip install gunicorn uvicorn[standard]
 
 # 启动服务（4进程，8线程）
-gunicorn src.api.routes:app \
+gunicorn src.api.app:app \
     --workers 4 \
     --worker-class uvicorn.workers.UvicornWorker \
     --worker-connections 1000 \
@@ -137,7 +137,7 @@ Group=www-data
 WorkingDirectory=/var/www/doubao_mcp_server
 Environment="PATH=/var/www/doubao_mcp_server/venv/bin"
 ExecStart=/var/www/doubao_mcp_server/venv/bin/gunicorn \
-    src.api.routes:app \
+    src.api.app:app \
     --workers 4 \
     --worker-class uvicorn.workers.UvicornWorker \
     --worker-connections 1000 \

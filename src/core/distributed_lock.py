@@ -283,7 +283,7 @@ def distributed_lock(
                 lock_key = f"{func.__name__}:{str(args)}"
 
             # 获取 Redis 客户端
-            from src.services.redis_service import redis_service
+            from src.services.data.redis_service import redis_service
             if not redis_service.is_enabled():
                 # Redis 未启用，直接执行
                 return await func(*args, **kwargs)

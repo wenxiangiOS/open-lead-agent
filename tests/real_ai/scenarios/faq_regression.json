@@ -1,0 +1,104 @@
+{
+  "scenarios": [
+    {
+      "id": "faq_priority_mediator",
+      "category": "faq",
+      "tags": ["smoke", "critical", "faq_priority"],
+      "description": "用户问“你是中介吗”时，应先答疑，不要在同一轮继续索要联系方式。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身，想找男生",
+        "你是中介吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["同城脱单联盟", "牵线"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信", "联系方式"] }
+      ]
+    },
+    {
+      "id": "faq_priority_fee",
+      "category": "faq",
+      "tags": ["critical", "faq_priority"],
+      "description": "用户问收费时，先回答收费问题，不应同轮切回资料收集。",
+      "messages": [
+        "找对象",
+        "怎么收费"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["免费", "收费", "定制"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信", "学历", "年龄"] }
+      ]
+    },
+    {
+      "id": "faq_priority_store_location",
+      "category": "faq",
+      "tags": ["faq_priority"],
+      "description": "用户问线下门店时，应先解释门店信息。",
+      "messages": [
+        "找对象",
+        "有线下门店吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["深圳门店", "服务点", "定位"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信"] }
+      ]
+    },
+    {
+      "id": "faq_priority_how_match",
+      "category": "faq",
+      "tags": ["critical", "faq_priority"],
+      "description": "用户问怎么匹配时，应先说明线上了解和后续牵线流程。",
+      "messages": [
+        "找对象",
+        "你们怎么匹配"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["线上", "匹配", "线下安排", "牵线"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信", "年龄"] }
+      ]
+    },
+    {
+      "id": "faq_priority_can_add_wechat",
+      "category": "faq",
+      "tags": ["critical", "faq_priority"],
+      "description": "用户问能不能直接加对方微信时，应先说明由牵线同事安排互换。",
+      "messages": [
+        "找对象",
+        "可以直接加对方微信吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["互换", "牵线", "先搭桥", "双方合适"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["你的微信", "留个微信", "电话"] }
+      ]
+    },
+    {
+      "id": "faq_priority_photo_request",
+      "category": "faq",
+      "tags": ["faq_priority"],
+      "description": "用户要对方照片时，应说明双方合适后再互换。",
+      "messages": [
+        "找对象",
+        "能先看照片吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["合适后", "互换照片", "双方觉得合适"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信"] }
+      ]
+    },
+    {
+      "id": "faq_priority_followup_question_should_still_answer",
+      "category": "faq",
+      "tags": ["faq_priority"],
+      "description": "用户连续追问收费细节时，第二轮仍应继续答疑而不是切回资料收集。",
+      "messages": [
+        "找对象",
+        "怎么收费",
+        "那定制服务怎么收费"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["免费", "收费", "定制"] },
+        { "type": "response_contains_any", "turn": 3, "values": ["定制", "收费", "服务"] },
+        { "type": "response_not_contains_any", "turn": 3, "values": ["电话", "微信", "学历"] }
+      ]
+    }
+  ]
+}

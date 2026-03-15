@@ -23,6 +23,8 @@ class UserState:
         # 用户连续回确认词但没有提供信息的次数跟踪
         self.non_response_count: int = 0
         self.last_non_response_time: Optional[datetime] = None
+        # 最近 AI 响应列表（用于上下文检测）
+        self.recent_responses: List[str] = []
 
     def record_interaction(
         self,
@@ -71,16 +73,14 @@ class UserState:
             msg["user_message"] for msg in recent_messages
         ]
 
-        # Extract recent assistant responses
-        assistant_responses = [
-            msg["assistant_response"] for msg in recent_messages
-        ]
-
+        # 使用 self.recent_responses 属性（用于上下文检测）
+        # 而不是从 conversation_history 计算
         return {
             "user_id": self.user_id,
             "dialog_count": self.dialog_count,
             "recent_messages": user_messages,
-            "recent_responses": assistant_responses,
+            "recent_responses": self.recent_responses,  # 使用属性，而不是计算值
+            "message_count": self.dialog_count,  # 兼容 dialogue_manager
             "preferences": self.preferences,
             "session_duration": (datetime.now() - self.session_start).total_seconds()
         }
@@ -250,7 +250,8 @@ class UserState:
             "contact_error_count": self.contact_error_count,
             "last_contact_error_time": self.last_contact_error_time.isoformat() if self.last_contact_error_time else None,
             "non_response_count": self.non_response_count,
-            "last_non_response_time": self.last_non_response_time.isoformat() if self.last_non_response_time else None
+            "last_non_response_time": self.last_non_response_time.isoformat() if self.last_non_response_time else None,
+            "recent_responses": self.recent_responses
         }
 
     def to_dict(self) -> Dict[str, Any]:
@@ -279,5 +280,6 @@ class UserState:
         state.non_response_count = data.get("non_response_count", 0)
         if data.get("last_non_response_time"):
             state.last_non_response_time = datetime.fromisoformat(data["last_non_response_time"])
+        state.recent_responses = data.get("recent_responses", [])
 
         return state

@@ -5,7 +5,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException
 
 from src.models.requests import ErrorResponse
-from src.services.chat_service import ChatService
+from src.services.core.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
 

@@ -2,6 +2,7 @@
 
 > 创建时间：2026-03-06
 > 状态：待实现
+> 文档类型：设计稿，不代表当前线上/主链路已接入
 
 ## 一、背景
 
@@ -352,13 +353,13 @@ async def force_send(request: Request):
 ## 八、相关文件
 
 - 前端页面：`/test_page/static/mobile_final.html`
-- 聊天服务：`/src/services/chat_service.py`
+- 聊天服务：`/src/services/core/chat_service.py`
 - API 路由：`/src/api/routes/chat.py`
 
 ## 九、实现计划
 
 1. [ ] 创建 `MessageHandler` 类
-2. [ ] 集成到现有 `chat_service.py`
+2. [ ] 集成到现有 `core/chat_service.py`
 3. [ ] 修改前端页面支持新状态显示
 4. [ ] 添加监控埋点
 5. [ ] 测试验证

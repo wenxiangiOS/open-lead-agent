@@ -6,9 +6,9 @@ from pydantic import BaseModel
 
 from src.models.requests import HealthCheckResponse, ErrorResponse
 from src.services.ai_service import AIService
-from src.services.user_service import UserService
-from src.services.chat_service import ChatService
-from src.services.redis_service import redis_service
+from src.services.data.user_service import UserService
+from src.services.core.chat_service import ChatService
+from src.services.data.redis_service import redis_service
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)

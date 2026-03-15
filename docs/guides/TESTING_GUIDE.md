@@ -2,22 +2,11 @@
 
 ## 概述
 
-本项目包含完整的测试套件，涵盖单元测试、性能测试和负载测试。
+本项目当前测试已分为正式测试、手工脚本、业务场景脚本和过期测试隔离区。
 
----
+测试目录约定见：
 
-## 测试结构
-
-```
-tests/
-├── __init__.py
-├── unit/
-│   ├── __init__.py
-│   └── test_services.py      # 单元测试
-└── performance/
-    ├── __init__.py
-    └── test_load.py          # 性能测试
-```
+- `docs/testing_layout.md`
 
 ---
 
@@ -53,7 +42,7 @@ pytest --cov=src --cov-report=html
 
 ## 测试类型
 
-### 1. 单元测试 (`tests/unit/test_services.py`)
+### 1. 单元测试
 
 **测试覆盖范围:**
 
@@ -86,7 +75,7 @@ pytest tests/unit/test_services.py::TestValidationService -v
 pytest tests/unit/test_services.py::TestValidationService::test_validate_phone_valid -v
 ```
 
-### 2. 性能测试 (`tests/performance/test_load.py`)
+### 2. 性能测试
 
 **测试覆盖范围:**
 
@@ -105,8 +94,8 @@ pytest tests/unit/test_services.py::TestValidationService::test_validate_phone_v
 # 运行所有性能测试
 pytest tests/performance/ -v -s
 
-# 运行特定性能测试
-pytest tests/performance/test_load.py::TestConcurrentRequests -v -s
+# 运行手工性能脚本
+python3 tests/performance/test_concurrent_load_manual.py
 
 # 运行带性能标记的测试
 pytest -m performance -v -s

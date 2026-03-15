@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 
 from src.models.requests import ErrorResponse
 from src.models.personality import PersonalityProfile
-from src.services.user_service import UserService
+from src.services.data.user_service import UserService
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)

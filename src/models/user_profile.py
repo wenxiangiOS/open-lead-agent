@@ -2,25 +2,19 @@
 
 from typing import Dict, Any, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field, validator
+import re
+from pydantic import BaseModel, Field, field_validator
 
 
 class UserProfile(BaseModel):
     """
     用户个人信息模型
 
-    收集字段（按优先级）：
-    1. 性别 - 男/女（首要）
-    2. 出生年 - 哪一年出生的
-    3. 身高体重 - 例如：165cm/55kg
-    4. 坐标 - 所在城市/地区
-    5. 学历 - 高中/大专/本科/硕士/博士
-    6. 婚况 - 单身/离异
-    7. 月薪 - 月收入大概多少
-    8. 职业 - 做什么工作
-    9. 称呼 - 对方希望怎么称呼自己
-    10. 电话/微信 - 联系方式
-    11. 择偶要求 - 年龄/身高/学历等要求（联系方式收集后询问）
+    收集字段（按当前策略分层）：
+    1. 核心字段：性别、年龄、学历、职业、工作地、联系方式
+    2. 准核心字段：婚况
+    3. 中等字段：月薪、择偶要求
+    4. 低优字段：称呼、身高、体重（仅被动记录，不主动追问）
     """
 
     # 基本信息
@@ -28,20 +22,21 @@ class UserProfile(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     updated_at: datetime = Field(default_factory=datetime.now, description="更新时间")
 
-    # 待收集的信息（初始为 None）- 按优先级顺序
-    sex: Optional[str] = Field(None, description="性别（男/女）- 首要收集")
-    last_name: Optional[str] = Field(None, description="姓氏（对方希望怎么称呼自己）")
+    # 待收集的信息（初始为 None）
+    sex: Optional[str] = Field(None, description="性别（男/女）- 核心字段")
+    last_name: Optional[str] = Field(None, description="用户主动提供的称呼/昵称（低优字段）")
     age: Optional[int] = Field(None, description="年龄（数字）")
-    height: Optional[str] = Field(None, description="身高（例如：165cm）")
-    weight: Optional[str] = Field(None, description="体重（例如：55kg）")
-    location: Optional[str] = Field(None, description="坐标/所在地（城市/地区）")
-    education: Optional[str] = Field(None, description="学历（高中/大专/本科/硕士/博士）")
-    marital_status: Optional[str] = Field(None, description="婚况（单身/离异）")
-    monthly_income: Optional[str] = Field(None, description="月薪（月收入范围）")
-    occupation: Optional[str] = Field(None, description="职业（做什么工作）")
-    contact: Optional[str] = Field(None, description="联系方式（电话/微信）")
-    wechat: Optional[str] = Field(None, description="微信号（香港用户单独收集）")
-    partner_requirement: Optional[str] = Field(None, description="择偶要求（年龄/身高/学历等）")
+    height: Optional[str] = Field(None, description="身高（低优字段，例如：165cm）")
+    weight: Optional[str] = Field(None, description="体重（低优字段，例如：55kg）")
+    location: Optional[str] = Field(None, description="工作地/所在地（城市/地区）")
+    education: Optional[str] = Field(None, description="学历（核心字段）")
+    marital_status: Optional[str] = Field(None, description="婚况（准核心字段）")
+    monthly_income: Optional[str] = Field(None, description="月薪（月收入范围，中等字段）")
+    occupation: Optional[str] = Field(None, description="职业（核心字段）")
+    contact: Optional[str] = Field(None, description="联系方式状态显示（核心字段）")
+    phone: Optional[str] = Field(None, description="电话号码（单独存储）")
+    wechat: Optional[str] = Field(None, description="微信号")
+    partner_requirement: Optional[str] = Field(None, description="择偶要求（中等字段）")
 
     # 收集状态跟踪
     collection_progress: Dict[str, bool] = Field(
@@ -80,15 +75,16 @@ class UserProfile(BaseModel):
         description="每个字段被问过的次数，用于智能追问机制"
     )
 
-    # 联系方式拒绝状态（用于提前拒绝场景和香港用户场景）
-    rejected_wechat: bool = Field(default=False, description="用户是否拒绝微信（提前拒绝或香港用户场景）")
-    rejected_phone: bool = Field(default=False, description="用户是否拒绝电话（提前拒绝或香港用户场景）")
-    # 场景1：提前拒绝时的争取状态
-    wechat_persuasion_attempted: bool = Field(default=False, description="提前拒绝场景：是否已尝试争取微信")
-    phone_persuasion_attempted: bool = Field(default=False, description="提前拒绝场景：是否已尝试争取电话")
-    # 场景2：香港用户相关状态
-    wechat_attempted: bool = Field(default=False, description="香港用户：是否已尝试问微信")
-    wechat_collected: bool = Field(default=False, description="香港用户：是否已收集微信")
+    # 联系方式收集状态（新设计）
+    phone_collected: bool = Field(default=False, description="电话是否已收集")
+    wechat_collected: bool = Field(default=False, description="微信是否已收集")
+    phone_ask_count: int = Field(default=0, description="电话询问次数（0-2）")
+    wechat_ask_count: int = Field(default=0, description="微信询问次数（0-2）")
+    is_hongkong_user: Optional[bool] = Field(default=None, description="是否是香港用户（缓存）")
+
+    # 联系方式拒绝状态（兼容旧字段，逐步迁移）
+    rejected_wechat: bool = Field(default=False, description="用户是否拒绝微信")
+    rejected_phone: bool = Field(default=False, description="用户是否拒绝电话")
 
     # 对话状态
     conversation_ended: bool = Field(default=False, description="对话是否已结束")
@@ -99,9 +95,9 @@ class UserProfile(BaseModel):
     proxy_user: bool = Field(default=False, description="是否是代相亲（帮别人问）")
     spam_user: bool = Field(default=False, description="是否是骚扰/广告用户")
 
-    @validator('sex')
-    def validate_sex(cls, v):
-        """验证性别字段"""
+    @staticmethod
+    def normalize_sex(v):
+        """规范化性别字段"""
         if v is not None:
             v = str(v).strip()
             if v in ['男', '男宝', '男生的', '帅哥', '小哥哥', '哥哥', '先生', 'M', 'm']:
@@ -110,31 +106,25 @@ class UserProfile(BaseModel):
                 return '女'
         return v
 
-    @validator('contact')
-    def validate_contact(cls, v):
-        """验证联系方式（电话号码，支持中国大陆和香港）"""
+    @staticmethod
+    def normalize_contact(v):
+        """规范化联系方式（电话号码，支持中国大陆和香港）"""
         if v is not None:
             v = str(v).strip()
-            # 移除非数字字符
             cleaned = ''.join(c for c in v if c.isdigit())
-            # 手机号验证：中国大陆(1开头+3-9,11位) 或 香港(5-9开头,8位)
-            import re
             if re.match(r'^1[3-9]\d{9}$', cleaned):  # 中国大陆
                 return cleaned
             if re.match(r'^[5-9]\d{7}$', cleaned):  # 香港
                 return cleaned
-            # 验证失败返回 None，拒绝无效号码
             return None
         return v
 
-    @validator('age')
-    def validate_age(cls, v):
-        """验证年龄"""
+    @staticmethod
+    def normalize_age(v):
+        """规范化年龄"""
         if v is not None:
             if isinstance(v, str):
                 v = str(v).strip()
-                # 提取数字（支持"28岁"格式）
-                import re
                 match = re.search(r'(\d+)', v)
                 if match:
                     v = int(match.group(1))
@@ -144,13 +134,11 @@ class UserProfile(BaseModel):
                 return v
         return v
 
-    @validator('height')
-    def validate_height(cls, v):
-        """验证身高"""
+    @staticmethod
+    def normalize_height(v):
+        """规范化身高"""
         if v is not None:
             v = str(v).strip()
-            # 提取数字
-            import re
             match = re.search(r'(\d+)', v)
             if match:
                 height_val = int(match.group(1))
@@ -158,19 +146,47 @@ class UserProfile(BaseModel):
                     return f"{height_val}cm"
         return v
 
-    @validator('weight')
-    def validate_weight(cls, v):
-        """验证体重"""
+    @staticmethod
+    def normalize_weight(v):
+        """规范化体重"""
         if v is not None:
             v = str(v).strip()
-            # 提取数字
-            import re
             match = re.search(r'(\d+)', v)
             if match:
                 weight_val = int(match.group(1))
                 if 30 <= weight_val <= 200:
                     return f"{weight_val}kg"
         return v
+
+    @field_validator('sex', mode='before')
+    @classmethod
+    def validate_sex(cls, v):
+        """验证性别字段"""
+        return cls.normalize_sex(v)
+
+    @field_validator('contact', mode='before')
+    @classmethod
+    def validate_contact(cls, v):
+        """验证联系方式字段"""
+        return cls.normalize_contact(v)
+
+    @field_validator('age', mode='before')
+    @classmethod
+    def validate_age(cls, v):
+        """验证年龄字段"""
+        return cls.normalize_age(v)
+
+    @field_validator('height', mode='before')
+    @classmethod
+    def validate_height(cls, v):
+        """验证身高字段"""
+        return cls.normalize_height(v)
+
+    @field_validator('weight', mode='before')
+    @classmethod
+    def validate_weight(cls, v):
+        """验证体重字段"""
+        return cls.normalize_weight(v)
 
     def update_field(self, field_name: str, value: Any) -> bool:
         """
@@ -188,16 +204,19 @@ class UserProfile(BaseModel):
 
         # 验证并更新字段
         try:
-            if field_name == 'contact':
-                validated = self.validate_contact(value)
+            if field_name == 'phone':
+                # 电话号码验证
+                validated = self._validate_phone(value)
+            elif field_name == 'contact':
+                validated = self.normalize_contact(value)
             elif field_name == 'sex':
-                validated = self.validate_sex(value)
+                validated = self.normalize_sex(value)
             elif field_name == 'age':
-                validated = self.validate_age(value)
+                validated = self.normalize_age(value)
             elif field_name == 'height':
-                validated = self.validate_height(value)
+                validated = self.normalize_height(value)
             elif field_name == 'weight':
-                validated = self.validate_weight(value)
+                validated = self.normalize_weight(value)
             elif field_name == 'last_name':
                 # 姓氏字段直接使用提取的值，不经过额外验证
                 validated = value
@@ -234,6 +253,17 @@ class UserProfile(BaseModel):
                 self.collection_progress[field_name] = True
                 # 字段成功收集后，重置追问计数
                 self.reset_ask_count(field_name)
+
+                # 特殊处理：phone 和 wechat 字段收集成功后更新状态
+                if field_name == 'phone':
+                    self.phone_collected = True
+                    # 同时更新 contact 字段为状态显示
+                    self.contact = self.get_contact_status()
+                elif field_name == 'wechat':
+                    self.wechat_collected = True
+                    # 同时更新 contact 字段为状态显示
+                    self.contact = self.get_contact_status()
+
                 self.updated_at = datetime.now()
                 return True
 
@@ -243,6 +273,31 @@ class UserProfile(BaseModel):
             return False
 
         return False
+
+    def _validate_phone(self, value: Any) -> Optional[str]:
+        """
+        验证电话号码（支持中国大陆和香港）
+
+        Args:
+            value: 电话号码值
+
+        Returns:
+            Optional[str]: 验证后的电话号码，失败返回 None
+        """
+        if value is None:
+            return None
+
+        import re
+        v = str(value).strip()
+        # 移除非数字字符
+        cleaned = ''.join(c for c in v if c.isdigit())
+        # 手机号验证：中国大陆(1开头+3-9,11位) 或 香港(5-9开头,8位)
+        if re.match(r'^1[3-9]\d{9}$', cleaned):  # 中国大陆
+            return cleaned
+        if re.match(r'^[5-9]\d{7}$', cleaned):  # 香港
+            return cleaned
+        # 验证失败返回 None
+        return None
 
     def get_progress(self) -> float:
         """
@@ -298,26 +353,26 @@ class UserProfile(BaseModel):
         """
         获取下一个需要收集的字段
 
-        按照收集优先级顺序返回未收集的字段
-        跳过已被用户拒绝提供的字段
+        按当前资料收集策略返回优先级最高的未收集字段。
+        这里只用于兼容旧调用，主流程实际调度应优先使用 ProfileCollectionPolicy。
 
         Returns:
             Optional[str]: 下一个要收集的字段名
         """
-        # 优先级顺序：姓氏优先，择偶要求最后
+        # 当前策略顺序：核心 -> 准核心 -> 中等 -> 低优
         priority_order = [
-            'sex',  # 性别 - 首要
-            'last_name',  # 姓氏 - 对方希望怎么称呼
-            'age',  # 年龄
-            'height',  # 身高
-            'weight',  # 体重
-            'location',  # 坐标
-            'education',  # 学历
-            'marital_status',  # 婚况
-            'monthly_income',  # 月薪
-            'occupation',  # 职业
-            'contact',  # 联系方式
-            'partner_requirement',  # 择偶要求 - 最后收集
+            'sex',
+            'age',
+            'location',
+            'education',
+            'occupation',
+            'marital_status',
+            'contact',
+            'monthly_income',
+            'partner_requirement',
+            'last_name',
+            'height',
+            'weight',
         ]
 
         for field in priority_order:
@@ -442,6 +497,7 @@ class UserProfile(BaseModel):
             "monthly_income": self.monthly_income,
             "occupation": self.occupation,
             "contact": self.contact,
+            "phone": self.phone,
             "wechat": self.wechat,
             "partner_requirement": self.partner_requirement,
             "collection_progress": self.collection_progress,
@@ -457,12 +513,15 @@ class UserProfile(BaseModel):
             "already_married": self.already_married,
             "proxy_user": self.proxy_user,
             "spam_user": self.spam_user,
+            # 新字段
+            "phone_collected": self.phone_collected,
+            "wechat_collected": self.wechat_collected,
+            "phone_ask_count": self.phone_ask_count,
+            "wechat_ask_count": self.wechat_ask_count,
+            "is_hongkong_user": self.is_hongkong_user,
+            # 兼容旧字段
             "rejected_wechat": self.rejected_wechat,
             "rejected_phone": self.rejected_phone,
-            "wechat_persuasion_attempted": self.wechat_persuasion_attempted,
-            "phone_persuasion_attempted": self.phone_persuasion_attempted,
-            "wechat_attempted": self.wechat_attempted,
-            "wechat_collected": self.wechat_collected,
         }
 
     def get_collection_summary(self) -> str:
@@ -483,6 +542,152 @@ class UserProfile(BaseModel):
             return f"嗯嗯，还需要了解{missing}"
         else:
             return "刚认识你，想多了解一些基本信息呀～"
+
+    def get_contact_status(self) -> str:
+        """
+        获取联系方式状态显示
+
+        Returns:
+            str: 状态字符串
+        """
+        # 获取各状态
+        phone = self.phone
+        wechat = self.wechat
+        phone_collected = self.phone_collected
+        wechat_collected = self.wechat_collected
+        rejected_phone = self.rejected_phone
+        rejected_wechat = self.rejected_wechat
+
+        # 判断是否正在询问（询问次数 > 0 且未收集且未拒绝）
+        phone_asking = self.phone_ask_count > 0 and not phone_collected and not rejected_phone
+        wechat_asking = self.wechat_ask_count > 0 and not wechat_collected and not rejected_wechat
+
+        # 构建状态列表
+        phone_status = None
+        wechat_status = None
+
+        # 电话状态
+        if phone_collected and phone:
+            phone_status = f"电话: {phone}"
+        elif rejected_phone:
+            phone_status = "不愿留电话"
+        elif phone_asking:
+            phone_status = "电话争取中"
+
+        # 微信状态
+        if wechat_collected and wechat:
+            wechat_status = f"微信: {wechat}"
+        elif rejected_wechat:
+            wechat_status = "不愿留微信"
+        elif wechat_asking:
+            wechat_status = "微信争取中"
+
+        # 组合状态
+        if phone_status and wechat_status:
+            return f"{phone_status}, {wechat_status}"
+        elif phone_status:
+            return phone_status
+        elif wechat_status:
+            return wechat_status
+        else:
+            return "未留"
+
+    def check_is_hongkong_user(self) -> bool:
+        """
+        检查是否是香港用户（根据 location 字段判断）
+
+        Returns:
+            bool: 是否是香港用户
+        """
+        if self.is_hongkong_user is not None:
+            return self.is_hongkong_user
+
+        if not self.location:
+            return False
+
+        location_lower = self.location.lower()
+        self.is_hongkong_user = '香港' in location_lower or 'hk' in location_lower
+        return self.is_hongkong_user
+
+    def can_ask_phone(self) -> bool:
+        """
+        判断是否可以询问电话
+
+        Returns:
+            bool: 是否可以询问
+        """
+        # 已收集或已拒绝，不能再问
+        if self.phone_collected or self.rejected_phone:
+            return False
+
+        # 香港用户最多2次
+        if self.check_is_hongkong_user():
+            return self.phone_ask_count < 2
+
+        # 非香港用户最多2次
+        return self.phone_ask_count < 2
+
+    def can_ask_wechat(self) -> bool:
+        """
+        判断是否可以询问微信
+
+        Returns:
+            bool: 是否可以询问
+        """
+        # 已收集或已拒绝，不能再问
+        if self.wechat_collected or self.rejected_wechat:
+            return False
+
+        is_hong = self.check_is_hongkong_user()
+
+        # 香港用户最多2次
+        if is_hong:
+            return self.wechat_ask_count < 2
+
+        # 非香港用户：电话已收集最多1次，电话未收集最多2次
+        if self.phone_collected:
+            return self.wechat_ask_count < 1
+        else:
+            return self.wechat_ask_count < 2
+
+    def get_max_wechat_asks(self) -> int:
+        """
+        获取微信最大询问次数
+
+        Returns:
+            int: 最大询问次数
+        """
+        is_hong = self.check_is_hongkong_user()
+
+        # 香港用户：最多2次
+        if is_hong:
+            return 2
+
+        # 非香港用户：电话已收集最多1次，电话未收集最多2次
+        if self.phone_collected:
+            return 1
+        else:
+            return 2
+
+    def increment_phone_ask_count(self) -> int:
+        """
+        增加电话询问次数
+
+        Returns:
+            int: 当前询问次数
+        """
+        self.phone_ask_count += 1
+        return self.phone_ask_count
+
+    def increment_wechat_ask_count(self) -> int:
+        """
+        增加微信询问次数
+
+        Returns:
+            int: 当前询问次数
+        """
+        self.wechat_ask_count += 1
+        return self.wechat_ask_count
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserProfile":
         """从字典创建 UserProfile"""

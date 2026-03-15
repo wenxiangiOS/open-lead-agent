@@ -8,7 +8,7 @@ import logging
 from typing import Optional, Dict, Any, List
 
 from ..base import IUserProfileRepository, IUserStateRepository
-from ...services.redis_service import redis_service
+from ...services.data.redis_service import redis_service
 
 logger = logging.getLogger(__name__)
 

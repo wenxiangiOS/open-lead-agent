@@ -7,7 +7,7 @@
 import os
 from pathlib import Path
 from typing import Optional, Callable
-from pydantic import BaseModel, ValidationError, Field
+from pydantic import BaseModel, ValidationError, Field, ConfigDict
 from dotenv import load_dotenv
 
 from .components import (
@@ -31,6 +31,11 @@ class Settings(BaseModel):
 
     整合所有配置组件，提供统一的配置访问接口
     """
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        validate_assignment=True,
+    )
 
     # 配置组件 - 使用 default_factory 延迟创建，确保在 load_dotenv() 之后
     app: BaseConfig = Field(default_factory=BaseConfig)
@@ -160,11 +165,6 @@ class Settings(BaseModel):
     def volc_secret_key(self) -> Optional[str]:
         """兼容属性：火山引擎 Secret Key"""
         return self.ai.volc_secret_key
-
-    class Config:
-        """Pydantic 配置"""
-        arbitrary_types_allowed = True
-        validate_assignment = True
 
 
 def load_settings(env_file: Optional[str] = None) -> Settings:

@@ -5,7 +5,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException
 
 from src.models.requests import ChatResponse, ErrorResponse, ChatRequest
-from src.services.chat_service import ChatService
+from src.services.core.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +90,8 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
                 profile_after = profile_result.get("profile", {})
                 # 调试：打印 profile 中的联系方式相关字段
                 logger.info(f"[DEBUG] profile_after keys: {list(profile_after.keys())}")
-                logger.info(f"[DEBUG] wechat_persuasion_attempted={profile_after.get('wechat_persuasion_attempted')}, rejected_wechat={profile_after.get('rejected_wechat')}")
-                logger.info(f"[DEBUG] phone_persuasion_attempted={profile_after.get('phone_persuasion_attempted')}, rejected_phone={profile_after.get('rejected_phone')}")
+                logger.info(f"[DEBUG] wechat_ask_count={profile_after.get('wechat_ask_count')}, rejected_wechat={profile_after.get('rejected_wechat')}")
+                logger.info(f"[DEBUG] phone_ask_count={profile_after.get('phone_ask_count')}, rejected_phone={profile_after.get('rejected_phone')}")
                 # 使用追踪前的追问次数 + 追踪后的字段值
                 # 这样：用户刚提供的信息立即显示，但"已跳过"状态在下一轮才显示
                 debug_info = _format_debug_info_with_ask_count(profile_after, field_ask_count_before)
@@ -130,7 +130,7 @@ def _format_contact_display(profile: Dict[str, Any]) -> str:
     # === 微信号部分 ===
     wechat = profile.get("wechat")
     rejected_wechat = profile.get("rejected_wechat", False)
-    wechat_persuasion_attempted = profile.get("wechat_persuasion_attempted", False)
+    wechat_ask_count = profile.get("wechat_ask_count", 0)
 
     if wechat:
         # 已留
@@ -138,7 +138,7 @@ def _format_contact_display(profile: Dict[str, Any]) -> str:
     elif rejected_wechat:
         # 已拒绝
         parts.append("不愿留微信")
-    elif wechat_persuasion_attempted:
+    elif wechat_ask_count >= 1:
         # 争取中
         parts.append("微信争取中")
     # 未问：不显示
@@ -146,7 +146,7 @@ def _format_contact_display(profile: Dict[str, Any]) -> str:
     # === 电话部分 ===
     phone = profile.get("contact")
     rejected_phone = profile.get("rejected_phone", False)
-    phone_persuasion_attempted = profile.get("phone_persuasion_attempted", False)
+    phone_ask_count = profile.get("phone_ask_count", 0)
 
     if phone:
         # 已留
@@ -154,7 +154,7 @@ def _format_contact_display(profile: Dict[str, Any]) -> str:
     elif rejected_phone:
         # 已拒绝
         parts.append("不愿留电话")
-    elif phone_persuasion_attempted:
+    elif phone_ask_count >= 1:
         # 争取中
         parts.append("电话争取中")
     # 未问：不显示

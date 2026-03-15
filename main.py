@@ -32,7 +32,7 @@ def setup_logging():
     )
 """4.主函数main()(第40 - 72行)
 1.初始化日志 - 记录应用启动信息
-2.动态导入FastAPIapp - 使用importlib从src / api / routes.py导入app，避免模块冲突
+2.导入 FastAPI app
 3.挂载测试页面 - 尝试挂载一个测试页面（可选）
 4.启动服务器 - 使用uvicorn运行FastAPI应用
 - 监听0.0.0.0: 8000（允许局域网访问）
@@ -43,15 +43,8 @@ def main():
     logger = logging.getLogger(__name__)
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
 
-    # 导入 FastAPI app（从 routes 文件而不是 routes 包）
-    # 使用 sys.modules 避免 routes/ 目录和 routes.py 冲突
-    import importlib.util
-    routes_path = os.path.join(project_root, 'src/api/routes.py')
-    spec = importlib.util.spec_from_file_location("routes_app", routes_path)
-    routes_module = importlib.util.module_from_spec(spec)
-    sys.modules['routes_app'] = routes_module
-    spec.loader.exec_module(routes_module)
-    app = routes_module.app
+    # 导入 FastAPI app
+    from src.api.app import app
 
     # 挂载测试页面
     try:

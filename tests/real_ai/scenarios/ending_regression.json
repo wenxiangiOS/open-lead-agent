@@ -1,0 +1,131 @@
+{
+  "scenarios": [
+    {
+      "id": "ending_divorce_incomplete_should_end",
+      "category": "ending",
+      "tags": ["smoke", "critical", "divorce"],
+      "description": "用户表示离异手续未办妥时，应结束当前服务流程。",
+      "messages": [
+        "我离异，手续还在办"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true },
+        { "type": "final_response_contains_any", "values": ["办妥", "再来", "顺利"] }
+      ]
+    },
+    {
+      "id": "ending_separation_should_end",
+      "category": "ending",
+      "tags": ["critical", "ending_gate", "divorce"],
+      "description": "用户处于分居状态时，应直接结束服务流程。",
+      "messages": [
+        "我现在还在分居中"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true },
+        { "type": "final_response_contains_any", "values": ["分居", "办妥", "再来"] }
+      ]
+    },
+    {
+      "id": "ending_both_contact_refused",
+      "category": "ending",
+      "tags": ["critical", "ending_gate", "contact_phone", "contact_wechat"],
+      "description": "当电话和微信都被拒绝后，应进入收尾状态。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身，想找男生",
+        "不留电话",
+        "还是不留电话",
+        "微信也不留",
+        "还是不留微信"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true },
+        { "type": "profile_field_equals", "field": "rejected_phone", "expected": true },
+        { "type": "profile_field_equals", "field": "rejected_wechat", "expected": true }
+      ]
+    },
+    {
+      "id": "ending_age_under_limit",
+      "category": "ending",
+      "tags": ["critical", "ending_gate"],
+      "description": "用户年龄低于 24 岁时，应结束当前服务流程。",
+      "messages": [
+        "我22岁，想找对象"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true },
+        { "type": "profile_field_equals", "field": "age_under_limit", "expected": true },
+        { "type": "final_response_contains_any", "values": ["24岁", "再来", "成熟"] }
+      ]
+    },
+    {
+      "id": "ending_already_married",
+      "category": "ending",
+      "tags": ["ending_gate"],
+      "description": "用户明确已婚时，应结束当前服务流程。",
+      "messages": [
+        "我已经结婚了"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true },
+        { "type": "final_response_contains_any", "values": ["单身", "家庭幸福", "帮不到"] }
+      ]
+    },
+    {
+      "id": "ending_proxy_user",
+      "category": "ending",
+      "tags": ["ending_gate"],
+      "description": "代相亲用户应被识别并建议本人来聊。",
+      "messages": [
+        "我是帮朋友问的"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "proxy_user", "expected": true },
+        { "type": "final_response_contains_any", "values": ["朋友", "家人", "直接来和我聊"] }
+      ]
+    },
+    {
+      "id": "ending_lgbt_user",
+      "category": "ending",
+      "tags": ["ending_gate"],
+      "description": "LGBT 用户场景应触发预设收尾。",
+      "messages": [
+        "我是les，喜欢女生"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true },
+        { "type": "final_response_contains_any", "values": ["异性相亲", "不太适合", "专业的平台"] }
+      ]
+    },
+    {
+      "id": "ending_divorce_confirmed_should_continue",
+      "category": "ending",
+      "tags": ["critical", "divorce"],
+      "description": "用户离异但手续已办妥时，不应结束，应该继续收集。",
+      "messages": [
+        "我离异",
+        "已经办妥了"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": false },
+        { "type": "profile_field_truthy", "field": "marital_status" },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["再来", "暂时不能", "不符合"] }
+      ]
+    },
+    {
+      "id": "ending_after_conversation_ended_followup",
+      "category": "ending",
+      "tags": ["critical", "ending_gate"],
+      "description": "对话已结束后用户再次发消息，应只给简短告别，不再继续收集。",
+      "messages": [
+        "我现在还在分居中",
+        "你好，还在吗"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true },
+        { "type": "response_contains_any", "turn": 2, "values": ["先这样", "再来找我", "拜拜", "下次再聊"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["年龄", "学历", "电话", "微信"] }
+      ]
+    }
+  ]
+}

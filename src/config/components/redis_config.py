@@ -107,40 +107,40 @@ class RedisConfig(BaseModel):
     use_json: bool = Field(default=True, description="使用 JSON 序列化")
 
     @model_validator(mode='after')
-    def validate_from_env(cls, model: 'RedisConfig') -> 'RedisConfig':
+    def validate_from_env(self) -> 'RedisConfig':
         """从环境变量读取配置值"""
         # 读取 REDIS_ENABLED
         env_enabled = os.getenv('REDIS_ENABLED')
         if env_enabled:
-            model.enabled = env_enabled.lower() in ('true', '1', 'yes')
+            self.enabled = env_enabled.lower() in ('true', '1', 'yes')
 
         # 读取 REDIS_HOST
         env_host = os.getenv('REDIS_HOST')
         if env_host:
-            model.host = env_host
+            self.host = env_host
 
         # 读取 REDIS_PORT
         env_port = os.getenv('REDIS_PORT')
         if env_port:
             try:
-                model.port = int(env_port)
+                self.port = int(env_port)
             except ValueError:
                 pass
 
         # 读取 REDIS_PASSWORD
         env_password = os.getenv('REDIS_PASSWORD')
         if env_password:
-            model.password = env_password
+            self.password = env_password
 
         # 读取 REDIS_TTL
         env_ttl = os.getenv('REDIS_TTL')
         if env_ttl:
             try:
-                model.default_ttl = parse_ttl(env_ttl)
+                self.default_ttl = parse_ttl(env_ttl)
             except ValueError:
                 pass
 
-        return model
+        return self
 
     @property
     def redis_url(self) -> str:

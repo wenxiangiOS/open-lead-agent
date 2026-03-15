@@ -1,11 +1,12 @@
 """Services module"""
 
 from src.services.ai_service import AIService
-from src.services.user_service import UserService
-from src.services.chat_service import ChatService
-from src.services.extraction_service import ExtractionService
-from src.services.validation_service import ValidationService
-from src.services.dialogue_manager import DialogueManager
+from src.services.data.user_service import UserService
+from src.services.core.chat_service import ChatService
+from src.services.data.extraction_service import ExtractionService
+from src.services.data.redis_service import RedisService
+from src.services.data.validation_service import ValidationService
+from src.services.core.dialogue_manager import DialogueManager
 from src.services.refusal_service import RefusalService
 from src.services.field_skip_service import FieldSkipService
 
@@ -14,6 +15,7 @@ __all__ = [
     'UserService',
     'ChatService',
     'ExtractionService',
+    'RedisService',
     'ValidationService',
     'DialogueManager',
     'RefusalService',

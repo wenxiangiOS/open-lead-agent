@@ -33,9 +33,9 @@ try:
 except ImportError:
     pass
 
-from src.services.chat_service import ChatService
+from src.services.core.chat_service import ChatService
 from src.services.ai_service import AIService
-from src.services.user_service import UserService
+from src.services.data.user_service import UserService
 from src.models.requests import ChatRequest
 from src.config.settings import settings
 

@@ -1,0 +1,159 @@
+{
+  "scenarios": [
+    {
+      "id": "field_occupation_placeholder_guard",
+      "category": "field_collection",
+      "tags": ["smoke", "critical", "extract_guard"],
+      "description": "用户只表达找对象意图时，不应把职业写成占位词“值”。",
+      "messages": [
+        "找对象"
+      ],
+      "assertions": [
+        { "type": "profile_field_not_equals", "field": "occupation", "expected": "值" }
+      ]
+    },
+    {
+      "id": "field_multi_info_extract_basic",
+      "category": "field_collection",
+      "tags": ["critical", "extract_basic"],
+      "description": "用户一次性提供性别、年龄、城市、学历和职业时，应尽量正确入档。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，做运营的"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "sex", "expected": "女" },
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳" },
+        { "type": "profile_field_equals", "field": "education", "expected": "本科" },
+        { "type": "profile_field_truthy", "field": "occupation" }
+      ]
+    },
+    {
+      "id": "field_age_parse_90s",
+      "category": "field_collection",
+      "tags": ["extract_basic"],
+      "description": "用户说 90 后时，应被解析出年龄，不应保持为空。",
+      "messages": [
+        "我是90后"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "age" }
+      ]
+    },
+    {
+      "id": "field_age_parse_birth_year",
+      "category": "field_collection",
+      "tags": ["extract_basic"],
+      "description": "用户直接给出生年份时，应被解析为年龄。",
+      "messages": [
+        "我是1992年的"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "age" }
+      ]
+    },
+    {
+      "id": "field_location_extract_shenzhen",
+      "category": "field_collection",
+      "tags": ["extract_basic"],
+      "description": "用户说自己在深圳时，应尽量正确记录所在地。",
+      "messages": [
+        "我现在在深圳工作生活"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳" }
+      ]
+    },
+    {
+      "id": "field_partner_requirement_should_not_override_location",
+      "category": "field_collection",
+      "tags": ["critical", "extract_guard"],
+      "description": "用户说想找深圳的男生时，不应把用户所在地误提成深圳。",
+      "messages": [
+        "想找深圳的男生"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "location" },
+        { "type": "profile_field_truthy", "field": "partner_requirement" }
+      ]
+    },
+    {
+      "id": "field_education_extract_master",
+      "category": "field_collection",
+      "tags": ["extract_basic"],
+      "description": "用户提到硕士学历时，应正确记录学历。",
+      "messages": [
+        "我是硕士"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "education", "expected": "硕士" }
+      ]
+    },
+    {
+      "id": "field_occupation_extract_programmer",
+      "category": "field_collection",
+      "tags": ["extract_basic", "extract_guard"],
+      "description": "用户提到程序员职业时，应正确记录职业。",
+      "messages": [
+        "我做程序员的"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "occupation" },
+        { "type": "profile_field_not_equals", "field": "occupation", "expected": "值" }
+      ]
+    },
+    {
+      "id": "field_multi_sentence_extract",
+      "category": "field_collection",
+      "tags": ["extract_basic"],
+      "description": "多句输入时应尽量同时接住多个字段。",
+      "messages": [
+        "我是女生。深圳的。本科。做运营。"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "sex", "expected": "女" },
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳" },
+        { "type": "profile_field_equals", "field": "education", "expected": "本科" }
+      ]
+    },
+    {
+      "id": "field_phone_should_not_pollute_occupation",
+      "category": "field_collection",
+      "tags": ["extract_guard", "contact_phone"],
+      "description": "用户只留电话时，不应污染其他字段尤其职业。",
+      "messages": [
+        "17688654321"
+      ],
+      "assertions": [
+        { "type": "profile_field_not_equals", "field": "occupation", "expected": "值" },
+        { "type": "profile_field_falsey", "field": "occupation" }
+      ]
+    },
+    {
+      "id": "field_wechat_should_not_pollute_location",
+      "category": "field_collection",
+      "tags": ["extract_guard", "contact_wechat"],
+      "description": "用户只留微信时，不应误填所在地等无关字段。",
+      "messages": [
+        "我微信wx123456"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "wechat" },
+        { "type": "profile_field_falsey", "field": "location" }
+      ]
+    },
+    {
+      "id": "field_greeting_should_not_fill_profile",
+      "category": "field_collection",
+      "tags": ["extract_guard", "smoke"],
+      "description": "用户只打招呼时，不应误填资料字段。",
+      "messages": [
+        "你好"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "occupation" },
+        { "type": "profile_field_falsey", "field": "age" },
+        { "type": "profile_field_falsey", "field": "location" }
+      ]
+    }
+  ]
+}

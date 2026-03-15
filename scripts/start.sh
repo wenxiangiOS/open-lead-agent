@@ -28,7 +28,7 @@ echo ""
 # 启动服务
 if [ "$WORKERS" -gt 1 ]; then
     echo "启动多实例模式..."
-    uvicorn src.api.routes:app \
+    uvicorn src.api.app:app \
         --host $HOST \
         --port $PORT \
         --workers $WORKERS \
@@ -37,7 +37,7 @@ if [ "$WORKERS" -gt 1 ]; then
         --no-limit-concurrency
 else
     echo "启动单实例模式..."
-    uvicorn src.api.routes:app \
+    uvicorn src.api.app:app \
         --host $HOST \
         --port $PORT \
         --log-level $LOG_LEVEL \

@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Any, Dict, Callable, TypeVar, Union
 from functools import wraps
 
-from src.services.redis_service import redis_service
+from src.services.data.redis_service import redis_service
 
 logger = logging.getLogger(__name__)
 

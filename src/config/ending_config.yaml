@@ -1,0 +1,207 @@
+# 收尾场景配置
+# 所有收尾场景的配置，包括：收尾原因、描述、检测方式、话术模板、状态更新
+#
+# 新增场景只需要在本文件添加配置即可，无需修改代码
+#
+# 配置字段说明：
+# - description: 场景描述
+# - detection: 检测方式配置
+#   - type: 检测类型
+#     - keywords: 关键词匹配（用户消息包含关键词）
+#     - field_check: 字段检查（检查 collection_result 中的字段）
+#     - profile_check: 用户档案检查（检查 UserProfile 字段）
+#     - pattern_check: 模式检查（检查多个字段的特定值）
+#     - manual: 手动触发（由代码逻辑决定，不在自动检测中）
+#   - keywords: 关键词列表（type=keywords 时使用）
+#   - field: 字段名（type=field_check 时使用）
+#   - values: 匹配值列表（type=field_check/pattern_check 时使用）
+# - useAiEnding: 是否使用 AI 生成话术（默认 false）
+# - templates: 预设话术模板（多个变体随机选择，useAiEnding=false 时使用）
+# - extraInstructions: AI 生成时的附加指令（useAiEnding=true 时使用）
+# - profileUpdates: 收尾时需要更新的用户状态字段
+
+endings:
+  # ==================== 预设话术场景 ====================
+
+  separation:
+    description: 用户处于分居状态，不符合服务条件
+    detection:
+      type: keywords
+      keywords: ["分居中", "正在分居", "分居状态", "分居的", "处于分居"]
+    useAiEnding: false
+    templates:
+      - "嗯嗯理解～分居中的话暂时还不符合我们的服务条件呢～等手续都办妥了再来找我吧，祝你顺利～"
+      - "好的呢～分居状态暂时还没法帮你匹配哦～等一切都处理好了再来找我吧～"
+    profileUpdates:
+      conversation_ended: true
+
+  age_under_limit:
+    description: 用户年龄低于服务限制
+    detection:
+      type: field_check
+      field: under_limit
+    useAiEnding: false
+    templates:
+      - "哇你才这个年纪呀😊 我们服务面向24岁以上的单身人士哦～等你再长大一点，变得更成熟了再来找我吧！现在好好读书/工作，未来一定会遇到更合适的人的～"
+      - "原来你还这么年轻呀～我们这边主要服务24岁以上的小伙伴呢～等你再成熟一点，再来找我吧！现在好好读书/工作，未来一定会遇到更合适的人的～"
+    profileUpdates:
+      conversation_ended: true
+
+  lgbt_user:
+    description: LGBT用户
+    detection:
+      type: keywords
+      keywords: ["同性恋", "我喜欢男生", "我喜欢女生", "我喜欢男的", "喜欢同性", "我是les", "les群体", "我是gay", "gay群体", "同志"]
+    useAiEnding: false
+    templates:
+      - "谢谢你的坦诚呀😊 我们这边是做异性相亲服务的，可能不太适合你的需求呢～建议你可以去看看一些专门的交友平台，希望你能找到属于你的幸福！祝你好运～"
+      - "感谢你的信任～我们专注做异性相亲，可能帮不到你呢～不过现在有很多专业的平台，相信你能找到合适的！祝你幸福～"
+    profileUpdates:
+      conversation_ended: true
+
+  already_married:
+    description: 已婚用户
+    detection:
+      type: keywords
+      keywords: ["已经结婚", "已婚", "我有老公", "我有老婆", "我结婚了", "有家室"]
+    useAiEnding: false
+    templates:
+      - "哎呀，那我们这边可能帮不到你了呢～我们专注服务单身人士，祝你家庭幸福！"
+    profileUpdates:
+      conversation_ended: true
+
+  proxy_user:
+    description: 代相亲用户
+    detection:
+      type: keywords
+      keywords:
+        - "帮朋友"
+        - "帮我家"
+        - "帮我朋友"
+        - "帮我亲戚"
+        - "帮亲戚"
+        - "帮同事"
+        - "替朋友"
+        - "替我朋友"
+        - "代替朋友"
+        - "帮别人问"
+        - "给我朋友问"
+        - "给我朋友打听"
+        - "帮我问问"
+        - "帮人问"
+        - "替人问"
+        - "我朋友想找"
+        - "我亲戚想找"
+        - "我同事想找"
+        - "帮儿子"
+        - "帮女儿"
+        - "帮孩子"
+    useAiEnding: false
+    templates:
+      - "好的呀～不过建议让你的朋友/家人直接来和我聊会更好呢😊 这样我能更准确地了解TA的需求，帮TA找到更合适的人选～"
+
+  fake_info:
+    description: 虚假信息
+    detection:
+      type: pattern_check
+      patterns:
+        - field: age
+          values: [999, 1000, 123, 111, 222, 333, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        - field: height
+          values: [300, 400, 500, 50, 30, 20, 10]
+    useAiEnding: false
+    templates:
+      - "哈哈，这个信息有点意思😊 不过我们还是要认真对待相亲这件事的～如果你是真心想找对象，请告诉我真实的信息哦！"
+    profileUpdates:
+      conversation_ended: true
+
+  spam_user:
+    description: 骚扰/广告用户
+    detection:
+      type: keywords
+      keywords:
+        - "加微信"
+        - "加我微信"
+        - "加个微信"
+        - "加我v"
+        - "加我V"
+        - "互推"
+        - "推广"
+        - "广告"
+        - "合作"
+        - "商务合作"
+        - "代理"
+        - "兼职"
+        - "赚钱"
+        - "月入"
+        - "日赚"
+        - "优惠"
+        - "折扣"
+        - "特价"
+        - "促销"
+        - "刷单"
+        - "刷好评"
+        - "刷评论"
+        - "贷款"
+        - "借钱"
+        - "放贷"
+        - "网贷"
+    useAiEnding: false
+    templates:
+      - ""  # 静默处理
+    profileUpdates:
+      conversation_ended: true
+      spam_user: true
+
+  divorce_incomplete:
+    description: 离异手续未办妥
+    detection:
+      type: keywords
+      keywords: ["正在办离婚", "离婚手续", "还没离", "没离干净", "正在离婚"]
+    useAiEnding: false
+    templates:
+      - "理解理解～等手续都办妥了再来找我吧，祝你顺利～"
+    profileUpdates:
+      conversation_ended: true
+
+  retention_failed:
+    description: 挽留失败
+    detection:
+      type: manual  # 由代码逻辑决定
+    useAiEnding: false
+    templates:
+      - "好的呀～那有需要随时再来找我哈～"
+      - "嗯嗯好的呢～那先这样哈～如果后续有任何需要和帮助，欢迎随时找我呀～"
+      - "好哒～那先这样哈～如果后续有任何需要和帮助，欢迎随时找我呀～"
+
+  already_ended:
+    description: 对话已结束后继续发消息
+    detection:
+      type: profile_check
+      field: conversation_ended
+      value: true
+    useAiEnding: false
+    templates:
+      - "好的呀～那有需要随时再来找我哈～"
+      - "嗯嗯好的呢～那先这样哈～如果后续有任何需要和帮助，欢迎随时找我呀～"
+      - "好哒～祝你生活愉快～"
+
+  # ==================== AI 生成场景 ====================
+
+  normal_complete:
+    description: 信息收集完成，正常收尾
+    detection:
+      type: manual  # 由代码逻辑决定（所有字段已收集完成）
+    useAiEnding: true
+    extraInstructions: "信息收集已完成，请用温暖自然的语气收尾，表达祝福，让用户感受到诚意。不要使用固定的收尾话术，要结合用户的具体情况来个性化回复。"
+    profileUpdates:
+      conversation_ended: true
+
+  both_rejected:
+    description: 双方联系方式都被拒绝
+    detection:
+      type: manual  # 由代码逻辑决定（rejected_phone && rejected_wechat）
+    useAiEnding: true
+    extraInstructions: "用户不愿留下任何联系方式，请用理解和尊重的语气收尾，表达如果以后改变主意随时欢迎回来，不要显得失望或强迫。"
+    profileUpdates:
+      conversation_ended: true

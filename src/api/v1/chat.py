@@ -5,8 +5,8 @@ from typing import Dict, Any
 
 from src.models.requests import ChatRequest, ChatResponse
 from src.services.ai_service import AIService
-from src.services.user_service import UserService
-from src.services.chat_service import ChatService
+from src.services.data.user_service import UserService
+from src.services.core.chat_service import ChatService
 from src.core.logging import api_logger, RequestLogger
 from src.core.exceptions import AppException
 
