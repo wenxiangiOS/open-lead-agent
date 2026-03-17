@@ -1,0 +1,337 @@
+{
+  "started_at": "2026-03-17T12:26:46",
+  "ended_at": "2026-03-17T12:27:04",
+  "scenario_file": "/Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios",
+  "summary": {
+    "total": 2,
+    "passed": 0,
+    "failed": 2,
+    "total_duration_seconds": 18.107,
+    "avg_duration_seconds": 9.053,
+    "max_duration_seconds": 10.65,
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "call_count": 0
+    }
+  },
+  "results": [
+    {
+      "scenario_id": "contact_phone_invalid_should_retry",
+      "category": "contact",
+      "tags": [
+        "critical",
+        "contact_phone",
+        "retry"
+      ],
+      "passed": false,
+      "checks_total": 2,
+      "checks_passed": 1,
+      "failures": [
+        {
+          "assertion_type": "final_response_contains_any",
+          "message": "final_response 需要包含任一关键词 ['电话', '确认', '重新']，实际 ''",
+          "turn": 2,
+          "field": null
+        }
+      ],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+          "assistant_response": "",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          }
+        },
+        {
+          "index": 2,
+          "user_message": "我电话12345",
+          "assistant_response": "",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_contact_phone_invalid_should_retry_0255b65d",
+        "created_at": "2026-03-17T12:26:49.568249",
+        "updated_at": "2026-03-17T12:26:49.568614",
+        "sex": null,
+        "last_name": null,
+        "age": null,
+        "height": null,
+        "weight": null,
+        "location": null,
+        "education": null,
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": null,
+        "contact": null,
+        "phone": null,
+        "wechat": null,
+        "partner_requirement": null,
+        "collection_progress": {
+          "sex": false,
+          "last_name": false,
+          "age": false,
+          "height": false,
+          "weight": false,
+          "location": false,
+          "education": false,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": false,
+          "contact": false,
+          "partner_requirement": false
+        },
+        "progress_percentage": 0.0,
+        "missing_fields": [
+          "sex",
+          "last_name",
+          "age",
+          "height",
+          "weight",
+          "location",
+          "education",
+          "marital_status",
+          "monthly_income",
+          "occupation",
+          "contact",
+          "partner_requirement"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {},
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": false,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "is_hongkong_user": null,
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 7.458
+    },
+    {
+      "scenario_id": "ending_both_contact_refused",
+      "category": "ending",
+      "tags": [
+        "critical",
+        "ending_gate",
+        "contact_phone",
+        "contact_wechat"
+      ],
+      "passed": false,
+      "checks_total": 3,
+      "checks_passed": 1,
+      "failures": [
+        {
+          "assertion_type": "profile_field_equals",
+          "message": "profile.conversation_ended 期望 True，实际 False",
+          "turn": null,
+          "field": "conversation_ended"
+        },
+        {
+          "assertion_type": "profile_field_equals",
+          "message": "profile.rejected_wechat 期望 True，实际 False",
+          "turn": null,
+          "field": "rejected_wechat"
+        }
+      ],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "我是女生，90后，深圳，本科，运营，单身，想找男生",
+          "assistant_response": "",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          }
+        },
+        {
+          "index": 2,
+          "user_message": "不留电话",
+          "assistant_response": "",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "电话争取中",
+            "partner_requirement": "未留"
+          }
+        },
+        {
+          "index": 3,
+          "user_message": "还是不留电话",
+          "assistant_response": "",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "不愿留电话",
+            "partner_requirement": "未留"
+          }
+        },
+        {
+          "index": 4,
+          "user_message": "微信也不留",
+          "assistant_response": "",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "不愿留电话",
+            "partner_requirement": "未留"
+          }
+        },
+        {
+          "index": 5,
+          "user_message": "还是不留微信",
+          "assistant_response": "",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "微信争取中, 不愿留电话",
+            "partner_requirement": "未留"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_ending_both_contact_refused_b803a734",
+        "created_at": "2026-03-17T12:26:53.988518",
+        "updated_at": "2026-03-17T12:26:53.988800",
+        "sex": null,
+        "last_name": null,
+        "age": null,
+        "height": null,
+        "weight": null,
+        "location": null,
+        "education": null,
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": null,
+        "contact": null,
+        "phone": null,
+        "wechat": null,
+        "partner_requirement": null,
+        "collection_progress": {
+          "sex": false,
+          "last_name": false,
+          "age": false,
+          "height": false,
+          "weight": false,
+          "location": false,
+          "education": false,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": false,
+          "contact": false,
+          "partner_requirement": false
+        },
+        "progress_percentage": 0.0,
+        "missing_fields": [
+          "sex",
+          "last_name",
+          "age",
+          "height",
+          "weight",
+          "location",
+          "education",
+          "marital_status",
+          "monthly_income",
+          "occupation",
+          "contact",
+          "partner_requirement"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {},
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": false,
+        "phone_ask_count": 2,
+        "wechat_ask_count": 1,
+        "is_hongkong_user": null,
+        "rejected_wechat": false,
+        "rejected_phone": true
+      },
+      "duration_seconds": 10.65
+    }
+  ]
+}

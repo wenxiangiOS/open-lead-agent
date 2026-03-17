@@ -108,7 +108,7 @@ class DialogueManager:
         logger.info(f"[联系方式状态] 香港用户={is_hong_user}({user_profile.location}), 电话={user_profile.phone}(已收集={user_profile.phone_collected}), 微信={user_profile.wechat}(已收集={user_profile.wechat_collected})")
 
         # 获取联系方式指令（使用新的服务）
-        contact_instruction, next_action_enum = self.contact_service.build_instruction(user_profile)
+        contact_instruction, next_action_enum = self.contact_service.build_instruction(user_profile, user_message)
         next_action = self.contact_service.get_action_dict(next_action_enum)
 
         # 调试日志：显示下一步动作

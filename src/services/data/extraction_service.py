@@ -24,8 +24,10 @@ class ExtractionService:
     _EXTRACT_NUMBER_PATTERN = re.compile(r'(\d{1,3})')
     _PLACEHOLDER_VALUES = {
         '值',
+        '值null',
         '值/null',
         'value',
+        'valuenull',
         'value/null',
         '示例',
         '示例值',
@@ -245,7 +247,13 @@ class ExtractionService:
         if lower_value in cls._PLACEHOLDER_VALUES:
             return None
 
-        if lower_value.startswith('值/') or lower_value.startswith('value/'):
+        # 检测"值"开头的各种占位符变体（如：值null、值/null、值xxx等）
+        if lower_value.startswith('值') and len(value_str) <= 10:
+            # 如果是"值"开头且长度很短，很可能是占位符
+            return None
+
+        # 检测"value"开头的各种占位符变体（如：valuenull、value/xxx等）
+        if lower_value.startswith('value') and len(value_str) <= 12:
             return None
 
         return value_str
@@ -348,6 +356,7 @@ class ExtractionService:
             Dict[str, Any]: 收集结果
         """
         collected_fields = []
+        invalid_contact_attempt = None
 
         if not extracted_data:
             return {
@@ -411,6 +420,7 @@ class ExtractionService:
                         logger.debug(f"[电话验证] 香港手机号: {cleaned}")
                     else:
                         logger.info(f"[电话验证] 无效的电话号码格式: {value}")
+                        invalid_contact_attempt = cleaned or str(value)
                         continue  # 跳过无效号码
 
                 # 检查字段是否需要更新
@@ -484,17 +494,23 @@ class ExtractionService:
         user_profile = await self.user_service.get_user_profile(account_id)
 
         if collected_fields:
-            return {
+            result = {
                 "collected": True,
                 "field": collected_fields[0]["field"] if collected_fields else None,
                 "value": collected_fields[0]["value"] if collected_fields else None,
                 "all_fields": collected_fields
             }
+            if invalid_contact_attempt:
+                result["invalid_contact_attempt"] = invalid_contact_attempt
+            return result
 
-        return {
+        result = {
             "collected": False,
             "all_fields": []
         }
+        if invalid_contact_attempt:
+            result["invalid_contact_attempt"] = invalid_contact_attempt
+        return result
 
     def get_collected_info_summary(self, user_profile: UserProfile) -> str:
         """

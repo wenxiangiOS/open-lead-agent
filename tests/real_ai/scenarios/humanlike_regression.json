@@ -1,0 +1,625 @@
+{
+  "scenarios": [
+    {
+      "id": "humanlike_reception_hesitant_user",
+      "category": "humanlike_reception",
+      "tags": [
+        "critical",
+        "reception",
+        "emotion"
+      ],
+      "description": "用户犹豫时（这个也要说吗），应先缓冲，再降低门槛。",
+      "messages": [
+        "我是女生，90后，深圳，本科",
+        "这个也要说吗"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "没关系",
+            "方便",
+            "保密",
+            "不用"
+          ]
+        },
+        {
+          "type": "response_not_contains_any",
+          "turn": 2,
+          "values": [
+            "必须",
+            "一定要"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_reception_joking_user",
+      "category": "humanlike_reception",
+      "tags": [
+        "reception",
+        "emotion"
+      ],
+      "description": "用户开玩笑（你查户口呢）时，应轻接一句，再回主线。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营",
+        "你查户口呢问这么细"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 2,
+          "values": [
+            "请配合",
+            "必须回答"
+          ]
+        },
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "了解",
+            "认识",
+            "匹配",
+            "适合"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_reception_defensive_user",
+      "category": "humanlike_reception",
+      "tags": [
+        "critical",
+        "reception",
+        "emotion"
+      ],
+      "description": "用户防备（你们靠谱吗）时，应先解释用途，再推进。",
+      "messages": [
+        "找对象",
+        "你们靠谱吗，干嘛问这个"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "靠谱",
+            "安全",
+            "放心",
+            "正规",
+            "专业"
+          ]
+        },
+        {
+          "type": "response_not_contains_any",
+          "turn": 2,
+          "values": [
+            "先告诉我"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_reception_evasive_user",
+      "category": "humanlike_reception",
+      "tags": [
+        "reception",
+        "emotion"
+      ],
+      "description": "用户敷衍（还行/再说吧）时，应放慢推进，更多被动提取。",
+      "messages": [
+        "我是女生，90后，深圳",
+        "还行吧",
+        "再说吧"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 3,
+          "values": [
+            "必须",
+            "一定",
+            "赶紧"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_transition_natural_field_switch",
+      "category": "humanlike_transition",
+      "tags": [
+        "transition",
+        "critical"
+      ],
+      "description": "从一个字段切到另一个字段时，必须经过转场，不能硬切。",
+      "messages": [
+        "我是女生，28岁",
+        "在深圳"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 2,
+          "values": [
+            "你学历是什么你职业是什么"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_transition_with_feedback",
+      "category": "humanlike_transition",
+      "tags": [
+        "transition"
+      ],
+      "description": "转场时应包含承接上一句和反馈/认可。",
+      "messages": [
+        "我是女生，28岁，深圳，本科",
+        "我是做运营的"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "不错",
+            "好的",
+            "了解",
+            "运营"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_light_interaction_after_fields",
+      "category": "humanlike_light_interaction",
+      "tags": [
+        "light_interaction"
+      ],
+      "description": "每收集2-3个有效字段后，可插入1轮轻互动。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 1,
+          "values": [
+            "好的请告诉我你的职业请告诉我你的学历请告诉我你的年龄"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_light_interaction_short_feedback",
+      "category": "humanlike_light_interaction",
+      "tags": [
+        "light_interaction"
+      ],
+      "description": "轻互动只做短反馈，不长聊。",
+      "messages": [
+        "我是女生，90后，深圳",
+        "我想找个成熟稳重的男生"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 2,
+          "values": [
+            "我建议你应该",
+            "让我给你一些建议",
+            "根据我的经验"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_user_type_cooperative",
+      "category": "humanlike_user_type",
+      "tags": [
+        "user_type",
+        "critical"
+      ],
+      "description": "配合型用户回答直接信息量高，推进稍快，允许1主+1顺带。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生"
+      ],
+      "assertions": [
+        {
+          "type": "profile_field_equals",
+          "field": "sex",
+          "expected": "女"
+        },
+        {
+          "type": "profile_field_truthy",
+          "field": "location"
+        },
+        {
+          "type": "profile_field_truthy",
+          "field": "education"
+        }
+      ]
+    },
+    {
+      "id": "humanlike_user_type_conservative",
+      "category": "humanlike_user_type",
+      "tags": [
+        "user_type"
+      ],
+      "description": "保守型用户对敏感问题回避时，应多解释、少压迫、少追问。",
+      "messages": [
+        "找对象",
+        "这个不方便说"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "没关系",
+            "理解",
+            "方便"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_user_type_conversational",
+      "category": "humanlike_user_type",
+      "tags": [
+        "user_type"
+      ],
+      "description": "话题型用户愿意展开讲时，应先顺着聊，再从中提取字段。",
+      "messages": [
+        "找对象",
+        "我之前谈过两个，一个太花心一个太粘人，现在想找个踏实的"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "踏实",
+            "经历",
+            "理解"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_memory_reuse_location",
+      "category": "humanlike_memory",
+      "tags": [
+        "memory",
+        "critical"
+      ],
+      "description": "AI应记住用户已说过的地区信息并在后续回复中自然回用。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营",
+        "那边有什么好的相亲资源吗"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "深圳",
+            "那边"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_memory_reuse_occupation",
+      "category": "humanlike_memory",
+      "tags": [
+        "memory"
+      ],
+      "description": "AI应记住用户的职业信息并自然回用。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营",
+        "我工作比较忙"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "运营",
+            "工作",
+            "忙"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_memory_reuse_preference",
+      "category": "humanlike_memory",
+      "tags": [
+        "memory",
+        "critical"
+      ],
+      "description": "AI应记住用户的择偶偏好并在后续回复中体现。",
+      "messages": [
+        "我是女生，90后，深圳，想找个成熟稳重的",
+        "有什么推荐吗"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "成熟",
+            "稳重"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_emotion_recognition_relaxed",
+      "category": "humanlike_emotion",
+      "tags": [
+        "emotion"
+      ],
+      "description": "用户放松/配合时（主动回答信息量多），应正常推进。",
+      "messages": [
+        "你好呀，我是女生，今年28岁，在深圳工作，本科毕业，做运营的，单身，想找个合适的男生"
+      ],
+      "assertions": [
+        {
+          "type": "profile_field_equals",
+          "field": "sex",
+          "expected": "女"
+        },
+        {
+          "type": "profile_field_truthy",
+          "field": "location"
+        },
+        {
+          "type": "profile_field_truthy",
+          "field": "occupation"
+        }
+      ]
+    },
+    {
+      "id": "humanlike_emotion_recognition_defensive_explanation",
+      "category": "humanlike_emotion",
+      "tags": [
+        "emotion",
+        "critical"
+      ],
+      "description": "用户防备时（你们靠谱吗/干嘛问这个），应先解释用途/隐私，再推进。",
+      "messages": [
+        "找对象",
+        "你们靠谱吗"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "靠谱",
+            "安全",
+            "放心",
+            "正规",
+            "专业"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_emotion_recognition_joking_response",
+      "category": "humanlike_emotion",
+      "tags": [
+        "emotion"
+      ],
+      "description": "用户调侃/玩笑时（问这么细），应轻接一句，再回主线。",
+      "messages": [
+        "我是女生，90后，深圳",
+        "问这么细干嘛"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 2,
+          "values": [
+            "请配合",
+            "必须回答"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_ask_limit_core_field_2_times",
+      "category": "humanlike_ask_limit",
+      "tags": [
+        "ask_limit",
+        "critical"
+      ],
+      "description": "核心字段最多主动问2次，第3次不能再追问。",
+      "messages": [
+        "找对象",
+        "不想说",
+        "还是不想说",
+        "继续不想说"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 4,
+          "values": [
+            "年龄多少",
+            "你多大了",
+            "年龄"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_ask_limit_medium_field_1_time",
+      "category": "humanlike_ask_limit",
+      "tags": [
+        "ask_limit",
+        "critical"
+      ],
+      "description": "中等字段（月薪）最多主动问1次，不追问。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身",
+        "不方便说收入",
+        "还是不方便"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 3,
+          "values": [
+            "收入",
+            "月薪",
+            "工资"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_ask_limit_low_priority_never_ask",
+      "category": "humanlike_ask_limit",
+      "tags": [
+        "ask_limit",
+        "critical"
+      ],
+      "description": "低优字段（身高、姓名、体重）永不主动问。",
+      "messages": [
+        "找对象"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 1,
+          "values": [
+            "身高多少",
+            "你叫什么名字",
+            "体重"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_medium_field_timing_after_age",
+      "category": "humanlike_field_timing",
+      "tags": [
+        "field_timing",
+        "medium_field"
+      ],
+      "description": "年龄已确认后，可自然穿插问择偶要求。",
+      "messages": [
+        "我是女生，28岁"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 1,
+          "values": [
+            "找",
+            "要求",
+            "期待",
+            "喜欢"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_medium_field_timing_income_optional",
+      "category": "humanlike_field_timing",
+      "tags": [
+        "field_timing",
+        "medium_field"
+      ],
+      "description": "问收入时必须带不方便说也没关系的语气。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身，想找男生"
+      ],
+      "assertions": [
+        {
+          "type": "profile_field_truthy",
+          "field": "occupation"
+        }
+      ]
+    },
+    {
+      "id": "humanlike_no_consecutive_same_field_ask",
+      "category": "humanlike_rules",
+      "tags": [
+        "rules",
+        "critical"
+      ],
+      "description": "同一字段不能连续两轮都问。",
+      "messages": [
+        "找对象",
+        "嗯"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 2,
+          "values": [
+            "年龄年龄",
+            "多大了你多大了"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_answer_question_then_resume",
+      "category": "humanlike_rules",
+      "tags": [
+        "rules",
+        "critical"
+      ],
+      "description": "用户有疑问时，先回答疑问，再回主线。",
+      "messages": [
+        "找对象",
+        "怎么收费",
+        "好的，那我是女生，90后，深圳"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "免费",
+            "收费",
+            "定制"
+          ]
+        },
+        {
+          "type": "profile_field_equals",
+          "field": "sex",
+          "expected": "女"
+        }
+      ]
+    },
+    {
+      "id": "humanlike_no_large_repeat_profile",
+      "category": "humanlike_memory",
+      "tags": [
+        "memory"
+      ],
+      "description": "回用记忆时要短，不要像复读资料或数据库回显。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营",
+        "好的"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 2,
+          "values": [
+            "你是女生，90后，在深圳，本科学历，运营工作"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -99,6 +99,74 @@
         { "type": "response_contains_any", "turn": 3, "values": ["定制", "收费", "服务"] },
         { "type": "response_not_contains_any", "turn": 3, "values": ["电话", "微信", "学历"] }
       ]
+    },
+    {
+      "id": "faq_priority_success_rate",
+      "category": "faq",
+      "tags": ["faq_priority"],
+      "description": "用户问成功率时，应先解释服务效果。",
+      "messages": [
+        "找对象",
+        "你们成功率怎么样"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["成功", "配对", "牵线", "案例"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信", "年龄"] }
+      ]
+    },
+    {
+      "id": "faq_priority_service_area",
+      "category": "faq",
+      "tags": ["faq_priority"],
+      "description": "用户问服务范围时，应先说明覆盖地区。",
+      "messages": [
+        "找对象",
+        "你们服务哪些地区"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["深圳", "地区", "范围"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信"] }
+      ]
+    },
+    {
+      "id": "faq_priority_time_required",
+      "category": "faq",
+      "tags": ["faq_priority"],
+      "description": "用户问多久能找到时，应解释匹配周期。",
+      "messages": [
+        "找对象",
+        "多久能找到对象"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["时间", "周期", "匹配", "因人而异"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信"] }
+      ]
+    },
+    {
+      "id": "faq_priority_reliable",
+      "category": "faq",
+      "tags": ["critical", "faq_reliable"],
+      "description": "用户问平台是否靠谱时，应先回答靠谱相关问题。",
+      "messages": [
+        "找对象",
+        "你们平台靠谱吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["靠谱", "安全", "放心", "靠谱的"] }
+      ]
+    },
+    {
+      "id": "faq_priority_safety",
+      "category": "faq",
+      "tags": ["faq_safety"],
+      "description": "用户问安全吗时，应先解释安全问题，不做资料收集。",
+      "messages": [
+        "找对象",
+        "你们平台安全吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["安全", "放心", "可靠", "正规", "专业"] }
+      ]
     }
   ]
 }

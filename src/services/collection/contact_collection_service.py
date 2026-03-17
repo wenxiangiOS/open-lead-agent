@@ -83,6 +83,26 @@ class ContactCollectionService:
     MAX_WECHAT_ASKS_NON_HK_WITH_PHONE = 1       # 非香港用户 + 电话已收集
     MAX_WECHAT_ASKS_NON_HK_WITHOUT_PHONE = 2    # 非香港用户 + 电话未收集
 
+    # 微信意图关键词（用户想用微信联系）
+    WECHAT_INTENT_KEYWORDS: List[str] = [
+        "留微信可以吗", "微信可以", "微信方便", "留微信行吗", "给微信可以吗",
+        "我先给微信", "先给微信吧", "留微信吧",
+        "用微信联系", "加微信", "微信联系", "用微信", "留个微信",
+    ]
+
+    # 电话拒绝偏好关键词（用户说电话不方便想用微信）
+    PHONE_REFUSAL_PREFERENCE_KEYWORDS: List[str] = [
+        "电话不方便", "电话不行", "电话不方便留", "不方便留电话", "电话不好留"
+    ]
+
+    # 通用联系方式偏好（用户明确说用某种方式）
+    CONTACT_PREFERENCE_KEYWORDS: List[str] = [
+        "用微信联系吧", "微信吧", "用微信吧", "加微信吧", "微信也行",
+    ]
+    PHONE_REFUSAL_PREFERENCE_KEYWORDS: List[str] = [
+        "电话不方便", "电话不行", "电话不方便留"
+    ]
+
     # ==================== 提示词模板 ====================
 
     PROMPT_END_CONVERSATION = """
@@ -228,6 +248,28 @@ class ContactCollectionService:
 ❌ 禁止使用"嗯嗯好的呀～那先这样哈～"等结束语气
 """
 
+    PROMPT_ASK_WECHAT_ON_USER_PREFERENCE = """
+
+【⚠️⚠️⚠️立即执行-接住微信方案⚠️⚠️⚠️】
+【当前任务：用户主动提出留微信】
+用户这轮明确表示微信更方便，你要顺着用户的选择接住微信方案。
+
+回复要求：
+• 明确表示微信可以
+• 自然请用户直接发微信号
+• 保持简短，1-2句话
+• 语气要像接住用户的提议，不要像重新发起盘问
+
+参考风格（可灵活调整）：
+- "可以呀，那你直接发我微信号就行，我这边先记下来～"
+- "没问题呀，你方便的话把微信发过来就好，后面联系也可以～"
+
+禁止行为：
+❌ 禁止继续坚持其他联系方式
+❌ 禁止转成隐私解释长文
+❌ 禁止出现结束对话语气
+"""
+
     PROMPT_PERSUADE_WECHAT = """
 
 【⚠️⚠️⚠️立即执行-争取微信⚠️⚠️⚠️】
@@ -295,16 +337,22 @@ class ContactCollectionService:
 
     # ==================== 核心决策方法 ====================
 
-    def get_next_action(self, profile: UserProfile) -> NextAction:
+    def get_next_action(self, profile: UserProfile, user_message: str = "") -> NextAction:
         """
         获取下一步动作
 
         Args:
             profile: 用户档案
+            user_message: 当前用户消息（用于偏好检测）
 
         Returns:
             NextAction: 下一步动作
         """
+        # === 优先级0: 用户主动提出联系方式偏好 ===
+        if self.prefers_wechat_over_phone(user_message, profile):
+            logger.info("[联系方式偏好] 用户拒绝电话但愿意留微信，切换到微信流程")
+            return NextAction.ASK_WECHAT
+
         is_hk = self.is_hongkong_user(profile)
 
         # 场景1: 双方都被拒绝 → 结束对话
@@ -388,17 +436,19 @@ class ContactCollectionService:
 不要主动追问身高、体重、称呼这类低优先级字段。
 """
 
-    def build_instruction(self, profile: UserProfile) -> Tuple[str, NextAction]:
+    def build_instruction(self, profile: UserProfile, user_message: str = "") -> Tuple[str, NextAction]:
         """
         构建联系方式指令
 
         Args:
             profile: 用户档案
+            user_message: 当前用户消息（用于偏好检测）
 
         Returns:
             Tuple[str, NextAction]: (指令字符串, 下一步动作)
         """
-        action = self.get_next_action(profile)
+        action = self.get_next_action(profile, user_message)
+        prefers_wechat = self.prefers_wechat_over_phone(user_message, profile)
 
         instruction = ""
         is_hk = self.is_hongkong_user(profile)
@@ -427,7 +477,9 @@ class ContactCollectionService:
 
         elif action == NextAction.ASK_WECHAT:
             # 判断是否是电话被拒后询问微信
-            if profile.rejected_phone:
+            if prefers_wechat:
+                instruction = self.PROMPT_ASK_WECHAT_ON_USER_PREFERENCE
+            elif profile.rejected_phone:
                 instruction = self.PROMPT_ASK_WECHAT_AFTER_PHONE_REJECTED
             elif is_hk:
                 instruction = self.PROMPT_HK_ASK_WECHAT
@@ -449,6 +501,20 @@ class ContactCollectionService:
                 logger.info(f"[联系方式指令] 联系方式已处理完毕，继续收集其他字段")
 
         return (instruction, action)
+
+    def prefers_wechat_over_phone(self, user_message: str, profile: UserProfile) -> bool:
+        """
+        判断用户是否明确表示电话不方便，但愿意留微信。
+
+        这是联系方式流程内的当轮偏好覆盖，不改变整体状态机顺序，
+        只用于本轮把默认电话流程切到微信流程。
+        """
+        if not user_message or profile.wechat_collected:
+            return False
+
+        wants_wechat = any(keyword in user_message for keyword in self.WECHAT_INTENT_KEYWORDS)
+        refuses_phone = any(keyword in user_message for keyword in self.PHONE_REFUSAL_PREFERENCE_KEYWORDS)
+        return wants_wechat and refuses_phone
 
     def should_end_conversation(self, profile: UserProfile) -> bool:
         """
@@ -585,7 +651,11 @@ class ContactCollectionService:
             if contact_type == 'phone'
             else self.WECHAT_REFUSAL_KEYWORDS
         )
-        return any(kw in message_lower for kw in keywords)
+        if any(kw in message_lower for kw in keywords):
+            return True
+
+        contact_markers = ['电话', '手机', '手机号', '号码'] if contact_type == 'phone' else ['微信', 'wx', 'weixin']
+        return any(marker in message_lower for marker in contact_markers) and self._has_general_refusal(message_lower)
 
     def _has_general_refusal(self, message_lower: str) -> bool:
         """判断是否包含通用拒绝词"""
@@ -615,8 +685,16 @@ class ContactCollectionService:
             return any(p in response_lower for p in phone_patterns)
         else:
             # 检查是否明确询问微信
-            wechat_patterns = ['微信号', '留微信', '个微信', '微信吗', '微信~', '微信哈', '留个微信']
-            return any(p in response_lower for p in wechat_patterns)
+            wechat_patterns = [
+                '微信号', '留微信', '个微信', '微信吗', '微信~', '微信哈', '留个微信',
+                '微信方便的话', '你微信方便的话', '微信方便', '后面沟通', '后面联系', '留一个',
+            ]
+            if any(p in response_lower for p in wechat_patterns):
+                return True
+
+            return '微信' in response_lower and any(
+                marker in response_lower for marker in ['方便', '留一个', '留个', '联系', '沟通']
+            )
 
     def _handle_refusal(
         self,

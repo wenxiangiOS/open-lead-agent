@@ -154,6 +154,91 @@
         { "type": "profile_field_falsey", "field": "age" },
         { "type": "profile_field_falsey", "field": "location" }
       ]
+    },
+    {
+      "id": "field_sex_extract_male",
+      "category": "field_collection",
+      "tags": ["extract_basic", "sex"],
+      "description": "用户明确表示男生时，应正确记录性别。",
+      "messages": [
+        "我是男生，想找女生"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "sex", "expected": "男" }
+      ]
+    },
+    {
+      "id": "field_age_variants_85s",
+      "category": "field_collection",
+      "tags": ["extract_basic", "age"],
+      "description": "用户说85后时，应被解析出年龄。",
+      "messages": [
+        "我是85后的"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "age" }
+      ]
+    },
+    {
+      "id": "field_occupation_variants_teacher",
+      "category": "field_collection",
+      "tags": ["extract_basic", "occupation"],
+      "description": "用户提到教师职业时，应正确记录职业。",
+      "messages": [
+        "我是老师"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "occupation" },
+        { "type": "profile_field_not_equals", "field": "occupation", "expected": "值" }
+      ]
+    },
+    {
+      "id": "field_marital_status_single",
+      "category": "field_collection",
+      "tags": ["extract_basic", "marital_status"],
+      "description": "用户明确说单身时，应正确记录婚姻状态。",
+      "messages": [
+        "我单身，想找对象"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "marital_status", "expected": "单身" }
+      ]
+    },
+    {
+      "id": "field_marital_status_divorced",
+      "category": "field_collection",
+      "tags": ["extract_basic", "marital_status"],
+      "description": "用户说离异时，应正确记录婚姻状态。",
+      "messages": [
+        "我离异，想找个合适的"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "marital_status", "expected": "离异" }
+      ]
+    },
+    {
+      "id": "field_height_extract_cm",
+      "category": "field_collection",
+      "tags": ["extract_basic", "height"],
+      "description": "用户提到身高时，应正确记录身高。",
+      "messages": [
+        "我身高168cm"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "height" }
+      ]
+    },
+    {
+      "id": "field_income_extract_monthly",
+      "category": "field_collection",
+      "tags": ["extract_basic", "income"],
+      "description": "用户提到月收入时，应正确记录收入。",
+      "messages": [
+        "我月收入一万左右"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "monthly_income" }
+      ]
     }
   ]
 }

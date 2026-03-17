@@ -135,6 +135,12 @@ class TestContactCollectionService:
         profile.wechat_ask_count = 1
         assert self.service.get_next_action(profile) == NextAction.NONE
 
+    def test_get_next_action_prefers_wechat_over_phone(self):
+        """下一步动作 - 用户明确想用微信替代电话"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+        assert self.service.get_next_action(profile, "电话不方便，留微信可以吗") == NextAction.ASK_WECHAT
+
     # ==================== build_instruction 测试 ====================
 
     def test_build_instruction_end_conversation(self):
@@ -163,6 +169,15 @@ class TestContactCollectionService:
         assert isinstance(result[0], str)
         assert isinstance(result[1], NextAction)
 
+    def test_build_instruction_prefers_wechat_over_phone(self):
+        """构建指令 - 用户主动提出留微信时应接住微信方案"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+        instruction, action = self.service.build_instruction(profile, "电话不方便，留微信可以吗")
+        assert action == NextAction.ASK_WECHAT
+        assert "微信" in instruction
+        assert "电话" not in instruction
+
     # ==================== detect_refusal 测试 ====================
 
     def test_detect_refusal_explicit_phone(self):
@@ -181,6 +196,14 @@ class TestContactCollectionService:
         assert result.contact_type == 'wechat'
         assert result.is_refusal == True
 
+    def test_detect_refusal_explicit_wechat_reverse_phrase(self):
+        """拒绝检测 - 反向表述的微信拒绝"""
+        profile = UserProfile(account_id="test", location="北京")
+        result = self.service.detect_refusal("微信也不留", profile, None)
+        assert result is not None
+        assert result.contact_type == 'wechat'
+        assert result.is_refusal == True
+
     def test_detect_refusal_general_with_context(self):
         """拒绝检测 - 通用拒绝 + 上下文"""
         profile = UserProfile(account_id="test", location="北京")
@@ -191,6 +214,19 @@ class TestContactCollectionService:
         )
         assert result is not None
         assert result.contact_type == 'phone'
+
+    def test_detect_refusal_general_with_wechat_context(self):
+        """拒绝检测 - 微信上下文中的通用拒绝"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone = "17688654321"
+        profile.phone_collected = True
+        result = self.service.detect_refusal(
+            "先不留了",
+            profile,
+            "好的呀～小姐姐的电话我记下啦😊 要是你微信方便的话，也可以留一个，后面沟通会更顺手一点～"
+        )
+        assert result is not None
+        assert result.contact_type == 'wechat'
 
     def test_detect_refusal_no_refusal(self):
         """拒绝检测 - 无拒绝"""

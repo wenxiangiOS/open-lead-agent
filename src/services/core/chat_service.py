@@ -142,8 +142,13 @@ class ChatService:
             # 1.5. 如果用户档案为空（全新用户），重置无意义输入计数器
             # 这确保用户数据过期后，重新开始对话时不会受到之前计数的影响
             is_empty = user_profile.is_empty()
-            logger.info(f"[用户档案检查] account_id={account_id}, is_empty={is_empty}, last_name={user_profile.last_name}")
-            if is_empty:
+            message_count = await self.dialogue_manager.get_message_count(account_id)
+            is_new_user_session = is_empty and message_count == 0
+            logger.info(
+                f"[用户档案检查] account_id={account_id}, is_empty={is_empty}, "
+                f"message_count={message_count}, last_name={user_profile.last_name}"
+            )
+            if is_new_user_session:
                 await self.input_fallback_service.reset_nonsense_count(account_id)
                 # 重置对话结束状态（新用户重新开始）
                 user_profile.conversation_ended = False
@@ -317,7 +322,7 @@ class ChatService:
             # 4.6. 检测打招呼（仅当用户档案为空时使用预设回复）
             # 但如果用户同时表达了拒绝联系方式，则跳过打招呼检测，让拒绝检测处理
             has_contact_refusal = any(kw in request.question for kw in ['不留微信', '不留电话', '不留联系方式', '不给微信', '不给电话'])
-            if is_empty and self.greeting_service.is_greeting(request.question) and not has_contact_refusal:
+            if is_new_user_session and self.greeting_service.is_greeting(request.question) and not has_contact_refusal:
                 greeting_response = self.greeting_service.get_greeting_response(request.question)
                 # 模拟真人打字时间（1.0-2.0秒），像真人在思考+打字
                 await asyncio.sleep(random.uniform(1.0, 2.0))
@@ -462,7 +467,8 @@ class ChatService:
                 account_id,
                 user_profile,
                 collection_result,
-                ai_response
+                ai_response,
+                request.question
             )
 
             # 10.5. 香港用户：收集电话后询问微信
@@ -614,48 +620,44 @@ class ChatService:
         )
 
         # === 使用统一的收尾服务检测收尾场景 ===
-        ending_reason = self.ending_service.check_ending_reason(
-            user_profile,
-            user_message,
-            collection_result
+        # 调用 check_and_get_ending，参数顺序：user_message, profile, collection_result
+        # 返回结构：{'scenario': str, 'use_ai': bool, 'description': str, 'response': str, ...}
+        # 内部已调用 update_profile_for_ending，无需单独调用
+        ending_info = self.ending_service.check_and_get_ending(
+            user_message,        # 第1个参数：用户消息
+            user_profile,        # 第2个参数：用户档案
+            collection_result    # 第3个参数：收集结果
         )
 
-        if ending_reason:
-            logger.info(f"[收尾检测] 检测到收尾场景: {ending_reason.value}")
+        if ending_info:
+            scenario = ending_info['scenario']
+            use_ai = ending_info['use_ai']
+            logger.info(f"[收尾检测] 检测到收尾场景: {scenario}, AI生成: {use_ai}")
 
-            # 更新用户状态
-            self.ending_service.update_profile_for_ending(ending_reason, user_profile)
+            # 保存已更新的用户状态（check_and_get_ending 内部已更新 profile）
             await self.user_service.save_user_profile(account_id, user_profile)
 
-            # 获取收尾话术
-            call_name = user_profile.get_greeting()
-            response, is_silent = self.ending_service.get_ending_response(
-                ending_reason,
-                user_profile,
-                call_name
-            )
-
-            # AI 生成场景返回 None，由外部处理
-            if self.ending_service.should_use_ai_ending(ending_reason):
-                # 不在这里处理，让外部流程处理 AI 生成
-                pass
+            # AI 生成场景：不返回预设话术，由外部流程处理
+            if use_ai:
+                # 将 extra_instructions 传递给外部流程（通过 collection_result）
+                collection_result['ending_info'] = ending_info
+                logger.info(f"[收尾检测] AI生成场景，传递给外部处理: {scenario}")
             else:
-                # 返回预设话术
+                # 预设话术场景：直接返回
+                response = ending_info.get('response', '')
+                is_silent = response == ""  # 空模板表示静默场景
+
                 result = {
                     "success": True,
                     "response": response,
-                    "dialogId": "",  # 由调用方填充
+                    "dialogId": "",
                     "collected_info": {},
                     "collected": False
                 }
                 if is_silent:
                     result["silent"] = True
 
-                # 特殊处理：离异手续已办妥的情况（不是收尾，而是更新状态）
-                if ending_reason == "divorce_incomplete":
-                    # 离异手续未办妥是收尾场景
-                    pass
-
+                logger.info(f"[收尾检测] 返回预设话术，场景: {scenario}, 静默: {is_silent}")
                 return result
 
         # === 以下为保留的旧逻辑，逐步迁移到收尾服务 ===
@@ -692,7 +694,8 @@ class ChatService:
         account_id: str,
         user_profile: UserProfile,
         collection_result: Dict[str, Any],
-        ai_response: str
+        ai_response: str,
+        user_message: str = "",
     ) -> str:
         """处理联系方式验证"""
         # 检查是否收集到联系方式（电话或微信）
@@ -708,6 +711,7 @@ class ChatService:
                 collected_wechat = field_info.get('value')
 
         contact_value = collected_phone or collected_contact
+        invalid_contact_attempt = collection_result.get("invalid_contact_attempt") or self._extract_contact_candidate_from_message(user_message)
         logger.info(f"[联系方式检查] collected_contact={contact_value}, collected_wechat={collected_wechat}, all_fields={collection_result.get('all_fields', [])}")
 
         # 如果收集到微信，设置 wechat_collected 标志
@@ -722,6 +726,17 @@ class ChatService:
 
         # 如果没有收集到任何联系方式，检查是否所有字段都已完成
         if contact_value is None and collected_wechat is None:
+            if invalid_contact_attempt:
+                logger.info(f"[联系方式检查] 检测到疑似无效联系方式输入: {invalid_contact_attempt}")
+                is_valid, error_msg, _ = await self.validation_service.validate_contact(
+                    invalid_contact_attempt,
+                    user_profile,
+                    account_id,
+                    self.user_service
+                )
+                if not is_valid:
+                    return error_msg or ""
+
             # 检查核心字段是否全部收集
             profile_ready_for_service = self.collection_policy.has_serviceable_profile(user_profile)
 
@@ -756,6 +771,7 @@ class ChatService:
 
         # 如果只收集到微信（没有电话），尝试争取电话
         if contact_value is None and collected_wechat:
+            has_phone_already = bool(user_profile.phone_collected and user_profile.phone)
             # 微信已在上面的代码中处理（设置 wechat_collected=True）
             # 检查是否可以收尾
             contact_collected = (
@@ -768,7 +784,7 @@ class ChatService:
             # 如果用户没有提供电话，且还没争取过电话，则再问一次电话
             # 注意：不在这里设置 phone_ask_count，让 _handle_refusal 在用户拒绝时递增
             # 这样用户第一次拒绝后还有一次争取机会
-            if not user_profile.rejected_phone and user_profile.phone_ask_count < 1:
+            if not has_phone_already and not user_profile.rejected_phone and user_profile.phone_ask_count < 1:
                 logger.info(f"[微信收集] 尝试争取电话号码")
                 call_name = user_profile.get_greeting()
                 return "好的呀～我先记下了。要是你电话方便的话，也可以留一个，后面联系会更及时些～"
@@ -903,6 +919,23 @@ class ChatService:
         """清理回复（移除 XML 标签）"""
         import re
         return re.sub(r'<extract>.*?</extract>', '', response, flags=re.DOTALL).strip()
+
+    def _extract_contact_candidate_from_message(self, user_message: str) -> Optional[str]:
+        """从用户原始消息中提取疑似联系方式，用于无效联系方式兜底校验。"""
+        if not user_message:
+            return None
+
+        import re
+
+        marker_pattern = re.compile(
+            r'(?:电话|手机|手机号|号码|微信|vx|wx|weixin)[^\da-zA-Z_/-]*([a-zA-Z0-9_-]{4,20})',
+            re.IGNORECASE,
+        )
+        matched = marker_pattern.search(user_message)
+        if matched:
+            return matched.group(1)
+
+        return None
 
     async def _update_conversation_state(
         self,

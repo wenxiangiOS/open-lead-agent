@@ -32,6 +32,7 @@ async def test_handle_contact_validation_accepts_phone_field():
         profile,
         {"all_fields": [{"field": "phone", "value": "17688654321"}]},
         "原始回复",
+        "我电话17688654321",
     )
 
     assert response == "好的呀～你的电话我先记下啦。你也可以再简单说说自己的情况～"
@@ -43,6 +44,31 @@ async def test_handle_contact_validation_accepts_phone_field():
     )
     assert profile.phone == "17688654321"
     assert profile.phone_collected is True
+
+
+@pytest.mark.anyio
+async def test_handle_contact_validation_retries_invalid_phone_attempt():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_3")
+    chat_service.validation_service.validate_contact = AsyncMock(
+        return_value=(False, "小姐姐，这个号码好像位数不对呢～能确认下是手机号或微信号吗呀", None)
+    )
+
+    response = await chat_service._handle_contact_validation(
+        "user_3",
+        profile,
+        {"all_fields": [], "invalid_contact_attempt": "12345"},
+        "原始回复",
+        "我电话12345",
+    )
+
+    assert "确认" in response or "号码" in response or "电话" in response
+    chat_service.validation_service.validate_contact.assert_awaited_once_with(
+        "12345",
+        profile,
+        "user_3",
+        chat_service.user_service,
+    )
 
 
 @pytest.mark.anyio
@@ -77,3 +103,44 @@ async def test_process_chat_request_returns_preset_ending_response_immediately()
 
     assert result["response"] == "预设收尾话术"
     chat_service._handle_contact_validation.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_handle_contact_validation_does_not_reask_phone_after_wechat_if_phone_exists():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_4")
+    profile.phone = "17688654321"
+    profile.phone_collected = True
+    profile.wechat = "wx123456"
+    chat_service.collection_policy.has_serviceable_profile = lambda _profile: True
+    chat_service.contact_service.get_next_action = lambda _profile: SimpleNamespace(value="none")
+    chat_service._mark_remaining_fields_as_skipped = AsyncMock(return_value=None)
+
+    response = await chat_service._handle_contact_validation(
+        "user_4",
+        profile,
+        {"all_fields": [{"field": "wechat", "value": "wx123456"}]},
+        "原始回复",
+        "我微信wx123456",
+    )
+
+    assert "电话方便" not in response
+
+
+@pytest.mark.anyio
+async def test_process_chat_request_does_not_reset_empty_profile_mid_session():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_5")
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=2)
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
+    chat_service.input_fallback_service.reset_nonsense_count = AsyncMock(return_value=None)
+    chat_service.input_fallback_service.check_and_handle_nonsense = AsyncMock(return_value="兜底回复")
+
+    request = SimpleNamespace(accountId="user_5", question="你好", dialogId="dlg_2", sex=None)
+
+    result = await chat_service.process_chat_request(request)
+
+    assert result["response"] == "兜底回复"
+    chat_service.input_fallback_service.reset_nonsense_count.assert_not_awaited()

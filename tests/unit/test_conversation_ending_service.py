@@ -15,7 +15,7 @@ class TestConversationEndingService:
 
     def setup_method(self):
         """每个测试前重置"""
-        config_path = Path(__file__).parent.parent / "src" / "config" / "ending_config.yaml"
+        config_path = Path(__file__).resolve().parents[2] / "src" / "config" / "ending_config.yaml"
         self.service = ConversationEndingService(str(config_path))
 
     # ==================== 配置加载测试 ====================
@@ -58,6 +58,12 @@ class TestConversationEndingService:
         profile = UserProfile(account_id="test")
         result = self.service.check_ending_reason("帮我朋友问问", profile)
         assert result == "proxy_user"
+
+    def test_check_ending_divorce_incomplete_extended_keywords(self):
+        """检测离异手续未办妥 - 扩展关键词"""
+        profile = UserProfile(account_id="test")
+        result = self.service.check_ending_reason("我离异，手续还在办", profile)
+        assert result == "divorce_incomplete"
 
     def test_check_ending_no_match(self):
         """检测无匹配场景"""
@@ -204,6 +210,20 @@ class TestConversationEndingService:
         self.service.update_profile_for_ending('spam_user', profile)
         assert profile.conversation_ended == True
         assert profile.spam_user == True
+
+    def test_update_profile_for_ending_already_married(self):
+        """更新用户状态 - 已婚用户"""
+        profile = UserProfile(account_id="test")
+        self.service.update_profile_for_ending('already_married', profile)
+        assert profile.conversation_ended == True
+        assert profile.already_married == True
+
+    def test_update_profile_for_ending_proxy_user(self):
+        """更新用户状态 - 代相亲用户"""
+        profile = UserProfile(account_id="test")
+        self.service.update_profile_for_ending('proxy_user', profile)
+        assert profile.conversation_ended == True
+        assert profile.proxy_user == True
 
     # ==================== 一站式检测测试 ====================
 
