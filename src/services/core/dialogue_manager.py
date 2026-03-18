@@ -5,11 +5,19 @@
 """
 
 import logging
+import os
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from src.models.user_profile import UserProfile
 from src.models.personality import PersonalityProfile
-from src.services.prompts import get_main_dialogue, get_extraction, build_gender_instruction, build_skipped_fields_instruction, build_ask_count_instruction
+from src.services.prompts import (
+    get_main_dialogue,
+    get_question_priority_dialogue,
+    get_extraction,
+    build_gender_instruction,
+    build_skipped_fields_instruction,
+    build_ask_count_instruction,
+)
 from src.services.data.user_service import UserService
 from src.services.collection.contact_collection_service import ContactCollectionService
 from src.services.collection.profile_collection_policy import ProfileCollectionPolicy
@@ -41,6 +49,13 @@ class DialogueManager:
         self.personality_profile = PersonalityProfile()
         self.contact_service = ContactCollectionService(user_service)
         self.collection_policy = ProfileCollectionPolicy()
+
+    @staticmethod
+    def _env_int(name: str, default: int) -> int:
+        try:
+            return int(os.getenv(name, str(default)))
+        except (TypeError, ValueError):
+            return default
 
     async def get_conversation_context(self, account_id: str) -> Dict[str, Any]:
         """
@@ -132,6 +147,18 @@ class DialogueManager:
             user_profile.collection_progress
         )
 
+        cooldown_turns = self._env_int("MQ_FIELD_ASK_COOLDOWN_TURNS", 2)
+        cooldown_fields = user_profile.get_cooldown_fields(cooldown_turns)
+        if cooldown_fields:
+            field_name_map = get_all_field_names()
+            cooldown_cn = [field_name_map.get(f, f) for f in cooldown_fields]
+            ask_count_instruction += f"""
+
+【追问冷却约束】
+上一轮刚问过：{'、'.join(cooldown_cn)}。
+这一轮禁止继续追问这些字段，优先承接用户新信息或改问其他未收集字段。
+"""
+
         # 资料收集策略决策
         message_count = conversation_context.get('message_count', 0)
         policy_decision = self.collection_policy.decide(
@@ -161,11 +188,8 @@ class DialogueManager:
             logger.info("[答疑优先] 已压制联系方式和字段追问提示")
 
         # 构建主提示词
-        # 判断是否为首次对话：基于用户资料的收集进度
-        # 如果已经收集了称呼和性别，就不再显示开场白
-        has_name = user_profile.last_name is not None and user_profile.last_name != ""
-        has_sex = user_profile.sex is not None
-        is_first_chat = not (has_name or has_sex)
+        # 首轮判定以用户消息轮次为准，避免因预填sex导致首轮承接被跳过
+        is_first_chat = message_count == 0
 
         # 调试日志
         logger.debug(f"[对话状态] 首次={is_first_chat}, 已收集={collected_info[:80]}...")
@@ -179,20 +203,27 @@ class DialogueManager:
         missing_fields_cn = [field_name_map.get(f, f) for f in missing_fields_list if f in field_name_map]
         missing_fields_str = "、".join(missing_fields_cn) if missing_fields_cn else "无"
 
-        main_prompt = get_main_dialogue(
-            collected_info=collected_info,
-            gender_instruction=gender_instruction,
-            contact_instruction=contact_instruction,
-            skipped_fields_instruction=skipped_fields_instruction,
-            ask_count_instruction=ask_count_instruction,
-            question_priority_instruction=question_priority_instruction,
-            is_first_chat=is_first_chat,
-            missing_fields=missing_fields_str,
-            current_main_target=field_name_map.get(policy_decision.main_target, policy_decision.main_target or "无"),
-            current_side_target=field_name_map.get(policy_decision.side_target, policy_decision.side_target or "无"),
-            user_type=policy_decision.user_type,
-            can_enter_contact=policy_decision.can_enter_contact,
-        )
+        if prioritize_user_question:
+            # 答疑优先轮次使用轻量提示词，减少 token 与推理耗时
+            main_prompt = get_question_priority_dialogue(
+                collected_info=collected_info,
+                gender_instruction=gender_instruction,
+            )
+        else:
+            main_prompt = get_main_dialogue(
+                collected_info=collected_info,
+                gender_instruction=gender_instruction,
+                contact_instruction=contact_instruction,
+                skipped_fields_instruction=skipped_fields_instruction,
+                ask_count_instruction=ask_count_instruction,
+                question_priority_instruction=question_priority_instruction,
+                is_first_chat=is_first_chat,
+                missing_fields=missing_fields_str,
+                current_main_target=field_name_map.get(policy_decision.main_target, policy_decision.main_target or "无"),
+                current_side_target=field_name_map.get(policy_decision.side_target, policy_decision.side_target or "无"),
+                user_type=policy_decision.user_type,
+                can_enter_contact=policy_decision.can_enter_contact,
+            )
 
         # 获取上一轮 AI 回复（用于上下文感知提取）
         last_ai_response = conversation_context.get('recent_responses', [])

@@ -1,6 +1,6 @@
 """User profile model for collecting personal information"""
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 import re
 from pydantic import BaseModel, Field, field_validator
@@ -73,6 +73,10 @@ class UserProfile(BaseModel):
     field_ask_count: Dict[str, int] = Field(
         default_factory=dict,
         description="每个字段被问过的次数，用于智能追问机制"
+    )
+    recent_asked_fields: List[str] = Field(
+        default_factory=list,
+        description="最近被 AI 主动追问的字段历史（按轮次）"
     )
 
     # 联系方式收集状态（新设计）
@@ -420,6 +424,29 @@ class UserProfile(BaseModel):
         self.field_ask_count[field_name] = self.field_ask_count.get(field_name, 0) + 1
         return self.field_ask_count[field_name]
 
+    def mark_recent_asked_field(self, field_name: str, max_history: int = 10) -> None:
+        """
+        记录本轮主动追问的主字段，用于短轮次冷却控制。
+
+        Args:
+            field_name: 本轮主追问字段
+            max_history: 最多保留的历史条数
+        """
+        if not field_name:
+            return
+        self.recent_asked_fields.append(field_name)
+        if len(self.recent_asked_fields) > max_history:
+            self.recent_asked_fields = self.recent_asked_fields[-max_history:]
+
+    def get_cooldown_fields(self, cooldown_turns: int) -> List[str]:
+        """
+        获取当前仍在冷却窗口内的字段列表。
+        """
+        turns = max(0, int(cooldown_turns))
+        if turns <= 0:
+            return []
+        return self.recent_asked_fields[-turns:]
+
     def reset_ask_count(self, field_name: str) -> None:
         """
         重置字段追问计数（字段被成功收集时调用）
@@ -505,6 +532,7 @@ class UserProfile(BaseModel):
             "missing_fields": self.get_missing_fields(),
             "skipped_fields": self.skipped_fields,
             "field_ask_count": self.field_ask_count,
+            "recent_asked_fields": self.recent_asked_fields,
             "error_count": self.error_count,
             "conversation_ended": self.conversation_ended,
             "divorce_confirmed": self.divorce_confirmed,

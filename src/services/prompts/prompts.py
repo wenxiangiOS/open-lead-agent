@@ -324,6 +324,22 @@ EXTRACTION = """【用户消息】{user_message}
 【重要】性别推断："哥哥/小哥哥/男的/男生"→性别:男 | "姐姐/小姐姐/女的/女生"→性别:女
 "瓶子，哥哥"→称呼:瓶子 性别:男 | "叫我青青，女的"→称呼:青青 性别:女"""
 
+QUESTION_PRIORITY_DIALOGUE = """你是红娘小缘，语气自然、真诚、简洁。
+
+【本轮目标】
+用户在提疑问/顾虑，本轮只做答疑，不推进资料收集。
+
+【已收集】{collected_info}
+【称呼建议】{gender_instruction}
+
+【执行要求】
+1. 先完整回答用户当前问题，信息要具体、口语化。
+2. 不追问年龄、学历、城市、职业、电话、微信等资料字段。
+3. 不索要联系方式。
+4. 结尾最多补一句：如果你还有顾虑也可以继续问我。
+5. 保持 1-3 句，避免冗长。
+"""
+
 
 # ==================== API 函数 ====================
 
@@ -408,10 +424,12 @@ def get_main_dialogue(
         forced_instruction += question_priority_instruction + "\n\n"
         prompt_mods.append("答疑优先")
 
-    # 2. 如果不是首次对话，添加禁止开场白的指令
+    # 2. 如果不是首次对话，禁止重复系统欢迎语，但允许短承接后推进
     if not is_first_chat:
         forced_instruction += """
-【禁止开场白】用户已有资料，直接用性别称呼 + 问未收集字段
+【禁止重复欢迎语】
+不要重复系统开场白或固定自我介绍。
+允许 1 句自然承接（如“在的呀～”“收到～”）后，再推进未收集字段。
 """
         logger.info(f"[提示词修改] 已添加禁止开场白指令，is_first_chat={is_first_chat}")
 
@@ -486,6 +504,17 @@ def get_extraction(
         user_message=user_message,
         contact_prompt=contact_prompt + contact_validation_prompt + non_response_prompt,
         context_prompt=context_prompt
+    )
+
+
+def get_question_priority_dialogue(
+    gender_instruction: str = "",
+    collected_info: str = "",
+) -> str:
+    """获取答疑优先轮次的轻量提示词。"""
+    return QUESTION_PRIORITY_DIALOGUE.format(
+        collected_info=collected_info,
+        gender_instruction=gender_instruction,
     )
 
 # ==================== 辅助函数 ====================

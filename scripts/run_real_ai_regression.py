@@ -7,7 +7,9 @@ import argparse
 import asyncio
 import json
 import random
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -29,8 +31,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="运行真实 AI 多轮场景回归测试")
     parser.add_argument(
         "--scenario-file",
-        default=str(PROJECT_ROOT / "tests/real_ai/scenarios"),
-        help="场景文件路径（JSON）或场景目录",
+        default=None,
+        help="场景文件路径（JSON）或场景目录；默认自动合并 scenarios + scenarios_pending",
     )
     parser.add_argument(
         "--category",
@@ -172,6 +174,24 @@ def _compact_collected_info(collected_info) -> str:
     return ", ".join(parts) if parts else "-"
 
 
+def resolve_scenario_source(args: argparse.Namespace) -> tuple[str, Path | None]:
+    """解析场景来源；未指定时默认合并主目录和 pending 目录。"""
+    if args.scenario_file:
+        return args.scenario_file, None
+
+    merged_dir = Path(tempfile.mkdtemp(prefix="real_ai_all_", dir="/tmp"))
+    src_dirs = [
+        PROJECT_ROOT / "tests/real_ai/scenarios",
+        PROJECT_ROOT / "tests/real_ai/scenarios_pending",
+    ]
+    for src_dir in src_dirs:
+        if not src_dir.exists():
+            continue
+        for json_file in sorted(src_dir.glob("*.json")):
+            shutil.copy2(json_file, merged_dir / json_file.name)
+    return str(merged_dir), merged_dir
+
+
 def _print_failure_transcript(result):
     print("  -> transcript:")
     for turn in result.turns:
@@ -205,48 +225,62 @@ def print_progress(event, scenario, index, total, result, verbose=False):
 async def main() -> int:
     args = parse_args()
     args = apply_profile(args)
-    loader = ScenarioLoader(args.scenario_file)
-
-    if args.validate:
-        result = loader.validate(require_tags=args.require_tags)
-        if result["errors"]:
-            print("场景校验失败:")
-            for item in result["errors"]:
-                print(f"- {item}")
-            return 1
-        print("场景校验通过")
-        if result["warnings"]:
-            print("警告:")
-            for item in result["warnings"]:
-                print(f"- {item}")
-        return 0
+    scenario_source, temp_dir = resolve_scenario_source(args)
+    loader = ScenarioLoader(scenario_source)
 
     try:
+        if args.validate:
+            result = loader.validate(require_tags=args.require_tags)
+            if result["errors"]:
+                print("场景校验失败:")
+                for item in result["errors"]:
+                    print(f"- {item}")
+                return 1
+            print("场景校验通过")
+            if result["warnings"]:
+                print("警告:")
+                for item in result["warnings"]:
+                    print(f"- {item}")
+            return 0
+
         scenarios = loader.load()
     except ScenarioValidationError as exc:
         print(f"场景加载失败: {exc}")
         return 1
+    finally:
+        if temp_dir is not None:
+            # runner 在 run 阶段还会再次读取；这里只在提前返回时由 finally 兜底清理
+            pass
+
     scenarios = apply_filters(scenarios, args)
 
     if args.list:
-        for item in scenarios:
-            tags = ",".join(item.tags) if item.tags else "-"
-            print(f"{item.scenario_id}\t{item.category}\t{tags}\t{item.description}")
-        return 0
+        try:
+            for item in scenarios:
+                tags = ",".join(item.tags) if item.tags else "-"
+                print(f"{item.scenario_id}\t{item.category}\t{tags}\t{item.description}")
+            return 0
+        finally:
+            if temp_dir is not None:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     runner = RealAIScenarioRunner(
-        scenario_file=args.scenario_file,
+        scenario_file=scenario_source,
         report_dir=args.report_dir,
     )
 
     def progress(event, scenario, index, total, result):
         print_progress(event, scenario, index, total, result, verbose=args.verbose)
 
-    report = await runner.run(
-        scenario_ids=[item.scenario_id for item in scenarios],
-        stop_on_failure=args.stop_on_failure,
-        progress_callback=progress,
-    )
+    try:
+        report = await runner.run(
+            scenario_ids=[item.scenario_id for item in scenarios],
+            stop_on_failure=args.stop_on_failure,
+            progress_callback=progress,
+        )
+    finally:
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     summary = report["summary"]
     print(f"总场景: {summary['total']}")

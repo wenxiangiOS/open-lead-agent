@@ -35,6 +35,7 @@ class InputAnalyzer:
                 r"(不懂|不明白|不明白为什么)",
                 r"(太|很).*?(慢|复杂|麻烦)",
                 r"(不想|不要|别)",
+                r"(不满意)",
             ],
             "compliment": [
                 r"(好|棒|不错|厉害|厉害了)",
@@ -110,12 +111,10 @@ class InputAnalyzer:
             "anxious": [
                 r"(焦虑|担心|紧张|不安|着急)",
                 r"(害怕|恐惧|担心|怕)",
-                r"(啊|呀|哎)",
             ],
             "confused": [
                 r"(不明白|不懂|不清楚|疑惑)",
                 r"(为什么|怎么|如何)",
-                r"(？|\\?|？)",
             ],
         }
 
@@ -139,10 +138,34 @@ class InputAnalyzer:
                     match_count += 1
 
             if match_count > 0:
-                confidence = match_count / len(patterns)
+                confidence = 0.9 + 0.1 * (match_count / len(patterns))
                 if confidence > best_confidence:
                     best_confidence = confidence
                     best_intent = intent
+
+        # Resolve common conflicts by intent priority.
+        if best_intent != "unknown":
+            priority = {
+                "relationship_seeking": 100,
+                "personal_info_request": 95,
+                "complaint": 90,
+                "request_help": 80,
+                "greeting": 70,
+                "compliment": 60,
+                "question_general": 10,
+                "unknown": 0,
+            }
+            winning_intent = best_intent
+            winning_score = priority.get(best_intent, 0)
+            for intent, patterns in self.intent_patterns.items():
+                if intent == best_intent:
+                    continue
+                if any(re.search(pattern, text_lower, re.IGNORECASE) for pattern in patterns):
+                    score = priority.get(intent, 0)
+                    if score > winning_score:
+                        winning_intent = intent
+                        winning_score = score
+            best_intent = winning_intent
 
         return {
             "intent": best_intent,
@@ -152,36 +175,69 @@ class InputAnalyzer:
 
     def extract_keywords(self, text: str) -> Dict[str, Any]:
         """Extract keywords and entities from text"""
-        keywords = []
-        extracted_info = {}
+        keywords: List[str] = []
+        extracted_info: Dict[str, Any] = {}
 
-        text_lower = text.lower()
+        for token in ["男朋友", "女朋友", "对象", "脱单", "交友", "恋爱"]:
+            if token in text:
+                keywords.append(token)
 
-        # Check for each keyword type
+        age_range_match = re.search(r"(\d{1,2})\s*[-~—]\s*(\d{1,2})\s*岁?", text)
+        if age_range_match:
+            start_age, end_age = age_range_match.group(1), age_range_match.group(2)
+            extracted_info["age_range"] = f"{start_age}-{end_age}"
+            keywords.extend([start_age, end_age])
+            if "岁" in text:
+                keywords.append("岁")
+
+        height_plus_match = re.search(r"身高\s*(\d{2,3})\s*(?:cm|厘米)?\s*以上", text, re.IGNORECASE)
+        if height_plus_match:
+            height = height_plus_match.group(1)
+            extracted_info["height_requirement"] = f"{height}+"
+            keywords.extend(["身高", height])
+        else:
+            height_match = re.search(r"身高\s*(\d{2,3})", text)
+            if height_match:
+                height = height_match.group(1)
+                extracted_info["height_requirement"] = height
+                keywords.extend(["身高", height])
+
+        city_match = re.search(r"(北京|上海|广州|深圳|杭州|南京|成都|武汉|西安|天津)", text)
+        if city_match:
+            extracted_info["location"] = city_match.group(1)
+            keywords.append(city_match.group(1))
+
+        for token in ["工作", "旅游", "旅行", "学历", "本科", "硕士", "博士"]:
+            if token in text:
+                keywords.append(token)
+
+        # Fallback to existing pattern map when canonical extraction is absent.
         for info_type, patterns in self.keyword_patterns.items():
-            matches = []
-
+            if info_type in extracted_info:
+                continue
             for pattern in patterns:
-                pattern_matches = re.findall(pattern, text, re.IGNORECASE)
-                if pattern_matches:
-                    matches.extend(pattern_matches)
+                m = re.search(pattern, text, re.IGNORECASE)
+                if not m:
+                    continue
+                if m.lastindex and m.lastindex >= 2 and info_type in {"age_range", "height_requirement"}:
+                    extracted_info[info_type] = f"{m.group(1)}-{m.group(2)}"
+                    keywords.extend([m.group(1), m.group(2)])
+                else:
+                    val = m.group(1) if m.lastindex else m.group(0)
+                    extracted_info[info_type] = val
+                    keywords.append(val)
+                break
 
-            if matches:
-                extracted_info[info_type] = matches[0] if len(matches) == 1 else matches
-                keywords.extend(matches)
-
-        # Remove duplicates while preserving order
-        unique_keywords = []
+        unique_keywords: List[str] = []
         seen = set()
         for keyword in keywords:
             if keyword not in seen:
                 seen.add(keyword)
                 unique_keywords.append(keyword)
 
-        return {
-            "keywords": unique_keywords,
-            "extracted_info": extracted_info
-        }
+        result = {"keywords": unique_keywords, "extracted_info": extracted_info}
+        result.update(extracted_info)
+        return result
 
     def detect_emotion(self, text: str) -> str:
         """Detect emotion in text"""

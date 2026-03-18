@@ -11,6 +11,9 @@ from src.services.ai_service import AIService
 from src.services.data.user_service import UserService
 from src.services.core.chat_service import ChatService
 from src.services.data.redis_service import redis_service
+from src.services.queue.message_orchestrator import MessageOrchestrator
+from src.services.queue.queue_store import QueueStore
+from src.services.queue.reply_delivery_service import ReplyDeliveryService
 from src.config.settings import settings
 from src.config.components.cors_config import CORSConfig
 from src.config.validator import validate_config_on_startup, ConfigValidationError
@@ -22,7 +25,8 @@ from src.api.routes import (
     chat_router,
     conversation_router,
     user_router,
-    system_router
+    system_router,
+    xiaohongshu_ingest_router,
 )
 
 # Import v1 routes (keep for compatibility)
@@ -31,10 +35,22 @@ from src.api.v1 import chat as chat_v1
 # Import middleware
 from src.api.middleware.concurrency import ConcurrencyMiddleware
 from src.api.middleware.error_handling import ErrorHandlingMiddleware
+from src.workers.message_queue_worker import MessageQueueWorker
+from src.workers.reply_sender_worker import ReplySenderWorker
 
 # Set up logging
 logging.basicConfig(level=getattr(logging, settings.log_level))
 logger = logging.getLogger(__name__)
+
+
+def _int_setting(name: str, default: int) -> int:
+    raw = os.getenv(name.upper())
+    if raw:
+        try:
+            return int(raw.strip())
+        except ValueError:
+            pass
+    return int(getattr(settings, name, default))
 
 # ============================================================================
 # CORS Configuration (统一配置管理)
@@ -84,6 +100,25 @@ app.add_middleware(ConcurrencyMiddleware, enabled=settings.rate_limit_enabled)
 ai_service = AIService()
 user_service = UserService()
 chat_service = ChatService(ai_service, user_service)
+queue_store = QueueStore()
+message_orchestrator = MessageOrchestrator(chat_service=chat_service, queue_store=queue_store)
+reply_delivery_service = ReplyDeliveryService()
+message_queue_worker = MessageQueueWorker(
+    orchestrator=message_orchestrator,
+    queue_store=queue_store,
+    batch_size=_int_setting("mq_ready_batch_size", 100),
+    poll_ms=_int_setting("mq_worker_poll_ms", 20),
+    user_concurrency=_int_setting("mq_worker_user_concurrency", 4),
+)
+reply_sender_worker = ReplySenderWorker(
+    queue_store=queue_store,
+    delivery_service=reply_delivery_service,
+    batch_size=_int_setting("mq_outbox_batch_size", 100),
+    poll_ms=_int_setting("mq_sender_poll_ms", 100),
+    max_retries=_int_setting("mq_outbox_max_retries", 8),
+    job_concurrency=_int_setting("mq_sender_job_concurrency", 8),
+)
+worker_tasks: list[asyncio.Task] = []
 
 # ============================================================================
 # Route Registration
@@ -95,6 +130,7 @@ app.include_router(chat_router)
 app.include_router(conversation_router)
 app.include_router(user_router)
 app.include_router(system_router)
+app.include_router(xiaohongshu_ingest_router)
 
 # Include v1 routes for backward compatibility
 app.include_router(chat_v1.router)
@@ -118,6 +154,12 @@ async def async_cleanup_resources():
         logger.info("AI service client closed successfully")
     except Exception as e:
         logger.error(f"Error closing AI service client: {e}")
+
+    try:
+        await reply_delivery_service.close()
+        logger.info("Reply delivery client closed successfully")
+    except Exception as e:
+        logger.error(f"Error closing reply delivery client: {e}")
 
     # Close Redis connection
     if redis_service.is_enabled():
@@ -163,12 +205,29 @@ async def startup_event():
         from src.api.routes.conversation import init_service as init_conversation
         from src.api.routes.user import init_service as init_user
         from src.api.routes.system import init_service as init_system
+        from src.api.routes.xiaohongshu_ingest import init_service as init_ingest
 
         init_health(ai_service, user_service, chat_service)
         init_chat(chat_service)
         init_conversation(chat_service)
         init_user(chat_service)
-        init_system(user_service)
+        init_system(user_service, queue_store)
+        init_ingest(message_orchestrator)
+
+        if worker_tasks:
+            # Defensive cleanup for repeated startup/shutdown cycles in tests.
+            for task in worker_tasks:
+                task.cancel()
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
+            worker_tasks.clear()
+
+        mq_enabled = str(os.getenv("MQ_ENABLED", "true")).lower() in ("1", "true", "yes", "on")
+        if mq_enabled:
+            worker_tasks.append(asyncio.create_task(message_queue_worker.run_forever(), name="message_queue_worker"))
+            worker_tasks.append(asyncio.create_task(reply_sender_worker.run_forever(), name="reply_sender_worker"))
+            logger.info("MQ workers started")
+        else:
+            logger.info("MQ workers disabled by MQ_ENABLED")
 
         logger.info(f"{settings.app_name} v{settings.app_version} started successfully")
         logger.info(f"Health check available at: http://localhost:8000/health")
@@ -186,6 +245,13 @@ async def startup_event():
 async def shutdown_event():
     """Shutdown event handler"""
     logger.info("Shutting down application...")
+    message_queue_worker.stop()
+    reply_sender_worker.stop()
+    for task in worker_tasks:
+        task.cancel()
+    if worker_tasks:
+        await asyncio.gather(*worker_tasks, return_exceptions=True)
+        worker_tasks.clear()
     await async_cleanup_resources()
     logger.info("Application shutdown complete")
 

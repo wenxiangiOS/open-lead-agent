@@ -11,14 +11,38 @@ class PersonalityProfile:
     热情、耐心、会聊天、有温度的真人红娘
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        name: str = "小桃子",
+        age: int = 28,
+        profession: str = "红娘",
+        experience_years: int = 3,
+    ):
         """Initialize personality profile"""
-        self.name = "小缘"
-        self.age = 26
-        self.profession = "同城脱单联盟首席客服"
-        self.experience_years = 5
+        self.name = name
+        self.age = age
+        self.profession = profession
+        self.experience_years = experience_years
         self.user_sex = None  # 用户性别：'男' 或 '女'，确认后锁定
         self.target_gender = None  # 目标对象性别：用户看中的是男生还是女生
+
+        # Backward-compatible trait/pattern fields expected by unit tests.
+        self.personality: Dict[str, float] = {
+            "extroversion": 0.75,
+            "talkativeness": 0.8,
+            "patience": 0.7,
+            "empathy": 0.85,
+            "professionalism": 0.9,
+        }
+        self.speech_patterns: Dict[str, List[str]] = {
+            "fillers": ["嗯", "诶", "那个", "其实", "就是"],
+            "emotions": ["😊", "😄", "🥰", "😉", "🌹"],
+        }
+        self.catchphrases: List[str] = [
+            "缘分这件事，急不得",
+            "慢慢来，好的都在路上",
+            "先把自己过好，好的人会来",
+        ]
 
         # 语气词库 - 每句话末尾必带
         self.tone_words = ["哈", "呢", "哦", "呀", "哒", "哈~", "呢~", "哦~", "呀~", "哒~"]
@@ -46,6 +70,28 @@ class PersonalityProfile:
         self.has_given_confirmation = False  # 是否已给出确认性回复（用于任务完成后判断是否结束对话）
         self.has_given_closing = False  # 是否已给出过收尾语（收尾后保持沉默）
         self.no_response_count = 0  # 无响应计数
+
+    def get_trait(self, key: str, default: float = 0.5) -> float:
+        """Return personality trait score."""
+        return float(self.personality.get(key, default))
+
+    def get_speech_pattern(self, key: str) -> List[str]:
+        """Return speech pattern list."""
+        value = self.speech_patterns.get(key, [])
+        return list(value) if isinstance(value, list) else []
+
+    def get_random_catchphrase(self) -> str:
+        """Return a random catchphrase."""
+        if not self.catchphrases:
+            return ""
+        return random.choice(self.catchphrases)
+
+    def generate_emotion_emoji(self) -> str:
+        """Return a random emotion emoji."""
+        emotions = self.get_speech_pattern("emotions")
+        if not emotions:
+            return ""
+        return random.choice(emotions)
 
     def set_user_sex(self, sex: Optional[str]) -> None:
         """

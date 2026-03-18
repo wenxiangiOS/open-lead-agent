@@ -3,6 +3,7 @@
 
 import logging
 import asyncio
+import os
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from openai import AsyncOpenAI
@@ -79,7 +80,8 @@ class AIService:
         system_prompt: str,
         temperature: float = 0.7,
         max_tokens: int = 500,
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        model_name: Optional[str] = None,
     ) -> str:
         """
         生成 AI 回复（带超时控制）
@@ -99,15 +101,18 @@ class AIService:
             asyncio.TimeoutError: 调用超时
         """
         timeout = timeout or self.DEFAULT_TIMEOUT
-        max_retries = 3  # 最大重试次数
-        retry_delay = 1  # 重试间隔（秒）
+        # 在线对话链路默认快失败：减少长尾阻塞
+        max_retries = int(os.getenv("AI_CHAT_MAX_RETRIES", "1"))
+        if max_retries < 1:
+            max_retries = 1
+        retry_delay = float(os.getenv("AI_CHAT_RETRY_DELAY_SECONDS", "0.5"))
 
         last_error = None
         for attempt in range(max_retries):
             try:
                 async with asyncio.timeout(timeout):
                     return await self._do_generate_response(
-                        message, system_prompt, temperature, max_tokens
+                        message, system_prompt, temperature, max_tokens, model_name
                     )
             except asyncio.TimeoutError as e:
                 last_error = e
@@ -125,14 +130,19 @@ class AIService:
                 else:
                     logger.error(f"AI 调用失败: {e}")
 
-        raise AIServiceException(f"AI 服务响应超时（{timeout}秒），已重试 {max_retries} 次")
+        if isinstance(last_error, asyncio.TimeoutError):
+            raise AIServiceException(f"AI 服务响应超时（{timeout}秒），已重试 {max_retries} 次")
+        if last_error is not None:
+            raise AIServiceException(f"AI 服务错误: {str(last_error)}")
+        raise AIServiceException("AI 服务调用失败")
 
     async def _do_generate_response(
         self,
         message: str,
         system_prompt: str,
         temperature: float,
-        max_tokens: int
+        max_tokens: int,
+        model_name: Optional[str] = None,
     ) -> str:
         """实际执行 AI 调用"""
         # Create messages
@@ -149,7 +159,7 @@ class AIService:
 
         # Make API call using async client
         response = await self.client.chat.completions.create(
-            model=self.model_name,
+            model=model_name or self.model_name,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,

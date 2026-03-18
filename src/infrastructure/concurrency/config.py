@@ -2,8 +2,9 @@
 并发配置 - 统一管理所有并发相关的配置
 """
 
+import os
 from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import model_validator
 
 
 class ConcurrencyConfig(BaseModel):
@@ -135,3 +136,37 @@ class ConcurrencyConfig(BaseModel):
     class Config:
         env_prefix = "CONCURRENCY"
         extra = "ignore"
+
+    @model_validator(mode="after")
+    def load_from_env(self) -> "ConcurrencyConfig":
+        """从 CONCURRENCY_* 环境变量加载配置。"""
+        mapping = {
+            "CONCURRENCY_REDIS_POOL_SIZE": "redis_pool_size",
+            "CONCURRENCY_REDIS_POOL_TIMEOUT": "redis_pool_timeout",
+            "CONCURRENCY_HTTP_POOL_SIZE": "http_pool_size",
+            "CONCURRENCY_HTTP_MAX_KEEPALIVE": "http_max_keepalive",
+            "CONCURRENCY_HTTP_TIMEOUT": "http_timeout",
+            "CONCURRENCY_GLOBAL_RATE_LIMIT": "global_rate_limit",
+            "CONCURRENCY_GLOBAL_RATE_WINDOW": "global_rate_window",
+            "CONCURRENCY_USER_RATE_LIMIT": "user_rate_limit",
+            "CONCURRENCY_USER_RATE_WINDOW": "user_rate_window",
+            "CONCURRENCY_IP_RATE_LIMIT": "ip_rate_limit",
+            "CONCURRENCY_MAX_CONCURRENT_REQUESTS": "max_concurrent_requests",
+            "CONCURRENCY_REQUEST_QUEUE_SIZE": "request_queue_size",
+            "CONCURRENCY_REQUEST_TIMEOUT": "request_timeout",
+        }
+
+        for env_name, attr_name in mapping.items():
+            raw = os.getenv(env_name)
+            if not raw:
+                continue
+            try:
+                setattr(self, attr_name, int(raw))
+            except ValueError:
+                continue
+
+        raw_enabled = os.getenv("CONCURRENCY_RATE_LIMIT_ENABLED")
+        if raw_enabled is not None:
+            self.rate_limit_enabled = raw_enabled.strip().lower() in ("1", "true", "yes", "on")
+
+        return self

@@ -24,14 +24,16 @@ class TextGenerator:
             f"{user_name}你好！我是{personality.name}，今天心情怎么样？",
         ]
 
-        # Add personality-specific greeting
-        if personality.should_add_emotion():
-            greeting = random.choice(greetings)
-            emotion = personality.generate_emotion_emoji()
-            greeting += f" {emotion}"
-            return greeting
+        greeting = random.choice(greetings)
+        catchphrases = getattr(personality, "catchphrases", None) or []
+        if catchphrases:
+            greeting = f"{random.choice(catchphrases)}，{greeting}"
 
-        return random.choice(greetings)
+        try:
+            emotion = personality.generate_emotion_emoji()
+        except Exception:
+            emotion = random.choice(["😊", "😂", "😅"])
+        return f"{greeting} {emotion}"
 
     def generate_response_with_context(
         self,
@@ -97,14 +99,9 @@ class TextGenerator:
     ) -> str:
         """Add personality-specific filler words"""
         fillers = personality.get_speech_pattern("fillers")
-
-        # Add filler at the beginning or end
-        if random.random() < 0.3:
-            text = f"{random.choice(fillers)}，{text}"
-        elif random.random() < 0.2:
-            text = f"{text}，{random.choice(fillers)}"
-
-        return text
+        if not fillers:
+            return text
+        return f"{random.choice(fillers)}，{text}"
 
     def add_emotion_emoji(
         self,
@@ -207,13 +204,20 @@ class TextGenerator:
         ]
 
         # Add personality-specific question style
-        if personality.personality["curiosity"] > 0.8:
+        traits = getattr(personality, "personality", {}) or {}
+        curiosity = traits.get("curiosity", 0.0) if isinstance(traits, dict) else 0.0
+        professionalism = traits.get("professionalism", 0.0) if isinstance(traits, dict) else 0.0
+
+        if curiosity > 0.8:
             question_templates.append(f"{context}，这是真的吗？快和我分享分享！")
 
-        if personality.personality["professionalism"] > 0.8:
+        if professionalism > 0.8:
             question_templates.append(f"{context}，这很有趣。能具体说说你的经历吗？")
 
-        return random.choice(question_templates)
+        question = random.choice(question_templates)
+        if ("？" not in question) and ("吗" not in question) and ("呢" not in question):
+            question = f"{question.rstrip('。')}，你怎么看呢？"
+        return question
 
     def generate_encouragement(
         self,

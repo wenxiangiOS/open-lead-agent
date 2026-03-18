@@ -18,7 +18,7 @@ class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=1000, description="用户问题")
     accountId: str = Field(..., min_length=1, max_length=100, description="用户ID")
     dialogId: Optional[str] = Field(None, description="对话ID")
-    sex: Optional[str] = Field(None, description="用户性别")
+    sex: Optional[str] = Field("女", description="用户性别")
     timestamp: Optional[str] = Field(None, description="时间戳")
 
     @model_validator(mode='before')
@@ -52,7 +52,7 @@ class ChatRequest(BaseModel):
     def validate_sex(cls, v):
         """Validate sex"""
         if v is None:
-            return v
+            return "女"
         valid_values = ["男", "女", "other", "unknown"]
         if v not in valid_values:
             raise ValueError(f"Sex must be one of: {valid_values}")

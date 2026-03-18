@@ -33,9 +33,8 @@ class JWTAuth(HTTPBearer):
     def __init__(
         self,
         auto_error: bool = True,
-        realm: str = "protected"
     ):
-        super().__init__(auto_error=auto_error, realm=realm)
+        super().__init__(auto_error=auto_error)
 
     async def __call__(self, request: Request) -> Optional[HTTPAuthorizationCredentials]:
         """
@@ -83,7 +82,6 @@ class JWTMiddleware:
             "/redoc",
             "/openapi.json",
             "/health",
-            "/api",
             "/metrics"
         ])
 
@@ -139,9 +137,10 @@ class JWTMiddleware:
         if path in self.public_paths:
             return True
 
-        # 前缀匹配
-        for public_path in self.public_paths:
-            if path.startswith(public_path):
+        # 前缀匹配（仅用于文档与健康检查路径，避免把 /api 全部放开）
+        prefix_paths = ["/docs", "/redoc", "/health", "/metrics"]
+        for public_path in prefix_paths:
+            if path == public_path or path.startswith(public_path + "/"):
                 return True
 
         return False
@@ -552,7 +551,8 @@ class InputSanitizationMiddleware(BaseHTTPMiddleware):
 
 jwt_auth = JWTAuth()
 jwt_middleware = JWTMiddleware()
-security_headers_middleware = SecurityHeadersMiddleware()
-cors_middleware = CORSMiddleware()
-input_sanitization_middleware = InputSanitizationMiddleware()
+# BaseHTTPMiddleware 子类需要 app 参数，导入阶段不实例化
+security_headers_middleware = SecurityHeadersMiddleware
+cors_middleware = CORSMiddleware
+input_sanitization_middleware = InputSanitizationMiddleware
 key_manager = KeyManager()

@@ -33,10 +33,8 @@ class PhoneValidator:
         if not phone:
             return False, "方便留个能联系到的手机号或微信号吗呀～"
 
-        # 统一提取数字，兼容空格/横杠/+86/86 前缀
+        # 统一提取数字，兼容空格/横杠
         clean_phone = re.sub(r'\D', '', phone)
-        if clean_phone.startswith('86') and len(clean_phone) == 13 and clean_phone[2] == '1':
-            clean_phone = clean_phone[2:]
 
         # 检查中国大陆手机号（11位）或香港手机号（8位）
         if re.match(cls.PATTERN_MAINLAND, clean_phone):

@@ -5,7 +5,7 @@
 """
 
 import os
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ServerConfig(BaseModel):
@@ -39,6 +39,43 @@ class ServerConfig(BaseModel):
         default=["Content-Type", "Authorization", "X-User-ID"],
         description="允许的 HTTP 头"
     )
+
+    @model_validator(mode='after')
+    def load_from_env(self) -> "ServerConfig":
+        """从环境变量读取服务配置。"""
+        env_rate_enabled = os.getenv("RATE_LIMIT_ENABLED")
+        if env_rate_enabled is not None:
+            self.rate_limit_enabled = env_rate_enabled.strip().lower() in ("1", "true", "yes", "on")
+
+        env_rate_requests = os.getenv("RATE_LIMIT_REQUESTS")
+        if env_rate_requests:
+            try:
+                self.rate_limit_requests = int(env_rate_requests)
+            except ValueError:
+                pass
+
+        env_rate_window = os.getenv("RATE_LIMIT_WINDOW")
+        if env_rate_window:
+            try:
+                self.rate_limit_window = int(env_rate_window)
+            except ValueError:
+                pass
+
+        env_keepalive = os.getenv("KEEPALIVE")
+        if env_keepalive:
+            try:
+                self.keepalive = int(env_keepalive)
+            except ValueError:
+                pass
+
+        env_workers = os.getenv("WORKERS")
+        if env_workers:
+            try:
+                self.workers = int(env_workers)
+            except ValueError:
+                pass
+
+        return self
 
     @property
     def bind_address(self) -> str:

@@ -173,13 +173,24 @@ class ConcurrencyManager:
         return health_status
 
 
-# 全局并发管理器实例
+# 全局并发管理器实例（按事件循环隔离，避免跨 loop 复用 asyncio 原语）
 _concurrency_manager: Optional[ConcurrencyManager] = None
+_concurrency_manager_by_loop: Dict[int, ConcurrencyManager] = {}
 
 
 def get_concurrency_manager() -> ConcurrencyManager:
     """获取全局并发管理器实例"""
     global _concurrency_manager
-    if _concurrency_manager is None:
-        _concurrency_manager = ConcurrencyManager()
-    return _concurrency_manager
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        if _concurrency_manager is None:
+            _concurrency_manager = ConcurrencyManager()
+        return _concurrency_manager
+
+    loop_id = id(loop)
+    manager = _concurrency_manager_by_loop.get(loop_id)
+    if manager is None:
+        manager = ConcurrencyManager()
+        _concurrency_manager_by_loop[loop_id] = manager
+    return manager

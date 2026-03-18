@@ -17,24 +17,24 @@ class GreetingService:
 
     GREETING_RESPONSES: Dict[str, List[str]] = {
         "formal": [
-            "你好呀～有什么可以帮您的吗？",
-            "你好呀～是帮自己找对象吗？",
+            "你好呀～在的，我可以先快速了解你两三点，也可以先听你说想找什么类型，你更想先聊哪边？",
+            "你好呀～我在呢。你是想先说说自己的情况，还是我先问你一两个关键点？",
         ],
         "casual": [
-            "哈喽～你也在深圳吗？",
-            "哈喽～有什么可以帮您的吗？",
+            "哈喽～我在呢。你想先随便聊聊你的情况，还是我先快速问你两三点呀？",
+            "嗨～收到。你可以先讲你最在意的点，我再帮你顺着往下聊～",
         ],
         "time_morning": [
-            "早上好呀～有什么可以帮您的吗？",
-            "早安～是帮自己找对象吗？",
+            "早上好呀～我在呢。你想先说说你想找什么类型，还是我先快速了解你两三点？",
+            "早安～今天我们可以轻松聊，你想先讲你的期待，还是我先问一个小问题？",
         ],
         "time_afternoon": [
-            "下午好呀～有什么可以帮您的吗？",
-            "下午好～是帮自己找对象吗？",
+            "下午好呀～我在。你想先说说自己的情况，还是我先问你一两个关键点呀？",
+            "下午好～可以先随便聊聊你的想法，我再帮你整理成合适的方向～",
         ],
         "time_evening": [
-            "晚上好呀～有什么可以帮您的吗？",
-            "晚上好～是帮自己找对象吗？",
+            "晚上好呀～我在呢。你想先聊你的择偶想法，还是我先快速了解你两三点？",
+            "晚上好～别有压力，你先说你最在意的一点，我来帮你往下推进～",
         ],
     }
 
@@ -64,6 +64,12 @@ class GreetingService:
         "time_afternoon": ["下午好"],
         "time_evening": ["晚上好"],
     }
+
+    FOLLOWUP_GREETING_RESPONSES: List[str] = [
+        "在的呀～你是想先说说你的情况，还是我先帮你快速梳理两三个关键点？",
+        "我在呢～你可以先讲你最在意的点，我再顺着帮你往下聊。",
+        "在哈～如果你想先自由聊也行，要我先问你一个关键问题也可以。",
+    ]
 
     def detect_greeting_type(self, text: str) -> Optional[str]:
         """检测纯问候类型。"""
@@ -114,3 +120,9 @@ class GreetingService:
             return random.choice(self.GREETING_RESPONSES[greeting_type])
 
         return random.choice(self.GREETING_RESPONSES["formal"])
+
+    def get_followup_greeting_response(self, text: str) -> str:
+        """获取非首轮寒暄回复。"""
+        if self.detect_greeting_type(text):
+            return random.choice(self.FOLLOWUP_GREETING_RESPONSES)
+        return random.choice(self.GREETING_RESPONSES["casual"])

@@ -32,3 +32,24 @@ async def test_track_ai_asked_fields_treats_job_question_as_occupation():
 
     assert profile.get_ask_count("occupation") == 1
     assert profile.get_ask_count("location") == 0
+
+
+@pytest.mark.anyio
+async def test_track_ai_asked_fields_respects_cooldown_and_skip_guard(monkeypatch):
+    user_service = AsyncMock()
+    profile = UserProfile(account_id="user_3")
+    profile.recent_asked_fields = ["age"]
+    profile.field_ask_count = {"age": 1}
+    user_service.get_user_profile = AsyncMock(return_value=profile)
+    user_service.save_user_profile = AsyncMock(return_value=True)
+    service = AskTrackingService(user_service)
+
+    monkeypatch.setenv("MQ_FIELD_ASK_COOLDOWN_TURNS", "2")
+    monkeypatch.setenv("MQ_SKIP_GUARD_ENABLED", "true")
+
+    await service.track_ai_asked_fields("user_3", "你今年多大呀？")
+
+    # 同字段在冷却窗口，不应继续累加
+    assert profile.get_ask_count("age") == 1
+    # 开启防抖，不应自动标记跳过
+    assert profile.skipped_fields.get("age", False) is False

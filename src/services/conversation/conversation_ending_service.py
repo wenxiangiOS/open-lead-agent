@@ -120,7 +120,12 @@ class ConversationEndingService:
 
         return None
 
-    def check_manual_scenario(self, scenario_name: str, profile: UserProfile) -> bool:
+    def check_manual_scenario(
+        self,
+        scenario_name: str,
+        profile: UserProfile,
+        collection_result: Optional[Dict[str, Any]] = None
+    ) -> bool:
         """
         检查手动触发场景的条件是否满足
 
@@ -141,7 +146,10 @@ class ConversationEndingService:
 
         # 特殊场景的条件检查
         if scenario_name == 'normal_complete':
-            # 信息收集完成：满足可服务资料 + 已有任一有效联系方式
+            # 信息收集完成：
+            # 1. 满足可服务资料
+            # 2. 当前轮确实收集到了信息（避免在“拒绝联系方式”这种空提取轮误收尾）
+            # 3. 联系方式流程没有待推进的下一步
             has_contact = bool(
                 profile.collection_progress.get("contact", False)
                 or (profile.phone and profile.phone_collected)
@@ -154,11 +162,20 @@ class ConversationEndingService:
                 bool(getattr(profile, "marital_status", None)),
                 bool(getattr(profile, "education", None) or getattr(profile, "occupation", None)),
             ])
-            return has_contact and has_core
+            collected_this_turn = True if collection_result is None else bool(collection_result.get("collected"))
+            has_pending_contact_step = False if collection_result is None else (
+                (profile.phone and profile.phone_collected and not profile.wechat_collected and not profile.rejected_wechat)
+                or (profile.wechat and profile.wechat_collected and not profile.phone_collected and not profile.rejected_phone)
+            )
+            return has_contact and has_core and collected_this_turn and not has_pending_contact_step
 
         elif scenario_name == 'both_rejected':
-            # 双方都被拒绝
-            return profile.rejected_phone and profile.rejected_wechat
+            # 双方都被拒绝，且没有任何真实联系方式留存
+            has_real_contact = bool(
+                (profile.phone and profile.phone_collected)
+                or (profile.wechat and profile.wechat_collected)
+            )
+            return profile.rejected_phone and profile.rejected_wechat and not has_real_contact
 
         return False
 
@@ -271,7 +288,7 @@ class ConversationEndingService:
         # 2. 检测手动触发场景
         if not scenario:
             for manual_scenario in ['normal_complete', 'both_rejected']:
-                if self.check_manual_scenario(manual_scenario, profile):
+                if self.check_manual_scenario(manual_scenario, profile, collection_result):
                     scenario = manual_scenario
                     break
 

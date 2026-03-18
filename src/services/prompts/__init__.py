@@ -3,6 +3,7 @@
 from .prompts import (
     SYSTEM_WELCOME_MESSAGE,
     get_main_dialogue,
+    get_question_priority_dialogue,
     get_extraction,
     build_gender_instruction,
     build_skipped_fields_instruction,
@@ -12,6 +13,7 @@ from .prompts import (
 __all__ = [
     "SYSTEM_WELCOME_MESSAGE",
     "get_main_dialogue",
+    "get_question_priority_dialogue",
     "get_extraction",
     "build_gender_instruction",
     "build_skipped_fields_instruction",

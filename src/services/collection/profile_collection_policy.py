@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Dict, List, Optional
 
 from src.models.user_profile import UserProfile
@@ -77,6 +78,13 @@ class ProfileCollectionPolicy:
     CONSERVATIVE_KEYWORDS = ["不方便", "这个也要", "不太想说", "先不说", "不想聊"]
     DEFLECTIVE_KEYWORDS = ["还行", "一般", "再说吧", "嗯", "哦", "哈哈", "呵呵"]
     TOPIC_HEAVY_KEYWORDS = ["希望", "喜欢", "想找", "我比较看重", "性格", "感觉", "缘分"]
+
+    @staticmethod
+    def _env_int(name: str, default: int) -> int:
+        try:
+            return int(os.getenv(name, str(default)))
+        except (TypeError, ValueError):
+            return default
 
     def decide(
         self,
@@ -227,6 +235,10 @@ class ProfileCollectionPolicy:
         if self.is_collected(profile, field):
             return False
         if profile.skipped_fields.get(field, False):
+            return False
+
+        cooldown_turns = self._env_int("MQ_FIELD_ASK_COOLDOWN_TURNS", 2)
+        if cooldown_turns > 0 and field in set(profile.get_cooldown_fields(cooldown_turns)):
             return False
 
         ask_limit = self.ASK_LIMITS.get(field, 0)

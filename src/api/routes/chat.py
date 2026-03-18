@@ -1,9 +1,12 @@
 """Chat routes"""
 
 import logging
+import os
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException
+from pydantic import ValidationError
 
+from src.config.settings import settings
 from src.models.requests import ChatResponse, ErrorResponse, ChatRequest
 from src.services.core.chat_service import ChatService
 
@@ -13,6 +16,13 @@ router = APIRouter(tags=["对话"])
 
 # Service will be injected during app initialization
 chat_service: ChatService = None
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 def init_service(service: ChatService):
@@ -67,7 +77,10 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
         logger.info(f"Processing chat request from user: {chat_request.accountId}")
 
         # 检查是否需要返回调试信息（仅测试页面使用）
-        debug_mode = request.get("debug", False)
+        debug_requested = bool(request.get("debug", False))
+        debug_mode = debug_requested and bool(getattr(settings, "debug", False))
+        if debug_requested and not debug_mode:
+            logger.warning("[DEBUG] debug payload ignored in non-debug mode")
         logger.info(f"[DEBUG] debug_mode={debug_mode}, request keys={list(request.keys())}")
 
         # 如果是调试模式，先获取追踪前的追问次数（用于判断"已跳过"）
@@ -104,9 +117,9 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
         # Convert to response model
         return ChatResponse(**result)
 
-    except ValueError as e:
+    except (ValueError, ValidationError) as e:
         logger.warning(f"Validation error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"Chat processing error: {e}")
         raise HTTPException(status_code=500, detail="处理聊天请求时出错")
@@ -195,6 +208,7 @@ def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_b
 
     # 使用追踪前的追问次数（如果没有提供，则使用 profile 中的）
     field_ask_count = field_ask_count_before if field_ask_count_before is not None else profile.get("field_ask_count", {})
+    skip_guard_enabled = _env_bool("MQ_SKIP_GUARD_ENABLED", True)
 
     # 使用换行格式显示
     lines = ["\n[已收集信息]"]
@@ -213,7 +227,7 @@ def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_b
                 if skipped.get(field, False):
                     lines.append(f"  {name}: 跳过")
                 # 检查是否问了多次未回答（智能追问跳过）- 使用追踪前的追问次数
-                elif field_ask_count.get(field, 0) >= 2:
+                elif (not skip_guard_enabled) and field_ask_count.get(field, 0) >= 2:
                     count = field_ask_count.get(field, 0)
                     lines.append(f"  {name}: 已跳过({count}次未答)")
                 else:
@@ -242,6 +256,7 @@ def _format_debug_info(profile: Dict[str, Any]) -> str:
 
     # 获取追问次数（用于显示"已跳过(N次未答)"）
     field_ask_count = profile.get("field_ask_count", {})
+    skip_guard_enabled = _env_bool("MQ_SKIP_GUARD_ENABLED", True)
 
     # 使用换行格式显示
     lines = ["\n[已收集信息]"]
@@ -260,7 +275,7 @@ def _format_debug_info(profile: Dict[str, Any]) -> str:
                 if skipped.get(field, False):
                     lines.append(f"  {name}: 跳过")
                 # 检查是否问了多次未回答（智能追问跳过）
-                elif field_ask_count.get(field, 0) >= 2:
+                elif (not skip_guard_enabled) and field_ask_count.get(field, 0) >= 2:
                     count = field_ask_count.get(field, 0)
                     lines.append(f"  {name}: 已跳过({count}次未答)")
                 else:

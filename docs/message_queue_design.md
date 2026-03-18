@@ -1,9 +1,255 @@
 # 多次发送消息处理方案设计文档
 
 > 创建时间：2026-03-06
-> 最后更新：2026-03-17
+> 最后更新：2026-03-18
 > 状态：建议按本方案实施
 > 文档类型：正式技术方案
+
+## 执行入口（只记这一个文档）
+
+后续无论是你本人还是其他模型协作，**只需要先打开本文件**，然后按下面 3 个入口执行：
+
+1. 实现标准：当前文档的 `零、2026-03-18 最终实施基线`
+2. 当前进度：`docs/message_queue_status.yaml`
+3. 验收证据：`reports/mq/p0_acceptance_*.md`
+
+协作口令（可直接复制给其他模型）：
+
+`先按 docs/message_queue_design.md 的“执行入口”和“零”章节实施，再更新 docs/message_queue_status.yaml，并提交 reports/mq/p0_acceptance_*.md。`
+
+## 实施状态看板（跨模型协作必读）
+
+> 权威状态文件：`docs/message_queue_status.yaml`
+> 验收证据目录：`reports/mq/`
+
+当前状态（人工摘要）：
+
+- P0：`IN_PROGRESS`（代码与测试已就绪，仅剩真实外部发送端到端验收）
+- P1：`DONE`（六项优化已完成并提供验收报告）
+- P2：`DONE`（六项优化已完成并提供验收报告）
+- 最近更新时间：`2026-03-18 12:37:18 +0800`
+- 基线 commit：`2bef0da`
+
+协作规则：
+
+1. 任何模型完成 P0/P1/P2 后，必须同步更新 `docs/message_queue_status.yaml`。
+2. 状态从 `NOT_DONE` 改为 `DONE` 前，必须先补齐 `reports/mq/*acceptance*.md` 验收证据。
+3. 若代码与状态文件冲突，以“测试与验收报告”作为最终判定依据。
+
+## 协作实施总览（给其他模型的单页交接）
+
+> 目标：让任何模型在 2 分钟内知道“哪些已完成、哪些未完成、下一步做什么”。
+
+### A. 已完成（截至 2026-03-18）
+
+1. Queue 核心模块与 Worker 已实现并接入应用启动：
+   - `src/services/queue/*`
+   - `src/workers/message_queue_worker.py`
+   - `src/workers/reply_sender_worker.py`
+2. 入站接口已实现：`POST /api/xiaohongshu/messages/ingest`
+3. 状态/指标面板已实现：`/api/doubao/mq/dashboard`
+4. P1、P2 状态为 `DONE`，并有验收报告：
+   - `reports/mq/p1_acceptance_20260318.md`
+   - `reports/mq/p2_acceptance_20260318.md`
+5. P0 本地链路测试已通过（含本地 HTTP E2E）：
+   - `reports/mq/p0_acceptance_20260318.md`
+6. 测试页已切换到真链路模式：
+   - 入站：`POST /api/xiaohongshu/messages/ingest`
+   - 回执：`GET /api/xiaohongshu/messages/replies`
+
+### B. 未完成（必须补齐）
+
+1. `P0` 仍是 `IN_PROGRESS`，缺口只有线上联调类事项：
+2. 真实外部发送端点 `XHS_REPLY_API` 生产端到端验收未完成。
+3. 外部调用方（如 3chat.ai）是否已全量切换到 `ingest` 未在仓库内闭环确认。
+
+### C. 下一步执行顺序（其他模型必须按序）
+
+1. 先读 `docs/message_queue_status.yaml`，确认 `open_items` 与当前代码一致。
+2. 完成 `XHS_REPLY_API` 真实联调（使用 `scripts/run_mq_p0_production_smoke.py` 产出报告）。
+3. 执行回归并更新：
+   - `reports/mq/p0_acceptance_*.md`
+   - `docs/message_queue_status.yaml`（仅全部通过后将 `p0.state` 改为 `DONE`）
+
+## 零、2026-03-18 最终实施基线（给其他模型的强约束版本）
+
+本节是**实现优先级最高**的执行说明。若与本文其他段落存在细微冲突，以本节为准。
+
+### 0.1 目标边界（必须同时满足）
+
+1. 用户在 AI 处理中继续发送的消息不能丢失。
+2. 用户出现“算了/不用了/先这样”等取消表达后，旧轮次回复不能再下发。
+3. 回调接口必须快速 ack，不同步等待 AI。
+4. 多实例、服务重启后，队列状态可恢复。
+5. 保留 `/api/doubao/chat` 作为调试与回退链路，不改其语义。
+
+### 0.2 本次实现范围（P0 必做）
+
+必须新增并接入以下模块：
+
+- `src/services/queue/message_models.py`
+- `src/services/queue/intent_classifier.py`
+- `src/services/queue/queue_store.py`
+- `src/services/queue/message_orchestrator.py`
+- `src/services/queue/reply_delivery_service.py`
+- `src/workers/message_queue_worker.py`
+- `src/workers/reply_sender_worker.py`
+- `src/api/routes/xiaohongshu_ingest.py`
+
+必须新增入口：
+
+- `POST /api/xiaohongshu/messages/ingest`
+
+### 0.3 Redis Key 与字段（不可擅改）
+
+| Key | 类型 | 说明 |
+|------|------|------|
+| `mq:session:{account_id}` | String/JSON | 会话状态 |
+| `mq:seq:{account_id}` | String | 单用户自增序号 |
+| `mq:msg:{account_id}:{seq}` | String/JSON | 入站消息 |
+| `mq:ready_users` | ZSET | 待执行用户 |
+| `mq:outbox:{job_id}` | String/JSON | 待投递任务 |
+| `mq:outbox:ready` | ZSET | 待投递 job 索引 |
+| `mq:dedupe:{platform_msg_id}` | String | 平台去重键 |
+| `lock:mq:user:{account_id}` | String | 用户级分布式锁 |
+
+`mq:session:{account_id}` 字段最小集合：
+
+```json
+{
+  "state": "IDLE",
+  "generation": 0,
+  "version": 1,
+  "debounce_until_ms": 0,
+  "first_enqueue_at_ms": 0,
+  "last_consumed_seq": 0,
+  "max_enqueued_seq": 0,
+  "active_turn_id": "",
+  "dirty": false,
+  "fail_streak": 0,
+  "updated_at_ms": 0
+}
+```
+
+### 0.4 状态机（不可偏离）
+
+只允许三个落库状态：
+
+- `IDLE`
+- `DEBOUNCING`
+- `RUNNING`
+
+入站迁移：
+
+- `IDLE` + 普通消息 -> `DEBOUNCING`
+- `DEBOUNCING` + 普通消息 -> `DEBOUNCING`（刷新 debounce）
+- `RUNNING` + 普通消息 -> `RUNNING`（仅 `dirty=true`）
+
+worker 迁移：
+
+- `DEBOUNCING` 到点 -> `RUNNING`
+- `RUNNING` 完成且无新消息 -> `IDLE`
+- `RUNNING` 完成且有新消息 -> `DEBOUNCING`（`now + MQ_RUNNING_RECHECK_MS`）
+
+### 0.5 关键参数默认值（首版强制）
+
+```python
+MQ_ENABLED = True
+MQ_DEBOUNCE_MS = 1000
+MQ_DEBOUNCE_APPEND_MS = 800
+MQ_DEBOUNCE_MAX_MS = 2000
+MQ_RUNNING_RECHECK_MS = 300
+MQ_SESSION_TTL_SECONDS = 604800
+MQ_DEDUPE_TTL_SECONDS = 86400
+MQ_MAX_PENDING_MESSAGES = 20
+MQ_MAX_COMBINED_CHARS = 4000
+MQ_READY_BATCH_SIZE = 100
+MQ_OUTBOX_BATCH_SIZE = 100
+MQ_OUTBOX_MAX_RETRIES = 8
+MQ_RUNNING_STALE_AFTER_MS = 120000
+MQ_RECOVERY_BATCH_SIZE = 200
+MQ_WORKER_POLL_MS = 100
+MQ_SENDER_POLL_MS = 500
+MQ_LOCK_TTL_SECONDS = 180
+```
+
+### 0.6 12 项关键优化（纳入正式实现）
+
+#### P0（上线前必须完成）
+
+1. 入队背压：`pending > MQ_MAX_PENDING_MESSAGES` 返回 `queue_full`，拒绝入队并告警。
+2. 发送幂等：sender 调平台发送时必须携带幂等键（建议 `client_msg_id=job_id`）。
+3. 恢复扫描节流：每轮最多恢复 `MQ_RECOVERY_BATCH_SIZE` 个 RUNNING 会话。
+4. 单用户失败熔断：`fail_streak` 超阈值后延迟重试，避免热故障循环。
+5. 合并截断保留末条：消息超长时优先保留最后一条用户补充。
+6. 时间戳容错：`timestamp` 解析失败不拒绝处理，仅记录指标。
+
+#### P1（首版建议同步完成）
+
+7. session `version` 字段：用于后续结构迁移。
+8. 闭环成功率指标：`ingest -> delivery` 成功率必须可观测。
+9. 空回复分类指标：区分业务静默与异常空串。
+10. 取消词误判保护：避免“不是算了”这类否定句误触发 cancel。
+11. ready 调度 jitter：重调度加小抖动，降低同秒尖峰。
+12. 运维 runbook：Redis 故障、发送持续失败、队列积压三类应急手册。
+
+#### P2（后置进阶优化，不阻塞首版上线）
+
+- 多优先级队列（cancel/high-value 优先）
+- 自适应 debounce
+- 热点用户隔离 worker 池
+- 历史压缩降 token
+- 发送通道双活
+- 运营可视化面板
+
+### 0.7 原子入队（必须保证）
+
+`enqueue_message()` 必须保证以下动作单次事务化完成（推荐 Lua）：
+
+1. dedupe 检查
+2. dedupe 写入
+3. seq 自增
+4. msg 写入
+5. session 更新
+6. ready_users 调度
+7. 返回 `{accepted, state, seq}`
+
+若不能保证原子性，本方案视为未完成。
+
+### 0.8 worker 执行顺序（必须一致）
+
+`run_user_turn(account_id)` 固定顺序：
+
+1. 获取用户锁
+2. 校验 session 可执行性
+3. `start_turn`
+4. 拉取 `start_seq~end_seq` 消息
+5. 按序合并（保留换行，不改写）
+6. 构造 `ChatRequest`
+7. 调用 `ChatService.process_chat_request()`
+8. 二次读 session 判 stale
+9. stale -> `mark_turn_stale`
+10. 非 stale -> `write_outbox`
+11. `finish_turn_success` / `mark_turn_failed`
+12. 释放用户锁
+
+### 0.9 上线验收标准（全部通过才可上线）
+
+1. AI 处理中连续发 5 条消息，最终均被消费（不丢不乱序）。
+2. AI 处理中发送取消语义，旧 turn 回复不下发。
+3. 重复 `platformMsgId` 回调只处理一次。
+4. worker 重启后未消费消息可继续执行。
+5. outbox 发送失败可重试并最终成功或进入告警。
+6. 队列积压触发背压，不出现无界增长。
+
+### 0.10 无灰度上线要求（当前项目适配）
+
+由于当前无灰度系统，必须满足：
+
+1. 保留 `/api/doubao/chat` 回退路径。
+2. 新回调入口仅走 `/api/xiaohongshu/messages/ingest`。
+3. 通过 `MQ_ENABLED` 提供一键熔断能力。
+4. 上线当日重点监控：`pending_depth`、`sender_success_rate`、`stale_drop_count`。
 
 ## 一、目标
 
@@ -14,6 +260,176 @@
 3. 用户补充信息时，后续轮次能看到新消息。
 4. 用户改变主意时，旧回复不会再错误下发。
 5. 多实例部署下，状态一致、可恢复、可观测。
+
+## 一点一、2026-03-18 时延优化最终方案（不改业务逻辑版）
+
+> 适用前提：不修改 `contact_collection.md` 规则，不改变现有对话状态机语义，不降低拟人化要求。
+> 执行优先级：高。若与历史参数建议冲突，以本节为准。
+
+### 1. 目标指标
+
+1. `P50 < 6s`
+2. `P95 < 12s`
+3. `P99 < 20s`
+4. 108 场景通过率不低于当前基线
+5. `contact_* / faq_priority_* / humanlike_*` 不退化
+
+### 2. 分层实施策略
+
+1. P0（工程层）：只改队列/轮询/超时/重试，不改对话规则
+2. P1（行为等价）：提示词瘦身与 FAQ 短路，不改规则语义
+3. P2（智能路由）：上下文长度 + 意图复杂度 + 风险等级路由，并带质量守门
+
+### 3. P0 必做项（立即执行）
+
+| 环节 | 动作 | 预计降时（常见） | 预计降时（长尾） |
+|---|---|---:|---:|
+| 队列防抖 | `debounce=300ms, append=200ms, max=1200ms` | 1.5~3.5s | 2~5s |
+| MQ worker 轮询 | `poll_ms: 100 -> 20` | 0.2~0.8s | 0.5~1.5s |
+| sender 轮询 | `poll_ms: 500 -> 100` | 0.1~0.5s | 0.3~1.0s |
+| 前端回执轮询 | `1000ms -> 250ms` | 0.3~0.8s | 0.3~1.0s |
+| AI 快失败 | 在线链路 `retry: 3 -> 1`，`timeout: 120 -> 45` | 0~1s | 5~20s |
+| Redis 异常熔断 | 不可用时短期熔断，避免每请求重连抖动 | 0.2~1.0s | 1~3s |
+
+> P0 合计预估：
+> 常见轮次降低 `3~8s`，长尾轮次降低 `8~25s`。
+
+### 4. P1 建议项（P0稳定后执行）
+
+| 环节 | 动作 | 预计降时（常见） | 预计降时（长尾） |
+|---|---|---:|---:|
+| 提示词等价瘦身 | 去重、按场景拼接、短句化（不改规则） | 2~5s | 4~10s |
+| FAQ短路 | 标准FAQ模板直出，绕过重推理 | 3~8s（FAQ轮） | 3~8s（FAQ轮） |
+| completion 控长 | 减少冗余句，不改语气风格 | 0.5~2s | 1~4s |
+
+> P1 叠加后预估：
+> 常见轮次再降 `3~7s`，长尾再降 `5~12s`。
+
+### 5. P2 进阶项（可后置）
+
+1. 智能路由：仅低风险轮次走快模型，高风险轮次强制重模型。
+2. 风险等级必须包含：联系方式拒绝、收尾判定、隐私顾虑、多意图冲突。
+3. 质量守门：低质量自动升级重模型重答，不直接下发。
+
+预估：常见 `1.5~4s`，长尾 `2~8s`。
+
+### 6. 质量与拟人化守门（强约束）
+
+1. 规则冻结：不得更改 `contact_collection.md` 语义与流程边界。
+2. 回归门槛：108 场景通过率不得下降。
+3. 子集门槛：`contact_* / faq_priority_* / humanlike_*` 全量不退化。
+4. 人工抽检：至少 30 段对话，拟人化评分不低于基线。
+
+### 7. 执行清单（跨模型协作）
+
+1. 先做 P0 并提交参数变更
+2. 跑 108 场景并记录前后时延对比
+3. 若门槛通过，再做 P1
+4. 更新：
+   - `docs/message_queue_status.yaml`
+   - `reports/mq/p*_acceptance_*.md`
+5. 任一关键门槛不达标，立即回滚到上一步
+
+### 8. 当前执行状态（本轮）
+
+1. 文档：`DONE`
+2. P0 参数层：`IN_PROGRESS`
+3. P1 提示词层：`PENDING`
+4. P2 路由层：`PENDING`
+
+## 零点一、2026-03-18 优化后最终执行版（主执行章节）
+
+> 本章节是当前“最终执行版”。其他历史章节保留作背景说明；若出现冲突，以本章节为准。
+
+### 0.1 执行边界（不允许偏离）
+
+1. 不修改 `contact_collection.md` 的业务规则定义、字段语义和收集约束。
+2. 仅在消息编排层、调度层、发送层和表达层做优化。
+3. 小红书正式链路必须走异步队列，不再以 `/api/doubao/chat` 作为主入口。
+
+### 0.2 最终目标（上线判定）
+
+1. AI 处理中用户连续发消息，零丢失、零乱序、零重复处理。
+2. 连发场景下优先“单轮整合回复”，避免机械一问一答。
+3. 端到端链路可观测、可告警、可恢复、可回滚。
+
+### 0.3 主链路（必须采用）
+
+1. 入站：`POST /api/xiaohongshu/messages/ingest`（快速 `accepted`，不阻塞 AI）。
+2. 存储：Redis 作为状态真相源，入队原子化（Lua）。
+3. 处理：`message_queue_worker` 按 `session_id` 串行执行。
+4. 投递：`reply_sender_worker` 从 outbox 发送，失败重试，超限入死信。
+5. 调试：`/api/doubao/chat` 仅保留为应急回退和本地调试入口。
+
+### 0.4 连发拟人化策略（在不改业务规则前提下）
+
+1. 短窗聚合：默认 `mq_debounce_ms=1500`，`mq_debounce_max_ms=4000`。
+2. 语义触发：若意图已完整，可提前触发生成，不强等满窗口。
+3. 单轮回复结构：先确认已收集信息，再问一个主问题。
+4. 提问冷却：同字段 2 轮内禁止重复追问，除非用户主动回填该字段。
+5. 跳过稳定：字段进入 `skip` 后在冷却窗口内不得再次主动追问。
+6. 小红书连发增强：推荐将 `mq_debounce_max_ms` 提升到 `5000~6000ms`，优先把同一波短时连发合并到一个 turn。
+7. 过早跳过防抖：未出现明确拒答语义时，不得因短时连续追问直接标记字段 `skip`。
+
+### 0.5 配置基线（生产建议）
+
+```ini
+MQ_ENABLED=true
+MQ_DEBOUNCE_MS=1500
+MQ_DEBOUNCE_MAX_MS=5000
+MQ_BATCH_MAX_MESSAGES=8
+MQ_LOCK_TTL_MS=45000
+MQ_OUTBOX_MAX_RETRIES=8
+MQ_FAIL_STREAK_THRESHOLD=3
+MQ_PRIORITY_BOOST_MS=1200
+MQ_HOT_SESSION_THRESHOLD=20
+MQ_FIELD_ASK_COOLDOWN_TURNS=2
+MQ_SKIP_GUARD_ENABLED=true
+```
+
+### 0.6 接入方契约（3chat.ai / 小红书调用方）
+
+1. 入站必须提供：`session_id`、`platform_msg_id`、`timestamp`、`content`。
+2. `platform_msg_id` 必须唯一（至少会话内唯一），用于幂等去重。
+3. 调用方收到 `accepted` 即返回，不等待 AI 最终回复。
+
+### 0.7 测试页面要求（避免“测到假链路”）
+
+1. `test_page/static/mobile_final.html` 主调用改为 `ingest`（不得再直调 `/api/doubao/chat` 作为主测）。
+2. 页面通过轮询或 SSE 获取 AI 回执并展示。
+3. 必测脚本：1 秒内连发 4 条，期望单轮整合回复且不重复追问同字段。
+
+### 0.8 观测与告警（必须落地）
+
+1. 核心指标：`ingest_qps`、`dedupe_hit`、`pending_depth`、`turn_latency`、`sender_success_rate`、`stale_drop_count`、`dead_letter_count`。
+2. 面板入口：`/api/doubao/mq/dashboard`。
+3. 告警阈值建议：
+   - `pending_depth > 200` 持续 5 分钟；
+   - `sender_success_rate < 95%`；
+   - `turn_latency_p95 > 8s` 持续 10 分钟。
+
+### 0.9 强验收（无灰度场景）
+
+1. 连发可靠性：1000 组连发用例，消息丢失率 = 0。
+2. 幂等正确性：重复 `platform_msg_id` 只处理一次。
+3. 顺序正确性：同 `session_id` 回复顺序稳定。
+4. stale 生效：取消/结束后旧 generation 回复不下发。
+5. 恢复能力：worker 重启后 pending 消息可继续消费。
+6. 性能目标：端到端 `P95 < 8s`，`P99 < 15s`。
+7. 对话质量：同字段（如年龄）不得连续两轮主动追问。
+8. 跳过准确性：用户未明确拒答时，不得出现 `年龄: 跳过` 等过早 skip。
+9. 连发整合：1 秒内连发 4 条，期望 1 条整合回复（允许最多 2 条）。
+
+### 0.10 发布与回滚（一次到位）
+
+1. 发布顺序：
+   - 切小红书入口到 `ingest`；
+   - 测试页切到 `ingest + 回执`；
+   - 执行连发专项回归；
+   - 再执行全量回归。
+2. 回滚策略：
+   - 通过 `MQ_ENABLED` 一键熔断新链路；
+   - `/api/doubao/chat` 作为应急兜底路径保留。
 
 ## 二、结论
 

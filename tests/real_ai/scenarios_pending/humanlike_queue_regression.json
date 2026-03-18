@@ -1,0 +1,90 @@
+{
+  "scenarios": [
+    {
+      "id": "humanlike_no_repeat_age_question_within_cooldown",
+      "category": "humanlike_queue",
+      "tags": ["humanlike", "pending", "cooldown", "critical"],
+      "description": "同字段（年龄）在冷却窗口内不应连续追问",
+      "messages": [
+        "你好，我找对象",
+        "我是男的",
+        "喜欢深圳的女生"
+      ],
+      "assertions": [
+        { "type": "final_response_not_contains_any", "values": ["今年多大", "哪个年龄段"] }
+      ]
+    },
+    {
+      "id": "humanlike_no_premature_skip_without_explicit_refusal",
+      "category": "humanlike_queue",
+      "tags": ["humanlike", "pending", "skip_guard", "critical"],
+      "description": "用户未明确拒答时，不应出现过早 skip 状态",
+      "messages": [
+        "你好",
+        "我是男的",
+        "我喜欢高高瘦瘦"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "skipped_fields" }
+      ]
+    },
+    {
+      "id": "humanlike_burst_input_preference_and_city_captured_first_reply",
+      "category": "humanlike_queue",
+      "tags": ["humanlike", "pending", "burst", "critical"],
+      "description": "连发偏好+城市后，首轮回复应体现至少一个关键信息承接",
+      "messages": [
+        "我找对象",
+        "我是男的",
+        "喜欢高高瘦瘦",
+        "喜欢深圳女生"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["深圳", "高", "瘦", "偏好"] }
+      ]
+    },
+    {
+      "id": "humanlike_single_main_question_per_turn_after_burst",
+      "category": "humanlike_queue",
+      "tags": ["humanlike", "pending", "single_question"],
+      "description": "连发后单轮回复应尽量只推进一个主问题",
+      "messages": [
+        "我找对象",
+        "男的",
+        "喜欢深圳女生"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["？"] }
+      ]
+    },
+    {
+      "id": "humanlike_skip_guard_enabled_debug_info_not_show_skip",
+      "category": "humanlike_queue",
+      "tags": ["humanlike", "pending", "skip_guard"],
+      "description": "开启 skip guard 时，不应在未拒答场景显示“已跳过”",
+      "messages": [
+        "你好",
+        "找对象",
+        "喜欢深圳女生"
+      ],
+      "assertions": [
+        { "type": "final_response_not_contains_any", "values": ["已跳过"] }
+      ]
+    },
+    {
+      "id": "humanlike_cooldown_then_field_can_be_asked_again",
+      "category": "humanlike_queue",
+      "tags": ["humanlike", "pending", "cooldown"],
+      "description": "超过冷却窗口后，同字段可以再次被合理追问",
+      "messages": [
+        "你好",
+        "我是男的",
+        "我在深圳",
+        "嗯"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["年龄", "多大", "年龄段"] }
+      ]
+    }
+  ]
+}

@@ -8,7 +8,7 @@
 - 并发配置
 """
 
-from .manager import ConcurrencyManager
+from .manager import ConcurrencyManager, get_concurrency_manager
 from .rate_limiter import UnifiedRateLimiter, RateLimitResult
 from .connection_pool import ConnectionPoolManager
 from .config import ConcurrencyConfig
@@ -19,15 +19,5 @@ __all__ = [
     'RateLimitResult',
     'ConnectionPoolManager',
     'ConcurrencyConfig',
+    'get_concurrency_manager',
 ]
-
-# 全局并发管理器实例
-_concurrency_manager: ConcurrencyManager = None
-
-
-def get_concurrency_manager() -> ConcurrencyManager:
-    """获取全局并发管理器实例"""
-    global _concurrency_manager
-    if _concurrency_manager is None:
-        _concurrency_manager = ConcurrencyManager()
-    return _concurrency_manager

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from src.models.requests import ErrorResponse
 from src.models.personality import PersonalityProfile
 from src.services.data.user_service import UserService
+from src.services.queue.queue_store import QueueStore
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -16,12 +17,21 @@ router = APIRouter(tags=["系统"])
 
 # Service will be injected during app initialization
 user_service: UserService = None
+queue_store: QueueStore | None = None
 
 
-def init_service(service: UserService):
+
+
+def _safe_rate(num: int, den: int) -> float:
+    if den <= 0:
+        return 0.0
+    return round(float(num) / float(den), 4)
+
+def init_service(service: UserService, mq_store: QueueStore | None = None):
     """Initialize user service"""
-    global user_service
+    global user_service, queue_store
     user_service = service
+    queue_store = mq_store
 
 
 @router.get(
@@ -62,6 +72,8 @@ async def get_statistics() -> Dict[str, Any]:
 
         # Get user statistics (synchronous method)
         stats = user_service.get_user_statistics()
+        if queue_store is not None:
+            stats["message_queue"] = await queue_store.get_queue_metrics()
 
         return {
             "success": True,
@@ -123,6 +135,35 @@ async def get_personality_profile() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="获取人格设定时出错")
 
 
+@router.get("/api/doubao/mq/dashboard", summary="消息队列看板")
+async def get_message_queue_dashboard() -> Dict[str, Any]:
+    if queue_store is None:
+        raise HTTPException(status_code=500, detail="消息队列未初始化")
+
+    try:
+        mq = await queue_store.get_queue_metrics()
+        ingest_total = int(mq.get("ingest_total", 0))
+        ingest_accepted = int(mq.get("ingest_accepted", 0))
+        outbox_created = int(mq.get("outbox_created", 0))
+        outbox_success = int(mq.get("outbox_delivery_success", 0))
+
+        return {
+            "success": True,
+            "dashboard": {
+                "snapshot": mq,
+                "ratios": {
+                    "ingest_accept_rate": _safe_rate(ingest_accepted, ingest_total),
+                    "delivery_success_rate": _safe_rate(outbox_success, outbox_created),
+                    "turn_success_rate": _safe_rate(int(mq.get("turn_succeeded", 0)), int(mq.get("turn_started", 0))),
+                },
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"MQ dashboard retrieval error: {e}")
+        raise HTTPException(status_code=500, detail="获取消息队列看板时出错")
+
+
 @router.get(
     "/api",
     summary="API信息",
@@ -167,6 +208,7 @@ async def api_info() -> Dict[str, Any]:
             "reset": "/api/doubao/reset",
             "stats": "/api/doubao/stats",
             "personality": "/api/doubao/personality",
+            "mq_dashboard": "/api/doubao/mq/dashboard",
             "health": "/health"
         },
         "timestamp": datetime.now().isoformat()

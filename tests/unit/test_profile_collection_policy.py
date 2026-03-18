@@ -108,3 +108,14 @@ class TestProfileCollectionPolicy:
         allowed = self.policy.should_allow_contact_instruction(profile, "PERSUADE_PHONE")
 
         assert allowed is True
+
+    def test_main_target_respects_field_cooldown(self, monkeypatch):
+        profile = UserProfile(account_id="u1")
+        profile.collection_progress["sex"] = True
+        profile.sex = "男"
+        profile.recent_asked_fields = ["age"]
+        monkeypatch.setenv("MQ_FIELD_ASK_COOLDOWN_TURNS", "2")
+
+        decision = self.policy.decide(profile, user_message="我喜欢深圳女生")
+
+        assert decision.main_target != "age"

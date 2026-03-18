@@ -129,10 +129,10 @@ class MemoryQueue:
         self._stats["total_tasks"] += 1
 
         logger.info(
-            "task_submitted",
-            message=f"任务已提交: {name}",
-            task_id=task_id,
-            pending_count=len(self._pending_tasks)
+            "任务已提交: %s (task_id=%s, pending=%d)",
+            name,
+            task_id,
+            len(self._pending_tasks),
         )
 
         return task_id
@@ -250,10 +250,10 @@ class MemoryQueue:
         self._running_tasks[task.id] = task
 
         logger.info(
-            "task_started",
-            message=f"开始执行任务: {task.name}",
-            task_id=task.id,
-            worker_id=worker_id
+            "开始执行任务: %s (task_id=%s, worker_id=%d)",
+            task.name,
+            task.id,
+            worker_id,
         )
 
         try:
@@ -269,10 +269,10 @@ class MemoryQueue:
             self._stats["success_tasks"] += 1
 
             logger.info(
-                "task_completed",
-                message=f"任务完成: {task.name}",
-                task_id=task.id,
-                worker_id=worker_id
+                "任务完成: %s (task_id=%s, worker_id=%d)",
+                task.name,
+                task.id,
+                worker_id,
             )
 
         except Exception as e:
@@ -293,10 +293,10 @@ class MemoryQueue:
                 self._stats["retried_tasks"] += 1
 
                 logger.info(
-                    "task_retry",
-                    message=f"任务重试: {task.name}",
-                    task_id=task.id,
-                    retry_count=task.retry_count
+                    "任务重试: %s (task_id=%s, retry_count=%d)",
+                    task.name,
+                    task.id,
+                    task.retry_count,
                 )
             else:
                 # 重试次数用尽，标记为失败
@@ -305,10 +305,10 @@ class MemoryQueue:
                 self._stats["failed_tasks"] += 1
 
                 logger.error(
-                    "task_failed",
-                    message=f"任务失败（已达最大重试次数）: {task.name}",
-                    task_id=task.id,
-                    error=error_msg
+                    "任务失败（已达最大重试次数）: %s (task_id=%s, error=%s)",
+                    task.name,
+                    task.id,
+                    error_msg,
                 )
 
         finally:

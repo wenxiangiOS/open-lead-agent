@@ -529,7 +529,13 @@ class ContactCollectionService:
         Returns:
             bool: 是否结束对话
         """
-        return profile.rejected_phone and profile.rejected_wechat
+        # 只有在“电话和微信都最终拒绝，且当前没有任何可用联系方式”时才结束。
+        # 这样可以避免“已留电话 + 拒绝微信”被误判为结束。
+        has_any_contact = bool(
+            (profile.phone_collected and profile.phone)
+            or (profile.wechat_collected and profile.wechat)
+        )
+        return profile.rejected_phone and profile.rejected_wechat and not has_any_contact
 
     # ==================== 拒绝检测方法 ====================
 
@@ -587,15 +593,18 @@ class ContactCollectionService:
 
         logger.info(f"[拒绝检测-上下文] 电话已收集={phone_collected}, 微信已收集={wechat_collected}, 关于电话={is_about_phone}, 关于微信={is_about_wechat}")
 
+        user_mentions_wechat = any(marker in message_lower for marker in ['微信', 'wx', 'weixin'])
+        user_mentions_phone = any(marker in message_lower for marker in ['电话', '手机', '手机号', '号码'])
+
         # === 情况1：电话已收集，正在询问微信 ===
         if phone_collected and not wechat_collected:
-            if wechat_refusal or (general_refusal and is_about_wechat):
+            if wechat_refusal or (general_refusal and (is_about_wechat or user_mentions_wechat)):
                 logger.info(f"[拒绝检测] 电话已收集，检测到微信拒绝")
                 result = self._handle_refusal(profile, 'wechat', wechat_refusal)
 
         # === 情况2：微信已收集，正在询问电话 ===
         elif wechat_collected and not phone_collected:
-            if phone_refusal or (general_refusal and is_about_phone):
+            if phone_refusal or (general_refusal and (is_about_phone or user_mentions_phone)):
                 logger.info(f"[拒绝检测] 微信已收集，检测到电话拒绝")
                 result = self._handle_refusal(profile, 'phone', phone_refusal)
 
@@ -610,7 +619,13 @@ class ContactCollectionService:
                 result = self._handle_refusal(profile, 'wechat', True)
             # 再根据上下文判断
             elif general_refusal:
-                if is_about_wechat:
+                if user_mentions_wechat:
+                    logger.info(f"[拒绝检测] 通用拒绝 + 明确提及微信，按微信拒绝处理")
+                    result = self._handle_refusal(profile, 'wechat', False)
+                elif user_mentions_phone:
+                    logger.info(f"[拒绝检测] 通用拒绝 + 明确提及电话，按电话拒绝处理")
+                    result = self._handle_refusal(profile, 'phone', False)
+                elif is_about_wechat:
                     logger.info(f"[拒绝检测] 根据上下文检测到微信拒绝")
                     result = self._handle_refusal(profile, 'wechat', False)
                 elif is_about_phone:

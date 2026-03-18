@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.config.settings import settings
 from src.models.user_profile import UserProfile
 from src.services.core.chat_service import ChatService
 
@@ -81,6 +82,7 @@ async def test_process_chat_request_returns_preset_ending_response_immediately()
     chat_service.dialogue_manager.get_conversation_context = AsyncMock(return_value={})
     chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
     chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=0)
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
     chat_service.dialogue_manager.add_to_history = AsyncMock(return_value=None)
     chat_service.dialogue_manager.update_recent_responses = AsyncMock(return_value=None)
     chat_service.dialogue_manager.increment_message_count = AsyncMock(return_value=None)
@@ -144,3 +146,124 @@ async def test_process_chat_request_does_not_reset_empty_profile_mid_session():
 
     assert result["response"] == "兜底回复"
     chat_service.input_fallback_service.reset_nonsense_count.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_process_chat_request_first_turn_greeting_still_uses_humanized_fast_path_with_prefilled_sex():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_6")
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=0)
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
+    chat_service.dialogue_manager.add_to_history = AsyncMock(return_value=None)
+    chat_service.dialogue_manager.update_recent_responses = AsyncMock(return_value=None)
+    chat_service.dialogue_manager.increment_message_count = AsyncMock(return_value=1)
+    chat_service.input_fallback_service.check_and_handle_nonsense = AsyncMock(return_value=None)
+    chat_service._call_ai = AsyncMock(return_value="不该调用")
+
+    request = SimpleNamespace(accountId="user_6", question="你好", dialogId="dlg_3", sex="女")
+    result = await chat_service.process_chat_request(request)
+
+    assert result["success"] is True
+    assert result["response"]
+    assert any(token in result["response"] for token in ["先", "聊", "问你", "在呢", "在的"])
+    chat_service._call_ai.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_process_chat_request_followup_greeting_uses_lightweight_path_when_ai_prob_zero(monkeypatch):
+    monkeypatch.setenv("MQ_FOLLOWUP_GREETING_AI_PROB", "0")
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_7")
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=1)
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="上一轮回复")
+    chat_service.dialogue_manager.add_to_history = AsyncMock(return_value=None)
+    chat_service.dialogue_manager.update_recent_responses = AsyncMock(return_value=None)
+    chat_service.dialogue_manager.increment_message_count = AsyncMock(return_value=2)
+    chat_service.input_fallback_service.check_and_handle_nonsense = AsyncMock(return_value=None)
+    chat_service._call_ai = AsyncMock(return_value="不该调用")
+
+    request = SimpleNamespace(accountId="user_7", question="你好", dialogId="dlg_7", sex=None)
+    result = await chat_service.process_chat_request(request)
+
+    assert result["success"] is True
+    assert result["response"]
+    assert any(token in result["response"] for token in ["在", "聊", "说", "问"])
+    chat_service._call_ai.assert_not_awaited()
+
+
+def test_ensure_humanlike_memory_ack_for_joking_user():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_joke")
+    resp = chat_service._ensure_humanlike_memory_ack(
+        "你查户口呢问这么细",
+        profile,
+        "方便留个电话号码吗？后续有合适的人选方便及时联系你~",
+    )
+    assert any(k in resp for k in ["了解", "匹配"])
+
+
+def test_ensure_humanlike_memory_ack_reuses_location():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_loc")
+    profile.location = "深圳"
+    resp = chat_service._ensure_humanlike_memory_ack(
+        "那边有什么好的相亲资源吗",
+        profile,
+        "我们这边有不少适配的优质单身资源哦，方便留个电话号码吗？",
+    )
+    assert any(k in resp for k in ["深圳", "那边"])
+
+
+def test_ensure_humanlike_memory_ack_reuses_occupation_or_busy():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_job")
+    profile.occupation = "运营"
+    resp = chat_service._ensure_humanlike_memory_ack(
+        "我工作比较忙",
+        profile,
+        "理解的，你方便留个电话号码吗？后续有合适的人选我们好及时联系到你~",
+    )
+    assert any(k in resp for k in ["运营", "工作", "忙"])
+
+
+def test_ensure_humanlike_memory_ack_reuses_preference():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_pref")
+    profile.partner_requirement = "成熟稳重"
+    resp = chat_service._ensure_humanlike_memory_ack(
+        "有什么推荐吗",
+        profile,
+        "当然有呀，不过得先多了解点你的情况才能给你推更适配的人选哦。",
+    )
+    assert any(k in resp for k in ["成熟", "稳重", "合拍", "推荐"])
+
+
+def test_select_model_for_turn_prefers_main_model_on_high_risk(monkeypatch):
+    monkeypatch.setenv("AI_ROUTING_ENABLED", "true")
+    monkeypatch.setenv("AI_FAST_MODEL_NAME", "doubao-seed-fast")
+    chat_service = _build_chat_service()
+
+    model = chat_service._select_model_for_turn("电话不方便，留微信吧", "普通提示词")
+    assert model == settings.model_name
+
+
+def test_select_model_for_turn_uses_fast_model_on_low_complexity(monkeypatch):
+    monkeypatch.setenv("AI_ROUTING_ENABLED", "true")
+    monkeypatch.setenv("AI_FAST_MODEL_NAME", "doubao-seed-fast")
+    chat_service = _build_chat_service()
+
+    model = chat_service._select_model_for_turn("怎么收费", "简短提示")
+    assert model == "doubao-seed-fast"
+
+
+def test_select_model_for_turn_falls_back_when_fast_model_missing(monkeypatch):
+    monkeypatch.setenv("AI_ROUTING_ENABLED", "true")
+    monkeypatch.delenv("AI_FAST_MODEL_NAME", raising=False)
+    chat_service = _build_chat_service()
+
+    model = chat_service._select_model_for_turn("怎么收费", "简短提示")
+    assert model == settings.model_name

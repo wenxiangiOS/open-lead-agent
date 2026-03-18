@@ -64,14 +64,15 @@ class UnifiedRateLimiter:
 
         # 内存模式存储
         self._memory_store: Dict[str, list] = defaultdict(list)
-        self._lock = asyncio.Lock()
+        self._loop_locks: Dict[int, asyncio.Lock] = {}
 
         # 分级限流配置
+        baseline = max(1, int(default_limit))
         self.tier_limits = {
-            "free": {"limit": 10, "window": 60},
-            "basic": {"limit": 50, "window": 60},
-            "pro": {"limit": 100, "window": 60},
-            "enterprise": {"limit": 1000, "window": 60},
+            "free": {"limit": baseline, "window": 60},
+            "basic": {"limit": max(baseline, 50), "window": 60},
+            "pro": {"limit": max(baseline, 100), "window": 60},
+            "enterprise": {"limit": max(baseline, 1000), "window": 60},
         }
 
         # 用户等级存储（用户ID -> 等级）
@@ -131,6 +132,7 @@ class UnifiedRateLimiter:
                 local window_start = tonumber(ARGV[1])
                 local current_time = tonumber(ARGV[2])
                 local limit = tonumber(ARGV[3])
+                local window = tonumber(ARGV[4])
 
                 -- 删除窗口外的记录
                 redis.call('ZREMRANGEBYSCORE', key, 0, window_start)
@@ -141,9 +143,13 @@ class UnifiedRateLimiter:
                 -- 检查是否超限
                 if current_count < limit then
                     -- 添加当前请求
-                    redis.call('ZADD', key, current_time, current_time)
+                    local seq_key = key .. ':seq'
+                    local seq = redis.call('INCR', seq_key)
+                    local member = tostring(current_time) .. '-' .. tostring(seq)
+                    redis.call('ZADD', key, current_time, member)
                     -- 设置过期时间
-                    redis.call('EXPIRE', key, limit)
+                    redis.call('EXPIRE', key, window)
+                    redis.call('EXPIRE', seq_key, window)
                     return {1, limit, limit - current_count - 1}
                 else
                     return {0, limit, 0}
@@ -156,7 +162,8 @@ class UnifiedRateLimiter:
                 redis_key,
                 window_start,
                 current_time,
-                limit
+                limit,
+                window
             )
 
             allowed, limit, remaining = result
@@ -180,40 +187,55 @@ class UnifiedRateLimiter:
         window: int
     ) -> RateLimitResult:
         """使用内存检查限流（滑动窗口）"""
-        async with self._lock:
-            current_time = time.time()
-            window_start = current_time - window
+        lock = self._get_loop_lock()
+        if lock is None:
+            return self._check_memory_unlocked(key, limit, window)
+        async with lock:
+            return self._check_memory_unlocked(key, limit, window)
 
-            # 获取该键的请求历史
-            requests = self._memory_store[key]
+    def _get_loop_lock(self) -> Optional[asyncio.Lock]:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        loop_id = id(loop)
+        if loop_id not in self._loop_locks:
+            self._loop_locks[loop_id] = asyncio.Lock()
+        return self._loop_locks[loop_id]
 
-            # 删除窗口外的记录
-            requests = [t for t in requests if t > window_start]
-            self._memory_store[key] = requests
+    def _check_memory_unlocked(self, key: str, limit: int, window: int) -> RateLimitResult:
+        current_time = time.time()
+        window_start = current_time - window
 
-            # 检查是否超限
-            if len(requests) < limit:
-                # 添加当前请求
-                requests.append(current_time)
-                remaining = limit - len(requests)
-                reset_time = current_time + window
+        # 获取该键的请求历史
+        requests = self._memory_store[key]
 
-                return RateLimitResult(
-                    allowed=True,
-                    limit=limit,
-                    remaining=remaining,
-                    reset_time=reset_time
-                )
-            else:
-                # 超限
-                reset_time = max(requests) + window
+        # 删除窗口外的记录
+        requests = [t for t in requests if t > window_start]
+        self._memory_store[key] = requests
 
-                return RateLimitResult(
-                    allowed=False,
-                    limit=limit,
-                    remaining=0,
-                    reset_time=reset_time
-                )
+        # 检查是否超限
+        if len(requests) < limit:
+            # 添加当前请求
+            requests.append(current_time)
+            remaining = limit - len(requests)
+            reset_time = current_time + window
+
+            return RateLimitResult(
+                allowed=True,
+                limit=limit,
+                remaining=remaining,
+                reset_time=reset_time
+            )
+
+        # 超限
+        reset_time = max(requests) + window
+        return RateLimitResult(
+            allowed=False,
+            limit=limit,
+            remaining=0,
+            reset_time=reset_time
+        )
 
     async def check_tiered_limit(
         self,
@@ -279,6 +301,8 @@ class UnifiedRateLimiter:
         """获取限流使用情况"""
         try:
             if self.use_redis:
+                if not redis_service.client:
+                    return await self.get_usage_from_memory(key, window)
                 redis_key = f"ratelimit:{key}"
                 current_time = time.time()
                 window_start = current_time - window
@@ -295,27 +319,24 @@ class UnifiedRateLimiter:
                     "limit": self.default_limit,
                     "remaining": max(0, self.default_limit - count)
                 }
-            else:
-                requests = self._memory_store.get(key, [])
-                current_time = time.time()
-                window_start = current_time - window
-
-                # 计算窗口内的请求数
-                count = sum(1 for t in requests if t > window_start)
-
-                return {
-                    "count": count,
-                    "limit": self.default_limit,
-                    "remaining": max(0, self.default_limit - count)
-                }
+            return await self.get_usage_from_memory(key, window)
 
         except Exception as e:
             logger.error(f"Get rate limit usage error: {e}")
-            return {
-                "count": 0,
-                "limit": self.default_limit,
-                "remaining": self.default_limit
-            }
+            return await self.get_usage_from_memory(key, window)
+
+    async def get_usage_from_memory(self, key: str, window: int) -> Dict[str, int]:
+        requests = self._memory_store.get(key, [])
+        current_time = time.time()
+        window_start = current_time - window
+
+        # 计算窗口内的请求数
+        count = sum(1 for t in requests if t > window_start)
+        return {
+            "count": count,
+            "limit": self.default_limit,
+            "remaining": max(0, self.default_limit - count)
+        }
 
 
 # 全局限流器实例

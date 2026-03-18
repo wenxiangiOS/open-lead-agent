@@ -149,11 +149,23 @@ class Settings(BaseModel):
     @property
     def http_connections(self) -> int:
         """兼容属性：HTTP 连接数"""
+        raw = os.getenv("HTTP_CONNECTIONS")
+        if raw:
+            try:
+                return int(raw)
+            except ValueError:
+                pass
         return self.redis.max_connections
 
     @property
     def http_max_keepalive(self) -> int:
         """兼容属性：HTTP Keep-Alive 连接数"""
+        raw = os.getenv("HTTP_MAX_KEEPALIVE")
+        if raw:
+            try:
+                return int(raw)
+            except ValueError:
+                pass
         return self.server.keepalive
 
     @property

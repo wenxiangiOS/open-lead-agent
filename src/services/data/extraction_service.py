@@ -342,7 +342,8 @@ class ExtractionService:
         self,
         account_id: str,
         user_profile: UserProfile,
-        extracted_data: Dict[str, Any]
+        extracted_data: Dict[str, Any],
+        user_message: str = "",
     ) -> Dict[str, Any]:
         """
         处理从 AI 回复中提取的数据
@@ -364,6 +365,20 @@ class ExtractionService:
                 "all_fields": []
             }
 
+        # 从用户原始输入提取“可判定为合法/非法”的数字序列，
+        # 用于拦截“超长号码被模型截断成11位误收集”问题。
+        valid_phone_candidates = set()
+        overlong_digit_sequences = []
+        if user_message:
+            for seq in re.findall(r'\d{8,}', user_message):
+                normalized = seq
+                if normalized.startswith("86") and len(normalized) == 13 and normalized[2] == "1":
+                    normalized = normalized[2:]
+                if re.match(r'^1[3-9]\d{9}$', normalized) or re.match(r'^[5-9]\d{7}$', normalized):
+                    valid_phone_candidates.add(normalized)
+                elif len(seq) > 11:
+                    overlong_digit_sequences.append(seq)
+
         # 遍历提取结果，更新用户档案
         for field_name, value in extracted_data.items():
             normalized_value = self._normalize_extracted_value(value)
@@ -373,6 +388,33 @@ class ExtractionService:
                 # 字段名映射：中文字段名 -> 英文字段名
                 mapped_field = self.FIELD_MAPPING.get(clean_field_name, clean_field_name)
                 value = normalized_value
+
+                # 兼容 AI 把联系方式统一提取为 contact 的场景：
+                # 必须路由到 phone / wechat，保证 phone_collected/wechat_collected 状态一致。
+                if mapped_field == "contact":
+                    raw_contact = str(value).strip()
+                    digits_only = ''.join(c for c in raw_contact if c.isdigit())
+                    normalized_phone = digits_only
+                    if normalized_phone.startswith("86") and len(normalized_phone) == 13 and normalized_phone[2] == "1":
+                        normalized_phone = normalized_phone[2:]
+
+                    if re.match(r'^1[3-9]\d{9}$', normalized_phone) or re.match(r'^[5-9]\d{7}$', normalized_phone):
+                        mapped_field = "phone"
+                        value = normalized_phone
+                    else:
+                        wechat_candidate = raw_contact.replace("微信", "").replace("wx:", "").replace("WX:", "").strip()
+                        wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{5,19}$'
+                        mobile_like_wechat = ''.join(c for c in wechat_candidate if c.isdigit())
+                        if re.match(wechat_pattern, wechat_candidate):
+                            mapped_field = "wechat"
+                            value = wechat_candidate
+                        elif re.match(r'^1[3-9]\d{9}$', mobile_like_wechat) or re.match(r'^[5-9]\d{7}$', mobile_like_wechat):
+                            mapped_field = "wechat"
+                            value = mobile_like_wechat
+                        else:
+                            logger.info(f"[联系方式路由] contact 无法识别为电话/微信: {value}")
+                            invalid_contact_attempt = raw_contact
+                            continue
 
                 # 检查是否为无效值
                 if mapped_field == "last_name":
@@ -409,7 +451,6 @@ class ExtractionService:
                 # 电话号码验证和处理
                 if mapped_field == "phone":
                     # 验证电话号码格式（中国大陆和香港）
-                    import re
                     cleaned = ''.join(c for c in str(value) if c.isdigit())
                     # 归一化中国区号前缀：+86xxxxxxxxxxx / 86xxxxxxxxxxx -> xxxxxxxxxxx
                     if cleaned.startswith("86") and len(cleaned) == 13 and cleaned[2] == "1":
@@ -426,16 +467,33 @@ class ExtractionService:
                         invalid_contact_attempt = cleaned or str(value)
                         continue  # 跳过无效号码
 
+                    # 若用户原始输入中存在超长数字串，且当前号码仅是其截断子串，
+                    # 且用户本轮没有给出合法长度候选，则视为无效并要求重试。
+                    if overlong_digit_sequences and cleaned not in valid_phone_candidates:
+                        is_truncated_from_overlong = any(
+                            cleaned in seq and len(seq) > len(cleaned)
+                            for seq in overlong_digit_sequences
+                        )
+                        if is_truncated_from_overlong:
+                            logger.info(f"[电话验证] 命中超长号码截断保护: cleaned={cleaned}, overlong={overlong_digit_sequences}")
+                            invalid_contact_attempt = overlong_digit_sequences[0]
+                            continue
+
                 # 微信号校验：避免把过短/非法格式误记为有效微信
                 if mapped_field == "wechat":
-                    import re
                     cleaned_wechat = str(value).strip()
                     wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{5,19}$'
-                    if not re.match(wechat_pattern, cleaned_wechat):
+                    mobile_like_wechat = ''.join(c for c in cleaned_wechat if c.isdigit())
+                    if re.match(wechat_pattern, cleaned_wechat):
+                        value = cleaned_wechat
+                    elif re.match(r'^1[3-9]\d{9}$', mobile_like_wechat) or re.match(r'^[5-9]\d{7}$', mobile_like_wechat):
+                        # 兼容“微信就是手机号”这类输入
+                        value = mobile_like_wechat
+                        logger.debug(f"[微信验证] 按手机号型微信号收集: {mobile_like_wechat}")
+                    else:
                         logger.info(f"[微信验证] 无效的微信格式: {value}")
                         invalid_contact_attempt = cleaned_wechat
                         continue
-                    value = cleaned_wechat
 
                 # 检查字段是否需要更新
                 is_collected = user_profile.collection_progress.get(mapped_field, False)

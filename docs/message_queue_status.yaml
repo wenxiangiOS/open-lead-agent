@@ -1,0 +1,69 @@
+version: 1
+project: message_queue_orchestration
+last_updated: "2026-03-18 18:01:00 +0800"
+baseline_commit: "2bef0da"
+owner: "unassigned"
+
+status:
+  p0:
+    state: IN_PROGRESS
+    summary: "P0 功能与本地真实 HTTP E2E 已完成；时延优化已落地防抖/轮询/快失败+FAQ快速通道，并新增可回退模型路由，待本机真实AI全量压测验收"
+    open_items:
+      - "真实 XHS_REPLY_API 生产端到端验收未完成（需产出 smoke 报告）"
+      - "外部调用方（3chat.ai）是否全量切到 ingest 未在仓库内闭环验证"
+      - "时延优化P0需在可用AI网络环境下完成 108 场景前后对比并产出报告"
+    checklist:
+      atomic_enqueue_lua: true
+      ingest_api: true
+      user_lock: true
+      start_turn_and_seq_window: true
+      generation_stale_drop: true
+      outbox_write: true
+      sender_retry: true
+      backpressure_queue_full: true
+      pending_depth_metric: true
+      p0_acceptance_tests: true
+    evidence:
+      acceptance_report: "reports/mq/p0_acceptance_20260318.md"
+      test_commands:
+        - "python3 -m compileall src/services/queue src/workers src/api/routes/xiaohongshu_ingest.py src/api/app.py src/api/routes/system.py"
+        - "pytest -q -o addopts='' tests/unit/test_queue_intent_classifier.py tests/unit/test_queue_store.py tests/unit/test_message_orchestrator.py tests/unit/test_reply_sender_worker.py tests/unit/test_message_queue_worker.py tests/unit/test_reply_delivery_service.py"
+        - "pytest -q -o addopts='' tests/integration/test_message_queue_pipeline_integration.py"
+        - "pytest -q -o addopts='' tests/integration/test_xhs_ingest_to_delivery_local_http.py"
+      test_results:
+        - "queue integration tests: 4 passed"
+        - "local-http delivery e2e: 1 passed"
+      updated_by: "codex-gpt5"
+
+  p1:
+    state: DONE
+    summary: "P1 六项已全部完成并通过回归验证"
+    checklist:
+      session_versioning: true
+      delivery_funnel_metrics: true
+      empty_response_classification: true
+      cancel_false_positive_guard: true
+      scheduling_jitter: true
+      runbook_documented: true
+    evidence:
+      acceptance_report: "reports/mq/p1_acceptance_20260318.md"
+      updated_by: "codex-gpt5"
+
+  p2:
+    state: DONE
+    summary: "P2 六项已完成并通过回归验证"
+    checklist:
+      priority_queues: true
+      adaptive_debounce: true
+      hot_user_isolation: true
+      context_compaction: true
+      sender_dual_channel: true
+      ops_dashboard: true
+    evidence:
+      acceptance_report: "reports/mq/p2_acceptance_20260318.md"
+      updated_by: "codex-gpt5"
+
+rules:
+  - "任何模型将 p0.state 置为 DONE 前，必须先提供 acceptance_report。"
+  - "acceptance_report 必须包含可复现实验命令与结果摘要。"
+  - "若状态文件与代码不一致，以测试结果与验收报告为准。"

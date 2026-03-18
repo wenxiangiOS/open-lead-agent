@@ -7,13 +7,19 @@
 import logging
 from typing import Optional
 
-from .repositories import (
+from .base import (
     IUserProfileRepository,
     IUserStateRepository,
+)
+from .implementations.hybrid_storage import (
     HybridUserProfileRepository,
     HybridUserStateRepository,
+)
+from .implementations.redis_storage import (
     RedisUserProfileRepository,
     RedisUserStateRepository,
+)
+from .implementations.memory_storage import (
     MemoryUserProfileRepository,
     MemoryUserStateRepository
 )
@@ -117,12 +123,12 @@ def get_storage_factory() -> StorageFactory:
     """获取全局存储工厂实例（单例模式）"""
     global _storage_factory
     if _storage_factory is None:
-        from ...config.settings import settings
+        from src.config.settings import settings
         _storage_factory = StorageFactory(
-            redis_enabled=settings.REDIS_ENABLED,
-            ttl=settings.REDIS_TTL
+            redis_enabled=settings.redis_enabled,
+            ttl=settings.redis_ttl
         )
-        logger.info(f"StorageFactory initialized: Redis={settings.REDIS_ENABLED}, TTL={settings.REDIS_TTL}")
+        logger.info(f"StorageFactory initialized: Redis={settings.redis_enabled}, TTL={settings.redis_ttl}")
     return _storage_factory
 
 

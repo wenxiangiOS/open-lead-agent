@@ -10,7 +10,10 @@
 
 import asyncio
 import logging
+import os
 import random
+import re
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 from src.models.personality import PersonalityProfile
@@ -144,6 +147,7 @@ class ChatService:
             is_empty = user_profile.is_empty()
             message_count = await self.dialogue_manager.get_message_count(account_id)
             is_new_user_session = is_empty and message_count == 0
+            is_first_user_turn = message_count == 0
             logger.info(
                 f"[用户档案检查] account_id={account_id}, is_empty={is_empty}, "
                 f"message_count={message_count}, last_name={user_profile.last_name}"
@@ -166,7 +170,7 @@ class ChatService:
                 call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
                 # 检查是否已经发送过告别（避免重复）
                 last_response = await self.dialogue_manager.get_last_response(account_id) or ""
-                if "有需要随时再来找我" in last_response or "下次再聊" in last_response:
+                if "有需要随时再来找我哦～拜拜" in last_response or "下次再聊～拜拜啦" in last_response:
                     # 已经发送过告别，返回空响应
                     return await self._build_chat_response(
                         account_id,
@@ -208,13 +212,15 @@ class ChatService:
             collected_info_summary = extraction_service.get_collected_info_summary(user_profile)
             has_requirement = "要求:" in collected_info_summary
             has_contact = "已留联系" in collected_info_summary
+            contact_next_action = self.contact_service.get_next_action(user_profile, request.question)
+            in_contact_flow = contact_next_action.value in {"ask_phone", "persuade_phone", "ask_wechat", "persuade_wechat"}
 
             # 确认词列表
             affirmative_words = ['嗯', '好', '好的', '行', '可以', 'ok', '是的', '对', '是', '恩', '嗯嗯', '好的呢', '好呀']
             user_input = request.question.strip()
             is_affirmative = user_input in affirmative_words
 
-            if has_requirement and not has_contact and is_affirmative:
+            if (has_requirement or in_contact_flow) and not has_contact and is_affirmative:
                 # 用户在被问联系方式时只回复确认词，没有提供实际号码
                 confirm_count = await self.input_fallback_service.increment_confirm_count(account_id)
                 logger.info(f"[确认词检测] 用户第{confirm_count}次回复确认词但没留联系方式: {user_input}")
@@ -319,28 +325,93 @@ class ChatService:
                     request.dialogId
                 )
 
-            # 4.6. 检测打招呼（仅当用户档案为空时使用预设回复）
+            # 4.6. 检测打招呼（首个用户输入优先承接，不受预填sex影响）
             # 但如果用户同时表达了拒绝联系方式，则跳过打招呼检测，让拒绝检测处理
             has_contact_refusal = any(kw in request.question for kw in ['不留微信', '不留电话', '不留联系方式', '不给微信', '不给电话'])
-            if is_new_user_session and self.greeting_service.is_greeting(request.question) and not has_contact_refusal:
-                greeting_response = self.greeting_service.get_greeting_response(request.question)
-                # 模拟真人打字时间（1.0-2.0秒），像真人在思考+打字
-                await asyncio.sleep(random.uniform(1.0, 2.0))
-                logger.info(f"[打招呼检测] 用户打招呼: {request.question}，返回预设回复: {greeting_response}")
-                return await self._build_chat_response(
-                    account_id,
-                    user_profile,
-                    greeting_response,
-                    {},
-                    request.dialogId
+            is_pure_greeting = self.greeting_service.is_greeting(request.question)
+            if is_pure_greeting and not has_contact_refusal:
+                if is_first_user_turn:
+                    greeting_response = self.greeting_service.get_greeting_response(request.question)
+                    await self._simulate_human_reply_delay(first_turn=True)
+                    logger.info(f"[打招呼检测] 用户打招呼: {request.question}，返回预设回复: {greeting_response}")
+                    await self._update_conversation_state(
+                        account_id,
+                        request.question,
+                        greeting_response,
+                        greeting_response,
+                        track_asked_fields=False,
+                    )
+                    return await self._build_chat_response(
+                        account_id,
+                        user_profile,
+                        greeting_response,
+                        {},
+                        request.dialogId
+                    )
+
+                if not self._should_route_followup_greeting_to_ai():
+                    followup_response = self.greeting_service.get_followup_greeting_response(request.question)
+                    await self._simulate_human_reply_delay(first_turn=False)
+                    logger.info(f"[打招呼检测] 非首轮寒暄，走轻量承接: {request.question} -> {followup_response}")
+                    await self._update_conversation_state(
+                        account_id,
+                        request.question,
+                        followup_response,
+                        followup_response,
+                        track_asked_fields=False,
+                    )
+                    return await self._build_chat_response(
+                        account_id,
+                        user_profile,
+                        followup_response,
+                        {},
+                        request.dialogId
+                    )
+
+                logger.info(
+                    f"[打招呼检测] 非首轮寒暄，按概率进入AI生成: {request.question}, "
+                    f"prob={self._get_followup_greeting_ai_prob():.2f}"
                 )
 
             # 5. 检测用户拒绝（包含提前拒绝联系方式）
             await self._handle_refusal_detection(request.question, account_id, user_profile)
+
+            # 5.1. 无需依赖 AI 的明显虚假信息检测
+            if self._looks_like_fake_info(request.question):
+                self.ending_service.update_profile_for_ending('fake_info', user_profile)
+                await self.user_service.save_user_profile(account_id, user_profile)
+                fake_info_response = self.ending_service.get_ending_response('fake_info') or ""
+                return await self._build_chat_response(
+                    account_id,
+                    user_profile,
+                    fake_info_response,
+                    {"collected": False, "all_fields": []},
+                    request.dialogId
+                )
+
             conversation_context = await self.dialogue_manager.get_conversation_context(account_id)
             prioritize_user_question = self.user_question_service.is_priority_question(request.question)
             if prioritize_user_question:
                 logger.info(f"[答疑优先] 用户提问命中常见疑问，本轮暂停资料推进: {request.question}")
+                quick_faq_response = self.user_question_service.get_quick_faq_response(request.question)
+                if quick_faq_response:
+                    final_response = self._ensure_conservative_empathy(request.question, quick_faq_response)
+                    await self._update_conversation_state(
+                        account_id,
+                        request.question,
+                        final_response,
+                        final_response,
+                        track_asked_fields=False,
+                    )
+                    total_duration = time.time() - start_time
+                    logger.info(f"[⏱️ 性能] FAQ快速通道完成: account_id={account_id}, 总耗时={total_duration:.3f}秒")
+                    return await self._build_chat_response(
+                        account_id,
+                        user_profile,
+                        final_response,
+                        {"collected": False, "all_fields": []},
+                        request.dialogId
+                    )
 
             # 6. 构建主对话提示词
             main_prompt = self.dialogue_manager.build_main_dialogue_prompt(
@@ -417,10 +488,14 @@ class ChatService:
                 # else: 用户可能还有其他要求要补充，继续让 AI 对话
 
             # 7. 调用 AI 生成回复
-            ai_response = await self._call_ai(main_prompt, account_id)
+            ai_response = await self._call_ai(main_prompt, account_id, request.question)
+            if not ai_response:
+                ai_response = await self._build_no_ai_response(account_id, user_profile, request.question)
 
             # 8. 从 AI 回复中提取信息
             extracted_data = self.extraction_service.extract_json_from_response(ai_response)
+            if not extracted_data:
+                extracted_data = self._extract_basic_fields_from_message(request.question)
 
             # 9. 处理提取的数据
             collection_result = await self._process_collection_result(
@@ -487,6 +562,10 @@ class ChatService:
             # 如果 enhanced_response 为 None，表示使用原 AI 回复
             response_to_clean = enhanced_response if enhanced_response is not None else ai_response
             final_response = self._clean_response(response_to_clean)
+            if prioritize_user_question:
+                final_response = self._strip_collection_prompts_for_faq(final_response)
+            final_response = self._ensure_conservative_empathy(request.question, final_response)
+            final_response = self._ensure_humanlike_memory_ack(request.question, user_profile, final_response)
 
             # 11.5. 保存 field_ask_count 快照（在 _track_ai_asked_fields 增加计数之前）
             # 用于"已跳过"显示逻辑：使用"增加前"的值，这样用户还有机会回答当前问题
@@ -567,7 +646,67 @@ class ChatService:
                 await self.user_service.save_user_profile(account_id, user_profile)
                 logger.info(f"[无效用户] 用户拒绝了微信和电话，标记为无效用户并结束对话")
 
-    async def _call_ai(self, prompt: str, account_id: str) -> str:
+    def _is_high_risk_turn(self, user_message: str, prompt: str) -> bool:
+        """
+        高风险轮次必须走主模型，避免质量回退。
+        只做表达层路由，不改变业务规则。
+        """
+        message = (user_message or "").strip().lower()
+        if not message:
+            return False
+
+        high_risk_markers = [
+            "不留", "拒绝", "不方便", "隐私", "安全吗", "靠谱吗",
+            "离异", "分居", "已婚", "帮朋友问", "家人", "代问",
+            "电话", "微信", "联系方式",
+        ]
+        if any(marker in message for marker in high_risk_markers):
+            return True
+
+        # 提示词中出现联系方式强约束时，强制主模型
+        prompt_markers = ["立即执行-询问电话", "立即执行-询问微信", "立即执行-争取微信", "收尾"]
+        return any(marker in (prompt or "") for marker in prompt_markers)
+
+    def _is_low_complexity_turn(self, user_message: str, prompt: str) -> bool:
+        """
+        低复杂度轮次可尝试快模型：
+        - 用户消息较短
+        - 提示词长度可控
+        - 单意图（疑问符较少）
+        """
+        msg = (user_message or "").strip()
+        prompt_len = len(prompt or "")
+        question_marks = msg.count("?") + msg.count("？")
+
+        if len(msg) > 48:
+            return False
+        if prompt_len > 4500:
+            return False
+        if question_marks > 1:
+            return False
+        return True
+
+    def _select_model_for_turn(self, user_message: str, prompt: str) -> str:
+        """
+        上下文长度 + 意图复杂度 + 风险等级路由。
+        无快模型配置时自动回退主模型。
+        """
+        default_model = getattr(self.ai_service, "model_name", settings.model_name)
+        fast_model = os.getenv("AI_FAST_MODEL_NAME", "").strip()
+        routing_enabled = os.getenv("AI_ROUTING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+        if not routing_enabled or not fast_model:
+            return default_model
+
+        if self._is_high_risk_turn(user_message, prompt):
+            return default_model
+
+        if self._is_low_complexity_turn(user_message, prompt):
+            return fast_model
+
+        return default_model
+
+    async def _call_ai(self, prompt: str, account_id: str, user_message: str = "") -> str:
         """
         调用 AI 服务（带超时控制）
 
@@ -583,14 +722,18 @@ class ChatService:
         """
         import time
         ai_start_time = time.time()
-        logger.info(f"[⏱️ 性能] 开始调用AI: account_id={account_id}")
+        chosen_model = self._select_model_for_turn(user_message, prompt)
+        logger.info(
+            f"[⏱️ 性能] 开始调用AI: account_id={account_id}, model={chosen_model}, prompt_chars={len(prompt) if prompt else 0}"
+        )
 
         try:
             # 使用简单的系统提示词确保用中文回复
             response = await self.ai_service.generate_response(
                 message=prompt,
                 system_prompt="你是一个说中文的AI助手，请用中文回复用户。",
-                timeout=120  # 120秒超时（豆包API响应较慢）
+                timeout=float(os.getenv("CHAT_AI_TIMEOUT_SECONDS", "45")),  # 在线聊天链路快失败，控制长尾
+                model_name=chosen_model,
             )
             ai_end_time = time.time()
             ai_duration = ai_end_time - ai_start_time
@@ -616,8 +759,13 @@ class ChatService:
         collection_result = await self.extraction_service.process_extracted_data(
             account_id,
             user_profile,
-            extracted_data
+            extracted_data,
+            user_message=user_message,
         )
+
+        # process_extracted_data 通过 user_service 持久化字段，刷新后再做收尾判断，
+        # 否则同一轮新收集到的年龄/身高/联系方式会被旧 profile 漏掉。
+        user_profile = await self.user_service.get_user_profile(account_id)
 
         # === 使用统一的收尾服务检测收尾场景 ===
         # 调用 check_and_get_ending，参数顺序：user_message, profile, collection_result
@@ -710,12 +858,35 @@ class ChatService:
             elif field_info.get('field') == 'wechat':
                 collected_wechat = field_info.get('value')
 
+        fallback_contacts = self._extract_contacts_from_message(user_message)
+        fallback_contact = self._extract_contact_candidate_from_message(user_message)
+        fallback_candidate = fallback_contact["value"] if fallback_contact else None
+        fallback_hint = fallback_contact["type"] if fallback_contact else None
         contact_value = collected_phone or collected_contact
-        invalid_contact_attempt = collection_result.get("invalid_contact_attempt") or self._extract_contact_candidate_from_message(user_message)
+        invalid_contact_attempt = collection_result.get("invalid_contact_attempt") or fallback_candidate
+
+        if contact_value is None and fallback_contacts.get("phone"):
+            contact_value = fallback_contacts["phone"]
+        if collected_wechat is None and fallback_contacts.get("wechat"):
+            collected_wechat = fallback_contacts["wechat"]
+
+        if contact_value is None and collected_wechat is None and fallback_candidate:
+            from src.utils.validators import ContactValidator
+
+            is_valid_fallback, fallback_type, _ = ContactValidator.is_valid_contact(fallback_candidate)
+            if is_valid_fallback:
+                if fallback_hint == "wechat":
+                    collected_wechat = fallback_candidate
+                else:
+                    contact_value = fallback_candidate
+                logger.info(f"[联系方式兜底] 从原始消息恢复联系方式: type={fallback_hint or fallback_type}, value={fallback_candidate}")
+
+        contact_value = contact_value or collected_phone or collected_contact
         logger.info(f"[联系方式检查] collected_contact={contact_value}, collected_wechat={collected_wechat}, all_fields={collection_result.get('all_fields', [])}")
 
         # 如果收集到微信，设置 wechat_collected 标志
         if collected_wechat:
+            user_profile.wechat = collected_wechat
             user_profile.wechat_collected = True
             # 非香港用户：微信也可以作为联系方式
             is_hong_user = self._is_hong_user(user_profile.location)
@@ -728,12 +899,17 @@ class ChatService:
         if contact_value is None and collected_wechat is None:
             if invalid_contact_attempt:
                 logger.info(f"[联系方式检查] 检测到疑似无效联系方式输入: {invalid_contact_attempt}")
-                is_valid, error_msg, _ = await self.validation_service.validate_contact(
-                    invalid_contact_attempt,
-                    user_profile,
-                    account_id,
-                    self.user_service
-                )
+                if fallback_hint == "wechat" or "微信" in user_message:
+                    is_valid, error_msg = self.validation_service.validate_wechat(invalid_contact_attempt)
+                    if not is_valid and error_msg:
+                        error_msg = f"{user_profile.get_greeting()}，{error_msg}"
+                else:
+                    is_valid, error_msg, _ = await self.validation_service.validate_contact(
+                        invalid_contact_attempt,
+                        user_profile,
+                        account_id,
+                        self.user_service
+                    )
                 if not is_valid:
                     return error_msg or ""
 
@@ -793,6 +969,8 @@ class ChatService:
             if profile_ready_for_service and contact_collected:
                 logger.info(f"[微信收集] 核心字段全部收集完成，准备收尾")
                 await self._mark_remaining_fields_as_skipped(account_id, user_profile)
+                self.ending_service.update_profile_for_ending('normal_complete', user_profile)
+                await self.user_service.save_user_profile(account_id, user_profile)
                 return "好的呀，我先记下啦，后面有合适的人选会尽快联系你～"
             else:
                 # === 资料未达到可服务阈值，继续收集重要字段 ===
@@ -832,10 +1010,14 @@ class ChatService:
             logger.info(f"[联系方式验证成功]")
 
             # === 设置电话号码和 phone_collected ===
-            user_profile.phone = contact_value
+            normalized_phone = re.sub(r'\D', '', contact_value or '')
+            if normalized_phone.startswith('86') and len(normalized_phone) == 13 and normalized_phone[2] == '1':
+                normalized_phone = normalized_phone[2:]
+
+            user_profile.phone = normalized_phone or contact_value
             user_profile.phone_collected = True
             user_profile.contact = user_profile.get_contact_status()
-            logger.info(f"[联系方式验证] 设置 phone={contact_value}, phone_collected=True")
+            logger.info(f"[联系方式验证] 设置 phone={user_profile.phone}, phone_collected=True")
 
             # === 重置电话询问计数（用户已提供电话，无需再争取）===
             user_profile.phone_ask_count = 0
@@ -877,6 +1059,8 @@ class ChatService:
 
                 # 标记剩余未收集字段为"跳过"
                 await self._mark_remaining_fields_as_skipped(account_id, user_profile)
+                self.ending_service.update_profile_for_ending('normal_complete', user_profile)
+                await self.user_service.save_user_profile(account_id, user_profile)
 
                 # 返回收尾回复
                 return success_msg or ai_response
@@ -920,22 +1104,264 @@ class ChatService:
         import re
         return re.sub(r'<extract>.*?</extract>', '', response, flags=re.DOTALL).strip()
 
-    def _extract_contact_candidate_from_message(self, user_message: str) -> Optional[str]:
-        """从用户原始消息中提取疑似联系方式，用于无效联系方式兜底校验。"""
+    def _strip_collection_prompts_for_faq(self, response: str) -> str:
+        """
+        FAQ/顾虑优先轮次下，移除资料收集追问，避免“先答疑又追问年龄”。
+        """
+        if not response:
+            return response
+
+        segments = [seg.strip() for seg in re.split(r'(?<=[。！？!?])\s*', response) if seg.strip()]
+        if not segments:
+            return response
+
+        blocked_keywords = [
+            "年龄", "多大", "年龄段",
+            "学历", "职业", "工作",
+            "哪个城市", "在哪个城市", "城市",
+            "电话", "微信", "联系方式",
+            "身高", "体重", "婚况", "月薪",
+        ]
+
+        kept = []
+        for seg in segments:
+            hit_positions = [seg.find(kw) for kw in blocked_keywords if kw in seg]
+            if not hit_positions:
+                kept.append(seg)
+                continue
+
+            # 若同一句里“先答疑后追问”，保留追问关键词前的答疑部分
+            first_hit = min(hit_positions)
+            prefix = seg[:first_hit].rstrip("，,；;。!！?？ ")
+            if len(prefix) >= 6 and not any(kw in prefix for kw in blocked_keywords):
+                kept.append(prefix + "。")
+
+        if kept:
+            return " ".join(kept).strip()
+
+        # 兜底：避免把追问话术原样返回
+        return "这个问题我先给你说明清楚。"
+
+    def _ensure_conservative_empathy(self, user_message: str, response: str) -> str:
+        """
+        保守型用户场景补齐共情关键词，降低字面断言波动。
+        """
+        if not response:
+            return response
+
+        conservative_markers = ["不方便", "先不说", "不太想说", "这个也要", "不想聊", "算了"]
+        if not any(marker in (user_message or "") for marker in conservative_markers):
+            return response
+
+        empathy_keywords = ["没关系", "理解", "方便"]
+        if any(kw in response for kw in empathy_keywords):
+            return response
+
+        if "没事" in response:
+            return response.replace("没事", "没关系", 1)
+        return f"理解你的感受，{response}"
+
+    def _ensure_humanlike_memory_ack(self, user_message: str, user_profile: UserProfile, response: str) -> str:
+        """
+        轻量拟人化承接保护：
+        当回复过早跳到“留电话”时，补一句与用户当轮/历史信息相关的承接。
+        不改变业务流程，只增强表达层。
+        """
+        if not response:
+            return response
+
+        message = (user_message or "").strip()
+        lower_message = message.lower()
+
+        # 1) 调侃/玩笑型：先接住情绪，再回主线
+        joke_markers = ["查户口", "问这么细", "盘问", "审我"]
+        if any(marker in message for marker in joke_markers):
+            if not any(kw in response for kw in ["了解", "认识", "匹配", "适合"]):
+                return f"哈哈不是查户口啦，主要是想先多了解你，才能更匹配合适的人选～{response}"
+
+        # 2) 位置记忆回用：用户问“那边资源”
+        if any(marker in message for marker in ["那边", "深圳", "资源", "相亲资源"]):
+            loc = (user_profile.location or "").strip()
+            if loc and not any(kw in response for kw in [loc, "那边"]):
+                return f"{loc}那边的资源我们这边一直在做筛选更新，我会优先按同城给你匹配～{response}"
+
+        # 3) 职业/忙碌承接
+        if any(marker in lower_message for marker in ["工作比较忙", "工作忙", "比较忙", "加班"]):
+            occ = (user_profile.occupation or "").strip()
+            if not any(kw in response for kw in ["运营", "工作", "忙"]):
+                if occ:
+                    return f"懂你，做{occ}很多时候节奏会比较快、也挺忙的～{response}"
+                return f"懂你，工作忙确实会压缩认识新人的时间～{response}"
+
+        # 4) 择偶偏好承接
+        if any(marker in message for marker in ["推荐", "有什么推荐", "合适", "成熟", "稳重"]):
+            pref = (user_profile.partner_requirement or "").strip()
+            if pref and not any(kw in response for kw in ["成熟", "稳重", "合拍", "推荐"]):
+                if "成熟" in pref or "稳重" in pref:
+                    return f"你提到想找成熟稳重的类型，我会按这个方向给你推荐更合拍的人选～{response}"
+                return f"我会结合你刚提到的偏好来推荐更合拍的人选～{response}"
+
+        return response
+
+    def _extract_contact_candidate_from_message(self, user_message: str) -> Optional[Dict[str, str]]:
+        """从用户原始消息中提取疑似联系方式，并携带字段提示。"""
         if not user_message:
             return None
 
         import re
 
         marker_pattern = re.compile(
-            r'(?:电话|手机|手机号|号码|微信|vx|wx|weixin)[^\da-zA-Z_/-]*([a-zA-Z0-9_-]{4,20})',
+            r'(?P<marker>电话|手机|手机号|号码|微信|vx|wx|weixin)[^\da-zA-Z_/-]*(?P<value>[a-zA-Z][a-zA-Z0-9_-]{2,19}|\+?86[\d\s-]{11,17}|[\d\s-]{8,17})',
             re.IGNORECASE,
         )
         matched = marker_pattern.search(user_message)
         if matched:
-            return matched.group(1)
+            marker = matched.group("marker").lower()
+            hinted_type = "wechat" if marker in {"微信", "vx", "wx", "weixin"} else "phone"
+            raw_value = matched.group("value").strip()
+            if hinted_type == "phone":
+                raw_value = re.sub(r'[\s-]', '', raw_value)
+            return {"value": raw_value, "type": hinted_type}
 
         return None
+
+    def _extract_contacts_from_message(self, user_message: str) -> Dict[str, str]:
+        """从原始消息中分别提取电话和微信，兜底无 AI 提取场景。"""
+        if not user_message:
+            return {}
+
+        contacts: Dict[str, str] = {}
+
+        phone_match = re.search(r'(?:电话|手机|手机号|号码)[^\d]*(\+?86[\s-]*)?((?:1[\s-]*){1}(?:\d[\s-]*){10}|(?:[5-9][\s-]*){1}(?:\d[\s-]*){7})\b', user_message, re.IGNORECASE)
+        if phone_match:
+            phone_value = ''.join(c for c in phone_match.group(0) if c.isdigit())
+            if phone_value.startswith('86') and len(phone_value) == 13 and phone_value[2] == '1':
+                phone_value = phone_value[2:]
+            if re.match(r'^1[3-9]\d{9}$', phone_value) or re.match(r'^[5-9]\d{7}$', phone_value):
+                contacts["phone"] = phone_value
+
+        wechat_match = re.search(r'(?:微信|vx|wx|weixin)[^a-zA-Z0-9_-]*(?:就是手机号)?([a-zA-Z][a-zA-Z0-9_-]{5,19}|1[3-9]\d{9}|[5-9]\d{7})\b', user_message, re.IGNORECASE)
+        if wechat_match:
+            contacts["wechat"] = wechat_match.group(1)
+
+        return contacts
+
+    def _looks_like_fake_info(self, user_message: str) -> bool:
+        """基于原始文本识别明显虚假年龄/身高。"""
+        if not user_message:
+            return False
+
+        age_match = re.search(r'(\d{1,4})\s*岁', user_message)
+        if age_match:
+            age_value = int(age_match.group(1))
+            if age_value >= 123 or age_value <= 10:
+                return True
+
+        height_meter_match = re.search(r'(\d+(?:\.\d+)?)\s*米', user_message)
+        if height_meter_match:
+            try:
+                if float(height_meter_match.group(1)) >= 3.0:
+                    return True
+            except ValueError:
+                pass
+
+        height_cm_match = re.search(r'身高[^\d]*(\d{2,3})', user_message)
+        if height_cm_match:
+            height_value = int(height_cm_match.group(1))
+            if height_value >= 300 or height_value <= 50:
+                return True
+
+        return False
+
+    def _extract_basic_fields_from_message(self, user_message: str) -> Dict[str, Any]:
+        """AI 不可用时，用轻量规则兜底提取常见基础字段。"""
+        if not user_message:
+            return {}
+
+        extracted: Dict[str, Any] = {}
+
+        if '我是女生' in user_message or '本人女' in user_message:
+            extracted['sex'] = '女'
+        elif '我是男生' in user_message or '本人男' in user_message:
+            extracted['sex'] = '男'
+
+        age_match = re.search(r'(\d{2})后', user_message)
+        if age_match:
+            suffix = int(age_match.group(1))
+            birth_year = 2000 + suffix if suffix <= datetime.now().year % 100 else 1900 + suffix
+            extracted['age'] = datetime.now().year - birth_year
+        else:
+            explicit_age = re.search(r'(\d{2})岁', user_message)
+            if explicit_age:
+                extracted['age'] = int(explicit_age.group(1))
+
+        location_match = re.search(r'在([\u4e00-\u9fa5]{2,10})', user_message)
+        if location_match:
+            extracted['location'] = location_match.group(1)
+
+        for edu in ['博士', '硕士', '研究生', '本科', '大专', '中专', '高中']:
+            if edu in user_message:
+                extracted['education'] = edu
+                break
+
+        for marital in ['单身', '离异', '未婚', '已婚']:
+            if marital in user_message:
+                extracted['marital_status'] = marital
+                break
+
+        segments = re.split(r'[，,、\s]+', user_message)
+        education_tokens = {'博士', '硕士', '研究生', '本科', '大专', '中专', '高中'}
+        marital_tokens = {'单身', '离异', '未婚', '已婚'}
+        ignored_tokens = {'我是女生', '我是男生', '女生', '男生'}
+        for index, segment in enumerate(segments):
+            token = segment.strip()
+            if not token:
+                continue
+            if token in education_tokens and index + 1 < len(segments):
+                candidate = segments[index + 1].strip()
+                if candidate and candidate not in marital_tokens and candidate not in ignored_tokens and not candidate.startswith('想找'):
+                    extracted['occupation'] = candidate
+                    break
+
+        return extracted
+
+    async def _build_no_ai_response(self, account_id: str, user_profile: UserProfile, user_message: str) -> str:
+        """AI 不可用时的最小可用回复，优先兜住联系方式主线。"""
+        message = (user_message or "").strip()
+
+        if self.expectation_service.is_matching_timeline_question(message):
+            return self.expectation_service.get_matching_timeline_response(user_profile)
+
+        if any(keyword in message for keyword in ['为什么一定要电话', '为什么要电话', '为什么留电话', '电话干嘛', '电话做什么', '为什么要留手机号']):
+            return "电话这边主要是留作登记和后面联系用的，不会私下打扰你，这点你可以放心～"
+
+        if any(keyword in message for keyword in ['留微信可以吗', '微信可以吗', '电话不方便，留微信可以吗', '用微信联系吧', '微信吧', '加微信吧']):
+            return "可以呀，那你直接发我微信号就行，我这边先记下来～"
+
+        if any(keyword in message for keyword in ['联系方式都不留', '都不留', '不留任何联系方式']):
+            if not user_profile.rejected_phone:
+                return "如果电话不方便的话，微信也可以呀，留一个方便后面联系就行～"
+            return "那微信或者电话留一个都可以，主要是方便后面联系你～"
+
+        if message in {'好', '嗯', '嗯嗯', '好的', 'ok', '可以'}:
+            confirm_count = await self.input_fallback_service.increment_confirm_count(account_id)
+            return self.input_fallback_service.get_confirm_word_response(user_profile, confirm_count) or ""
+
+        next_action = self.contact_service.get_next_action(user_profile, message)
+        if next_action.value == "ask_phone":
+            return "方便留个电话吗？后续有合适的人选时联系你～"
+        if next_action.value == "persuade_phone":
+            return "这个电话只是留作登记和后面联系用的，不会私下打扰你。你方便的话发我一个号码就行～"
+        if next_action.value == "ask_wechat":
+            response = "可以呀，你方便的话直接发我微信号就行，后面联系会更顺手一点～"
+            await self.dialogue_manager.update_recent_responses(account_id, response)
+            return response
+        if next_action.value == "persuade_wechat":
+            response = "如果电话不方便的话，留个微信也可以，后面沟通会方便一点～"
+            await self.dialogue_manager.update_recent_responses(account_id, response)
+            return response
+
+        return ""
 
     async def _update_conversation_state(
         self,
@@ -1142,6 +1568,46 @@ class ChatService:
             "message": "对话已重置",
             "conversation_reset": True
         }
+
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        """读取浮点环境变量，异常时返回默认值。"""
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return default
+
+    def _get_followup_greeting_ai_prob(self) -> float:
+        """获取非首轮寒暄进入 AI 的概率。"""
+        prob = self._env_float("MQ_FOLLOWUP_GREETING_AI_PROB", 0.30)
+        return max(0.0, min(1.0, prob))
+
+    def _should_route_followup_greeting_to_ai(self) -> bool:
+        """决定非首轮寒暄是否进入 AI。"""
+        return random.random() < self._get_followup_greeting_ai_prob()
+
+    async def _simulate_human_reply_delay(self, first_turn: bool) -> None:
+        """打招呼快捷路径也加入拟人随机延迟，避免机械秒回。"""
+        # 测试环境跳过等待，避免回归测试变慢
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            return
+
+        if first_turn:
+            min_s = self._env_float("MQ_GREETING_FIRST_TURN_DELAY_MIN", 0.8)
+            max_s = self._env_float("MQ_GREETING_FIRST_TURN_DELAY_MAX", 2.2)
+        else:
+            min_s = self._env_float("MQ_GREETING_FOLLOWUP_DELAY_MIN", 0.9)
+            max_s = self._env_float("MQ_GREETING_FOLLOWUP_DELAY_MAX", 2.6)
+
+        if max_s < min_s:
+            min_s, max_s = max_s, min_s
+
+        min_s = max(0.0, min_s)
+        max_s = max(min_s, max_s)
+        await asyncio.sleep(random.uniform(min_s, max_s))
 
     # ============ 打招呼检测 ============
 
