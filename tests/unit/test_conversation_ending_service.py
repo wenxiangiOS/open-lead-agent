@@ -119,10 +119,12 @@ class TestConversationEndingService:
         profile = UserProfile(account_id="test")
         profile.sex = "男"
         profile.age = 30
-        profile.height = 175
         profile.location = "北京"
         profile.education = "本科"
-        profile.monthly_income = "20-30万"
+        profile.marital_status = "单身"
+        profile.phone = "13812345678"
+        profile.phone_collected = True
+        profile.collection_progress["contact"] = True
         result = self.service.check_manual_scenario('normal_complete', profile)
         assert result == True
 

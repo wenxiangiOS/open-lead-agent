@@ -99,10 +99,6 @@ class ContactCollectionService:
     CONTACT_PREFERENCE_KEYWORDS: List[str] = [
         "用微信联系吧", "微信吧", "用微信吧", "加微信吧", "微信也行",
     ]
-    PHONE_REFUSAL_PREFERENCE_KEYWORDS: List[str] = [
-        "电话不方便", "电话不行", "电话不方便留"
-    ]
-
     # ==================== 提示词模板 ====================
 
     PROMPT_END_CONVERSATION = """
@@ -513,8 +509,15 @@ class ContactCollectionService:
             return False
 
         wants_wechat = any(keyword in user_message for keyword in self.WECHAT_INTENT_KEYWORDS)
-        refuses_phone = any(keyword in user_message for keyword in self.PHONE_REFUSAL_PREFERENCE_KEYWORDS)
-        return wants_wechat and refuses_phone
+        explicit_contact_preference = any(keyword in user_message for keyword in self.CONTACT_PREFERENCE_KEYWORDS)
+        refuses_phone = self._message_indicates_phone_refusal_preference(user_message)
+        return wants_wechat and (refuses_phone or explicit_contact_preference)
+
+    def _message_indicates_phone_refusal_preference(self, user_message: str) -> bool:
+        """判断用户是否表达了“电话不方便，优先微信”的拒绝偏好。"""
+        if not user_message:
+            return False
+        return any(keyword in user_message for keyword in self.PHONE_REFUSAL_PREFERENCE_KEYWORDS)
 
     def should_end_conversation(self, profile: UserProfile) -> bool:
         """

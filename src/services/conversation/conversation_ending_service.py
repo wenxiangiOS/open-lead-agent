@@ -141,9 +141,20 @@ class ConversationEndingService:
 
         # 特殊场景的条件检查
         if scenario_name == 'normal_complete':
-            # 信息收集完成：所有核心字段都已收集
-            core_fields = ['sex', 'age', 'height', 'location', 'education', 'monthly_income']
-            return all(getattr(profile, field, None) for field in core_fields)
+            # 信息收集完成：满足可服务资料 + 已有任一有效联系方式
+            has_contact = bool(
+                profile.collection_progress.get("contact", False)
+                or (profile.phone and profile.phone_collected)
+                or (profile.wechat and profile.wechat_collected)
+            )
+            has_core = all([
+                bool(getattr(profile, "sex", None)),
+                bool(getattr(profile, "age", None)),
+                bool(getattr(profile, "location", None)),
+                bool(getattr(profile, "marital_status", None)),
+                bool(getattr(profile, "education", None) or getattr(profile, "occupation", None)),
+            ])
+            return has_contact and has_core
 
         elif scenario_name == 'both_rejected':
             # 双方都被拒绝

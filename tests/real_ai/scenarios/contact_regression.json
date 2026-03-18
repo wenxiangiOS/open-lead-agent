@@ -332,7 +332,7 @@
       "id": "contact_hk_user_reject_wechat",
       "category": "contact",
       "tags": ["critical", "contact_hk", "contact_wechat"],
-      "description": "香港用户拒绝微信后，应正确标记拒绝状态。",
+      "description": "香港用户首次拒绝微信后，应记录为已争取中而非最终拒绝。",
       "messages": [
         "我是女生，28岁，在香港，本科，文员，单身，想找男生",
         "电话56789012",
@@ -340,7 +340,8 @@
       ],
       "assertions": [
         { "type": "profile_field_truthy", "field": "phone" },
-        { "type": "profile_field_equals", "field": "rejected_wechat", "expected": true }
+        { "type": "profile_field_equals", "field": "rejected_wechat", "expected": false },
+        { "type": "profile_field_equals", "field": "wechat_ask_count", "expected": 1 }
       ]
     },
     {
@@ -361,7 +362,7 @@
       "id": "contact_user_says_phone_inconvenient_then_wechat",
       "category": "contact",
       "tags": ["critical", "contact_phone", "contact_wechat"],
-      "description": "用户说电话不方便但愿意留微信，应接住微信。",
+      "description": "用户说电话不方便但愿意留微信，应接住微信且不直接判定电话最终拒绝。",
       "messages": [
         "我是女生，90后，深圳，本科，运营，单身，想找男生",
         "电话不方便，留微信吧",
@@ -369,7 +370,7 @@
       ],
       "assertions": [
         { "type": "profile_field_truthy", "field": "wechat" },
-        { "type": "profile_field_equals", "field": "rejected_phone", "expected": true }
+        { "type": "profile_field_equals", "field": "rejected_phone", "expected": false }
       ]
     },
     {

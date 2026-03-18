@@ -284,7 +284,7 @@ class ExtractionService:
         value_str = str(value).strip()
 
         # 1. 尝试匹配 "XX岁" 格式
-        match = re.search(r'(\d{1,3})\s*岁', value_str)
+        match = re.search(r'(\d{1,4})\s*岁', value_str)
         if match:
             return int(match.group(1))
 
@@ -411,6 +411,9 @@ class ExtractionService:
                     # 验证电话号码格式（中国大陆和香港）
                     import re
                     cleaned = ''.join(c for c in str(value) if c.isdigit())
+                    # 归一化中国区号前缀：+86xxxxxxxxxxx / 86xxxxxxxxxxx -> xxxxxxxxxxx
+                    if cleaned.startswith("86") and len(cleaned) == 13 and cleaned[2] == "1":
+                        cleaned = cleaned[2:]
                     # 手机号验证：中国大陆(1开头+3-9,11位) 或 香港(5-9开头,8位)
                     if re.match(r'^1[3-9]\d{9}$', cleaned):  # 中国大陆
                         value = cleaned
@@ -422,6 +425,17 @@ class ExtractionService:
                         logger.info(f"[电话验证] 无效的电话号码格式: {value}")
                         invalid_contact_attempt = cleaned or str(value)
                         continue  # 跳过无效号码
+
+                # 微信号校验：避免把过短/非法格式误记为有效微信
+                if mapped_field == "wechat":
+                    import re
+                    cleaned_wechat = str(value).strip()
+                    wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{5,19}$'
+                    if not re.match(wechat_pattern, cleaned_wechat):
+                        logger.info(f"[微信验证] 无效的微信格式: {value}")
+                        invalid_contact_attempt = cleaned_wechat
+                        continue
+                    value = cleaned_wechat
 
                 # 检查字段是否需要更新
                 is_collected = user_profile.collection_progress.get(mapped_field, False)

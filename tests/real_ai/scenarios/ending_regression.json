@@ -81,7 +81,7 @@
       ],
       "assertions": [
         { "type": "profile_field_equals", "field": "proxy_user", "expected": true },
-        { "type": "final_response_contains_any", "values": ["朋友", "家人", "直接来和我聊"] }
+        { "type": "final_response_contains_any", "values": ["朋友", "家人", "本人直接来聊"] }
       ]
     },
     {
