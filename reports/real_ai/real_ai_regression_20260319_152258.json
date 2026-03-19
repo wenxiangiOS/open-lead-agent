@@ -1,0 +1,158 @@
+{
+  "started_at": "2026-03-19T15:22:51",
+  "ended_at": "2026-03-19T15:22:58",
+  "scenario_file": "/tmp/real_ai_all_m75wl78r",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "total_duration_seconds": 7.222,
+    "avg_duration_seconds": 7.222,
+    "max_duration_seconds": 7.222,
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "call_count": 0
+    }
+  },
+  "results": [
+    {
+      "scenario_id": "faq_priority_followup_question_should_still_answer",
+      "category": "faq",
+      "tags": [
+        "faq_priority"
+      ],
+      "passed": true,
+      "checks_total": 3,
+      "checks_passed": 3,
+      "failures": [],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "找对象",
+          "assistant_response": "方便留个电话吗？后续有合适的人选时联系你～",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          }
+        },
+        {
+          "index": 2,
+          "user_message": "怎么收费",
+          "assistant_response": "咱们基础匹配是免费的，定制服务是可选项，不合适你也可以直接拒绝。你要是还有顾虑也可以继续问我。",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          }
+        },
+        {
+          "index": 3,
+          "user_message": "那定制服务怎么收费",
+          "assistant_response": "先放心，普通匹配是免费的；定制部分按你意愿来，不会强推。",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_faq_priority_followup_question_should_still_answer_bfe751f5",
+        "created_at": "2026-03-19T15:22:54.254673",
+        "updated_at": "2026-03-19T15:22:54.255470",
+        "sex": null,
+        "last_name": null,
+        "age": null,
+        "height": null,
+        "weight": null,
+        "location": null,
+        "education": null,
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": null,
+        "contact": null,
+        "phone": null,
+        "wechat": null,
+        "partner_requirement": null,
+        "collection_progress": {
+          "sex": false,
+          "last_name": false,
+          "age": false,
+          "height": false,
+          "weight": false,
+          "location": false,
+          "education": false,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": false,
+          "contact": false,
+          "partner_requirement": false
+        },
+        "progress_percentage": 0.0,
+        "missing_fields": [
+          "sex",
+          "last_name",
+          "age",
+          "height",
+          "weight",
+          "location",
+          "education",
+          "marital_status",
+          "monthly_income",
+          "occupation",
+          "contact",
+          "partner_requirement"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {},
+        "recent_asked_fields": [],
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": false,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "is_hongkong_user": null,
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 7.222
+    }
+  ]
+}

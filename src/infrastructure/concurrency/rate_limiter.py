@@ -122,7 +122,7 @@ class UnifiedRateLimiter:
                 logger.warning("Redis client not available, falling back to memory")
                 return await self._check_memory(key, limit, window)
 
-            redis_key = f"ratelimit:{key}"
+            redis_key = self._redis_key(key)
             current_time = time.time()
             window_start = current_time - window
 
@@ -257,11 +257,13 @@ class UnifiedRateLimiter:
         tier_config = self.tier_limits.get(tier, self.tier_limits["free"])
 
         limit = tier_config["limit"]
-        result = await self.is_allowed(user_id, limit, window)
+        # Use tier-specific window when configured; fallback to the caller default.
+        effective_window = int(tier_config.get("window", window))
+        result = await self.is_allowed(user_id, limit, effective_window)
 
         # 添加等级信息
         result.tier = tier
-        result.window = window
+        result.window = effective_window
 
         return result
 
@@ -279,8 +281,12 @@ class UnifiedRateLimiter:
         """重置限流计数"""
         try:
             if self.use_redis:
-                redis_key = f"ratelimit:{key}"
-                await redis_service.delete(redis_key)
+                redis_key = self._redis_key(key)
+                if redis_service.client:
+                    await redis_service.client.delete(redis_key)
+                    await redis_service.client.delete(f"{redis_key}:seq")
+                else:
+                    await redis_service.delete(f"ratelimit:{key}")
 
             # 同时清除内存缓存
             if key in self._memory_store:
@@ -303,7 +309,7 @@ class UnifiedRateLimiter:
             if self.use_redis:
                 if not redis_service.client:
                     return await self.get_usage_from_memory(key, window)
-                redis_key = f"ratelimit:{key}"
+                redis_key = self._redis_key(key)
                 current_time = time.time()
                 window_start = current_time - window
 
@@ -349,3 +355,6 @@ def get_rate_limiter() -> UnifiedRateLimiter:
     if _unified_rate_limiter is None:
         _unified_rate_limiter = UnifiedRateLimiter()
     return _unified_rate_limiter
+    @staticmethod
+    def _redis_key(key: str) -> str:
+        return redis_service._key(f"ratelimit:{key}")  # noqa: SLF001

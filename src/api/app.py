@@ -11,13 +11,13 @@ from src.services.ai_service import AIService
 from src.services.data.user_service import UserService
 from src.services.core.chat_service import ChatService
 from src.services.data.redis_service import redis_service
-from src.services.queue.message_orchestrator import MessageOrchestrator
-from src.services.queue.queue_store import QueueStore
-from src.services.queue.reply_delivery_service import ReplyDeliveryService
 from src.config.settings import settings
 from src.config.components.cors_config import CORSConfig
 from src.config.validator import validate_config_on_startup, ConfigValidationError
 from src.core.error_handler import global_exception_handler
+from src.modules.message_queue.application.message_orchestrator import MessageOrchestrator
+from src.modules.message_queue.infrastructure.queue_store import QueueStore
+from src.modules.platform_xiaohongshu.infrastructure.xhs_reply_client import ReplyDeliveryService
 
 # Import route modules
 from src.api.routes import (
@@ -35,8 +35,8 @@ from src.api.v1 import chat as chat_v1
 # Import middleware
 from src.api.middleware.concurrency import ConcurrencyMiddleware
 from src.api.middleware.error_handling import ErrorHandlingMiddleware
-from src.workers.message_queue_worker import MessageQueueWorker
-from src.workers.reply_sender_worker import ReplySenderWorker
+from src.modules.message_queue.workers.message_queue_worker import MessageQueueWorker
+from src.modules.message_queue.workers.reply_sender_worker import ReplySenderWorker
 
 # Set up logging
 logging.basicConfig(level=getattr(logging, settings.log_level))
@@ -206,9 +206,11 @@ async def startup_event():
         from src.api.routes.user import init_service as init_user
         from src.api.routes.system import init_service as init_system
         from src.api.routes.xiaohongshu_ingest import init_service as init_ingest
+        from src.api.v1.chat import init_service as init_chat_v1
 
         init_health(ai_service, user_service, chat_service)
         init_chat(chat_service)
+        init_chat_v1(chat_service)
         init_conversation(chat_service)
         init_user(chat_service)
         init_system(user_service, queue_store)

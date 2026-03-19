@@ -397,20 +397,56 @@ class RealAIScenarioRunner:
         await self.chat_service.reset_user_conversation(account_id)
 
         turns: List[TurnRecord] = []
+        runtime_failures: List[FailureDetail] = []
 
         for index, message in enumerate(scenario.messages, start=1):
-            request = ChatRequest(
-                question=message,
-                accountId=account_id,
-                dialogId=f"{dialog_id}_{index}",
-            )
-            result = await self.chat_service.process_chat_request(request)
-            turn = TurnRecord(
-                index=index,
-                user_message=message,
-                assistant_response=result.get("response", ""),
-                collected_info=result.get("collected_info", {}),
-            )
+            # mq pending scenarios are placeholders for ingest E2E. Keep runner compatible
+            # with intentionally empty payload examples instead of failing at ChatRequest validation.
+            if scenario.category == "mq" and (not isinstance(message, str) or not message.strip()):
+                turn = TurnRecord(
+                    index=index,
+                    user_message=message if isinstance(message, str) else "",
+                    assistant_response="",
+                    collected_info={},
+                )
+                turns.append(turn)
+                if progress_callback:
+                    progress_callback("turn", scenario, scenario_index, total, turn)
+                await asyncio.sleep(0.1)
+                continue
+
+            try:
+                request = ChatRequest(
+                    question=message,
+                    accountId=account_id,
+                    dialogId=f"{dialog_id}_{index}",
+                )
+                result = await self.chat_service.process_chat_request(request)
+                turn = TurnRecord(
+                    index=index,
+                    user_message=message,
+                    assistant_response=result.get("response", ""),
+                    collected_info=result.get("collected_info", {}),
+                )
+            except Exception as exc:
+                turn = TurnRecord(
+                    index=index,
+                    user_message=message,
+                    assistant_response="",
+                    collected_info={},
+                )
+                runtime_failures.append(
+                    FailureDetail(
+                        assertion_type="scenario_runtime_error",
+                        turn=index,
+                        message=f"turn={index} 运行异常: {exc}",
+                    )
+                )
+                turns.append(turn)
+                if progress_callback:
+                    progress_callback("turn", scenario, scenario_index, total, turn)
+                break
+
             turns.append(turn)
             if progress_callback:
                 progress_callback("turn", scenario, scenario_index, total, turn)
@@ -419,15 +455,17 @@ class RealAIScenarioRunner:
         profile_result = await self.chat_service.get_user_profile(account_id)
         final_profile = profile_result.get("profile", {}) if profile_result.get("success") else {}
 
-        failures = self.evaluator.evaluate(scenario, turns, final_profile)
+        assertion_failures = self.evaluator.evaluate(scenario, turns, final_profile)
+        failures = runtime_failures + assertion_failures
+        checks_total = len(scenario.assertions) + len(runtime_failures)
         duration = (datetime.now() - started).total_seconds()
         return ScenarioResult(
             scenario_id=scenario.scenario_id,
             category=scenario.category,
             tags=scenario.tags,
             passed=not failures,
-            checks_total=len(scenario.assertions),
-            checks_passed=len(scenario.assertions) - len(failures),
+            checks_total=checks_total,
+            checks_passed=max(0, checks_total - len(failures)),
             failures=failures,
             turns=turns,
             final_profile=final_profile,

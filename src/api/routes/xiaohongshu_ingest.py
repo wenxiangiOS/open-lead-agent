@@ -9,7 +9,8 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from src.services.queue.message_orchestrator import MessageOrchestrator
+from src.modules.message_queue.application.message_orchestrator import MessageOrchestrator
+from src.modules.shared.models.use_case_models import IngestMessageCommand
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,17 @@ orchestrator: MessageOrchestrator | None = None
 def init_service(service: MessageOrchestrator) -> None:
     global orchestrator
     orchestrator = service
+
+
+def _build_ingest_command(payload: Dict[str, Any]) -> IngestMessageCommand:
+    return IngestMessageCommand(
+        account_id=str(payload.get("accountId") or "").strip(),
+        dialog_id=payload.get("dialogId"),
+        message=str(payload.get("message") or "").strip(),
+        platform_msg_id=str(payload.get("platformMsgId") or "").strip(),
+        timestamp=payload.get("timestamp"),
+        sex=payload.get("sex"),
+    )
 
 
 @router.post("/api/xiaohongshu/messages/ingest")
@@ -63,8 +75,8 @@ async def ingest_message(request: Request, payload: Dict[str, Any]) -> Dict[str,
             if not hmac.compare_digest(sig, expected_sig):
                 raise HTTPException(status_code=401, detail="invalid signature")
 
-        result = await orchestrator.ingest(payload)
-        return result
+        result = await orchestrator.ingest_command(_build_ingest_command(payload))
+        return result.payload
     except HTTPException:
         raise
     except Exception:

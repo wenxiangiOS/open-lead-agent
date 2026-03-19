@@ -4,18 +4,43 @@ from fastapi import APIRouter, Request
 from typing import Dict, Any
 
 from src.models.requests import ChatRequest, ChatResponse
-from src.services.ai_service import AIService
-from src.services.data.user_service import UserService
+from src.modules.shared.models.use_case_models import ProcessChatTurnCommand
 from src.services.core.chat_service import ChatService
 from src.core.logging import api_logger, RequestLogger
 from src.core.exceptions import AppException
 
 router = APIRouter(prefix="/api/v1", tags=["v1-对话"])
 
-# 初始化服务
-ai_service = AIService()
-user_service = UserService()
-chat_service = ChatService(ai_service, user_service)
+# 由应用启动流程注入，避免 v1 与主路由使用不同服务实例
+chat_service: ChatService | None = None
+
+
+def init_service(service: ChatService) -> None:
+    global chat_service
+    chat_service = service
+
+
+async def _process_chat_via_protocol(request_model: ChatRequest) -> Dict[str, Any]:
+    if chat_service is None:
+        raise AppException("服务未初始化", status_code=500)
+
+    use_case = getattr(chat_service, "process_chat_turn_use_case", None)
+    if use_case is not None and hasattr(use_case, "execute_command"):
+        result = await use_case.execute_command(
+            ProcessChatTurnCommand(
+                question=request_model.question,
+                account_id=request_model.accountId,
+                dialog_id=request_model.dialogId,
+                sex=request_model.sex,
+                timestamp=request_model.timestamp,
+            )
+        )
+        return result.payload or {
+            "success": result.success,
+            "response": result.response,
+            "dialogId": result.dialog_id,
+        }
+    return await chat_service.process_chat_request(request_model)
 
 
 @router.post("/chat", response_model=ChatResponse, summary="AI红娘对话 v1")
@@ -52,7 +77,7 @@ async def chat_v1(request: ChatRequest, http_request: Request) -> Dict[str, Any]
             )
 
             # 处理聊天请求
-            result = await chat_service.process_chat_request(request)
+            result = await _process_chat_via_protocol(request)
 
             # 记录成功
             duration_ms = (time.time() - start_time) * 1000
@@ -98,6 +123,8 @@ async def chat_v1(request: ChatRequest, http_request: Request) -> Dict[str, Any]
 @router.post("/welcome", summary="生成欢迎消息 v1")
 async def welcome_v1(user_id: str) -> Dict[str, Any]:
     """为新用户生成欢迎消息，重置对话状态并开始新的信息收集流程"""
+    if chat_service is None:
+        raise AppException("服务未初始化", status_code=500)
     with RequestLogger.request_context() as request_id:
         api_logger.log_user_action(
             action="welcome",
@@ -115,6 +142,8 @@ async def feedback_v1(
     feedback_type: str = "response"
 ) -> Dict[str, Any]:
     """收集用户对AI回复的反馈，用于改进服务质量"""
+    if chat_service is None:
+        raise AppException("服务未初始化", status_code=500)
     with RequestLogger.request_context() as request_id:
         api_logger.log_user_action(
             action="feedback",
@@ -135,6 +164,8 @@ async def get_conversation_history_v1(
     offset: int = 0
 ) -> Dict[str, Any]:
     """获取指定用户的对话历史记录，支持分页查询"""
+    if chat_service is None:
+        raise AppException("服务未初始化", status_code=500)
     with RequestLogger.request_context() as request_id:
         return await chat_service.get_user_conversation_history(
             user_id, limit, offset
@@ -144,6 +175,8 @@ async def get_conversation_history_v1(
 @router.get("/profile/{user_id}", summary="获取用户资料 v1")
 async def get_user_profile_v1(user_id: str) -> Dict[str, Any]:
     """获取指定用户的完整档案信息，包括已收集的所有个人信息"""
+    if chat_service is None:
+        raise AppException("服务未初始化", status_code=500)
     with RequestLogger.request_context() as request_id:
         return await chat_service.get_user_profile(user_id)
 
@@ -151,6 +184,8 @@ async def get_user_profile_v1(user_id: str) -> Dict[str, Any]:
 @router.post("/reset", summary="重置对话 v1")
 async def reset_conversation_v1(user_id: str) -> Dict[str, Any]:
     """重置指定用户的对话状态和档案信息，清除所有已收集的数据"""
+    if chat_service is None:
+        raise AppException("服务未初始化", status_code=500)
     with RequestLogger.request_context() as request_id:
         api_logger.log_user_action(
             action="reset_conversation",
@@ -158,3 +193,5 @@ async def reset_conversation_v1(user_id: str) -> Dict[str, Any]:
         )
 
         return await chat_service.reset_user_conversation(user_id)
+    if chat_service is None:
+        raise AppException("服务未初始化", status_code=500)

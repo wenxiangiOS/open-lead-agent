@@ -1,5 +1,10 @@
 import asyncio
 
+from src.modules.shared.models.use_case_models import (
+    IngestMessageCommand,
+    ProcessChatTurnCommand,
+    ProcessChatTurnResult,
+)
 from src.services.data.redis_service import redis_service
 from src.services.queue.message_orchestrator import MessageOrchestrator
 from src.services.queue.queue_store import QueueStore
@@ -12,6 +17,25 @@ class DummyChatService:
             "response": "收到你的消息了",
             "dialogId": request.dialogId,
         }
+
+
+class DummyChatServiceWithProtocol:
+    def __init__(self):
+        self.commands = []
+        self.process_chat_turn_use_case = self
+
+    async def execute_command(self, command):
+        self.commands.append(command)
+        return ProcessChatTurnResult(
+            success=True,
+            response="协议回复",
+            dialog_id=command.dialog_id,
+            payload={
+                "success": True,
+                "response": "协议回复",
+                "dialogId": command.dialog_id,
+            },
+        )
 
 
 def test_ingest_returns_queued():
@@ -144,3 +168,54 @@ def test_combine_messages_context_compaction():
     )
     assert "最后补充" in out
     assert "省略" in out
+
+
+def test_ingest_command_returns_result_object():
+    asyncio.run(_test_ingest_command_returns_result_object())
+
+
+async def _test_ingest_command_returns_result_object():
+    redis_service.enabled = False
+    orchestrator = MessageOrchestrator(chat_service=DummyChatService(), queue_store=QueueStore())
+
+    result = await orchestrator.ingest_command(
+        IngestMessageCommand(
+            account_id="u_cmd",
+            dialog_id="d_cmd",
+            message="你好",
+            platform_msg_id="pm_cmd",
+            timestamp="2026-03-18T00:00:00+08:00",
+            sex="女",
+        )
+    )
+
+    assert result.success is True
+    assert result.accepted is True
+    assert result.status == "queued"
+
+
+def test_process_turn_command_prefers_process_chat_turn_command_protocol():
+    asyncio.run(_test_process_turn_command_prefers_process_chat_turn_command_protocol())
+
+
+async def _test_process_turn_command_prefers_process_chat_turn_command_protocol():
+    redis_service.enabled = False
+    chat_service = DummyChatServiceWithProtocol()
+    store = QueueStore()
+    orchestrator = MessageOrchestrator(chat_service=chat_service, queue_store=store)
+
+    result = await orchestrator._process_turn_command(  # noqa: SLF001
+        ProcessChatTurnCommand(
+            question="第一句",
+            account_id="u_protocol_turn",
+            dialog_id="d_protocol_turn",
+            sex="女",
+            timestamp="2026-03-18T00:00:00+08:00",
+        )
+    )
+
+    assert len(chat_service.commands) == 1
+    command = chat_service.commands[0]
+    assert command.account_id == "u_protocol_turn"
+    assert command.dialog_id == "d_protocol_turn"
+    assert result.response == "协议回复"

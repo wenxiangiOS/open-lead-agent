@@ -7,6 +7,7 @@ ContactCollectionService 单元测试
 import pytest
 from src.services.collection.contact_collection_service import (
     ContactCollectionService,
+    ContactFlowState,
     NextAction,
     RefusalResult
 )
@@ -140,6 +141,41 @@ class TestContactCollectionService:
         profile = UserProfile(account_id="test", location="北京")
         profile.phone_ask_count = 1
         assert self.service.get_next_action(profile, "电话不方便，留微信可以吗") == NextAction.ASK_WECHAT
+
+    def test_get_next_action_soft_ack_after_phone_flow_switches_to_wechat(self):
+        """下一步动作 - 非香港用户低信息确认后不继续追问电话"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+        assert self.service.get_next_action(profile, "嗯") == NextAction.ASK_WECHAT
+
+    def test_get_next_action_soft_ack_does_not_switch_hk_phone_flow(self):
+        """下一步动作 - 香港用户仍保持电话优先"""
+        profile = UserProfile(account_id="test", location="香港")
+        profile.phone_ask_count = 1
+        assert self.service.get_next_action(profile, "嗯") == NextAction.PERSUADE_PHONE
+
+    def test_get_flow_state_phone_requested(self):
+        """显式流程状态 - 首次询问电话"""
+        profile = UserProfile(account_id="test", location="北京")
+        assert self.service.get_flow_state(profile) == ContactFlowState.PHONE_REQUESTED
+
+    def test_get_flow_state_contact_closed(self):
+        """显式流程状态 - 双拒后关闭"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.rejected_phone = True
+        profile.rejected_wechat = True
+        assert self.service.get_flow_state(profile) == ContactFlowState.CONTACT_CLOSED
+
+    def test_get_flow_snapshot_contains_current_action_and_flags(self):
+        """显式流程快照 - 包含状态、动作和核心标志"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone = "13800138000"
+        profile.phone_collected = True
+        snapshot = self.service.get_flow_snapshot(profile)
+        assert snapshot.state == ContactFlowState.WECHAT_REQUESTED
+        assert snapshot.next_action == NextAction.ASK_WECHAT
+        assert snapshot.phone_collected is True
+        assert snapshot.wechat_collected is False
 
     # ==================== build_instruction 测试 ====================
 

@@ -29,6 +29,34 @@
       ]
     },
     {
+      "id": "faq_priority_fee_paraphrase",
+      "category": "faq",
+      "tags": ["critical", "faq_priority", "paraphrase"],
+      "description": "用户换说法问费用时（你们费用是怎么收的），仍应先答疑，不应同轮切回资料收集。",
+      "messages": [
+        "找对象",
+        "你们费用是怎么收的"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["免费", "收费", "定制", "费用"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信", "学历", "年龄", "想找男生还是女生"] }
+      ]
+    },
+    {
+      "id": "faq_priority_contact_why_phone",
+      "category": "faq",
+      "tags": ["critical", "faq_priority", "contact_why"],
+      "description": "用户问为什么要留电话时，本轮应先解释用途，不应继续索要联系方式。",
+      "messages": [
+        "我是男生，90后，深圳，本科，IT，单身，想找女生",
+        "为什么要留电话呢"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["联系", "用途", "通知", "不会", "打扰"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["留个电话号码", "方便留个电话", "留微信"] }
+      ]
+    },
+    {
       "id": "faq_priority_store_location",
       "category": "faq",
       "tags": ["faq_priority"],

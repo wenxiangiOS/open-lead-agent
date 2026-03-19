@@ -1,0 +1,148 @@
+{
+  "suite": "extraction_regression",
+  "description": "EXTRACTION prompt regression cases after prompt restructuring",
+  "cases": [
+    {
+      "id": "E001",
+      "name": "基础年龄-95后",
+      "last_question": "你多大呀？",
+      "user_message": "95后",
+      "expected": {
+        "年龄": "31岁"
+      }
+    },
+    {
+      "id": "E002",
+      "name": "出生年换算-动态年份",
+      "last_question": "你哪年出生？",
+      "user_message": "1998年",
+      "expected": {
+        "年龄": "{current_year_minus_1998}岁"
+      }
+    },
+    {
+      "id": "E003",
+      "name": "月收入直接值",
+      "last_question": "收入大概呢？",
+      "user_message": "3万",
+      "expected": {
+        "月收入": "3万"
+      }
+    },
+    {
+      "id": "E004",
+      "name": "年薪转月薪",
+      "last_question": "收入情况呢？",
+      "user_message": "年薪24万",
+      "expected": {
+        "月收入": "2万"
+      }
+    },
+    {
+      "id": "E005",
+      "name": "所在地自述",
+      "last_question": "你在哪个城市？",
+      "user_message": "我在深圳",
+      "expected": {
+        "所在地": "深圳"
+      }
+    },
+    {
+      "id": "E006",
+      "name": "择偶地区-非本人所在地",
+      "last_question": "想找什么样的？",
+      "user_message": "想找深圳的",
+      "expected": {
+        "择偶要求": "地区深圳",
+        "所在地": null
+      }
+    },
+    {
+      "id": "E007",
+      "name": "择偶上下文数字-身高",
+      "last_question": "择偶要求呢，比如身高学历？",
+      "user_message": "168",
+      "expected": {
+        "择偶要求": "身高168cm",
+        "身高": null
+      }
+    },
+    {
+      "id": "E008",
+      "name": "择偶上下文数字-年龄",
+      "last_question": "有什么要求？",
+      "user_message": "不超过30",
+      "expected": {
+        "择偶要求": "年龄不超过30岁",
+        "年龄": null
+      }
+    },
+    {
+      "id": "E009",
+      "name": "非择偶上下文数字-本人身高",
+      "last_question": "你身高多少？",
+      "user_message": "168",
+      "expected": {
+        "身高": "168cm"
+      }
+    },
+    {
+      "id": "E010",
+      "name": "择偶无特别要求",
+      "last_question": "择偶要求还有吗？",
+      "user_message": "没有了",
+      "expected": {
+        "择偶要求": "无特别要求"
+      }
+    },
+    {
+      "id": "E011",
+      "name": "择偶看感觉",
+      "last_question": "择偶要求？",
+      "user_message": "看感觉",
+      "expected": {
+        "择偶要求": "看感觉/随缘"
+      }
+    },
+    {
+      "id": "E012",
+      "name": "紧凑输入-体重月收入",
+      "last_question": "再补充下收入和体重",
+      "user_message": "90kg3万",
+      "expected": {
+        "体重": "90kg",
+        "月收入": "3万"
+      }
+    },
+    {
+      "id": "E013",
+      "name": "紧凑输入-学历职业身高",
+      "last_question": "说下基本信息",
+      "user_message": "本科it189",
+      "expected": {
+        "学历": "本科",
+        "职业": "IT",
+        "身高": "189cm"
+      }
+    },
+    {
+      "id": "E014",
+      "name": "拒绝提供字段",
+      "last_question": "你年龄是？",
+      "user_message": "年龄不方便说",
+      "expected": {
+        "年龄": null
+      }
+    },
+    {
+      "id": "E015",
+      "name": "联系方式区分-微信与电话",
+      "last_question": "留个联系方式吧",
+      "user_message": "我微信wx23488588，电话不留",
+      "expected": {
+        "微信": "wx23488588",
+        "联系方式": null
+      }
+    }
+  ]
+}

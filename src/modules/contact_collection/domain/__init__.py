@@ -1,0 +1,1 @@
+"""Contact collection domain services."""

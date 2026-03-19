@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from src.config.settings import settings
 from src.models.requests import ChatResponse, ErrorResponse, ChatRequest
+from src.modules.shared.models.use_case_models import ProcessChatTurnCommand
 from src.services.core.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,26 @@ def init_service(service: ChatService):
     """Initialize chat service"""
     global chat_service
     chat_service = service
+
+
+async def _process_chat_via_protocol(request_model: ChatRequest) -> Dict[str, Any]:
+    use_case = getattr(chat_service, "process_chat_turn_use_case", None)
+    if use_case is not None and hasattr(use_case, "execute_command"):
+        result = await use_case.execute_command(
+            ProcessChatTurnCommand(
+                question=request_model.question,
+                account_id=request_model.accountId,
+                dialog_id=request_model.dialogId,
+                sex=request_model.sex,
+                timestamp=request_model.timestamp,
+            )
+        )
+        return result.payload or {
+            "success": result.success,
+            "response": result.response,
+            "dialogId": result.dialog_id,
+        }
+    return await chat_service.process_chat_request(request_model)
 
 
 @router.post(
@@ -94,7 +115,7 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
                 logger.warning(f"Failed to get profile before tracking: {e}")
 
         # Process the chat request（内部会追踪 AI 询问的字段）
-        result = await chat_service.process_chat_request(chat_request)
+        result = await _process_chat_via_protocol(chat_request)
 
         # 如果是调试模式，获取最新的用户信息（包含刚提取的数据）
         if debug_mode:

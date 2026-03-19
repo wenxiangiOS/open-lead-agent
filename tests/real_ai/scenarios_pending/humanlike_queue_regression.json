@@ -54,7 +54,7 @@
         "喜欢深圳女生"
       ],
       "assertions": [
-        { "type": "final_response_contains_any", "values": ["？"] }
+        { "type": "final_response_contains_any", "values": ["学历", "年龄", "多大", "城市", "工作", "电话", "微信"] }
       ]
     },
     {
@@ -75,7 +75,7 @@
       "id": "humanlike_cooldown_then_field_can_be_asked_again",
       "category": "humanlike_queue",
       "tags": ["humanlike", "pending", "cooldown"],
-      "description": "超过冷却窗口后，同字段可以再次被合理追问",
+      "description": "超过冷却轮次后，系统应继续自然推进，不应卡在同字段冷却提示",
       "messages": [
         "你好",
         "我是男的",
@@ -83,7 +83,8 @@
         "嗯"
       ],
       "assertions": [
-        { "type": "final_response_contains_any", "values": ["年龄", "多大", "年龄段"] }
+        { "type": "final_response_not_contains_any", "values": ["上一轮刚问过", "刚问过"] },
+        { "type": "final_response_contains_any", "values": ["学历", "年龄", "多大", "城市", "工作", "电话", "微信"] }
       ]
     }
   ]

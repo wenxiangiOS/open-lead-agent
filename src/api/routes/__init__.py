@@ -5,7 +5,7 @@ from .chat import router as chat_router
 from .conversation import router as conversation_router
 from .user import router as user_router
 from .system import router as system_router
-from .xiaohongshu_ingest import router as xiaohongshu_ingest_router
+from src.modules.platform_xiaohongshu.interfaces.http.ingest_route import router as xiaohongshu_ingest_router
 
 __all__ = [
     'health_router',

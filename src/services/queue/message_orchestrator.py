@@ -8,6 +8,12 @@ from typing import Any, Dict, List, Optional
 
 from src.config.settings import settings
 from src.models.requests import ChatRequest
+from src.modules.shared.models.use_case_models import (
+    IngestMessageCommand,
+    IngestMessageResult,
+    ProcessChatTurnCommand,
+    ProcessChatTurnResult,
+)
 from src.services.core.chat_service import ChatService
 from src.services.queue.intent_classifier import QueueIntentClassifier
 from src.services.queue.message_models import IncomingMessage, OutboxJob
@@ -55,11 +61,40 @@ class MessageOrchestrator:
         except Exception:
             logger.debug("[mq.metrics] incr failed", extra={"metric": name})
 
-    async def ingest(self, payload: dict) -> dict:
+    @staticmethod
+    def _to_ingest_command(payload: dict | IngestMessageCommand) -> IngestMessageCommand:
+        if isinstance(payload, IngestMessageCommand):
+            return payload
+        return IngestMessageCommand(
+            account_id=str(payload.get("accountId") or "").strip(),
+            dialog_id=payload.get("dialogId"),
+            message=str(payload.get("message") or "").strip(),
+            platform_msg_id=str(payload.get("platformMsgId") or "").strip(),
+            timestamp=payload.get("timestamp"),
+            sex=payload.get("sex"),
+        )
+
+    async def ingest_command(self, payload: dict | IngestMessageCommand) -> IngestMessageResult:
+        result_payload = await self.ingest(payload)
+        return IngestMessageResult(
+            success=bool(result_payload.get("success", False)),
+            accepted=bool(result_payload.get("accepted", False)),
+            status=str(result_payload.get("status") or ""),
+            session_state=result_payload.get("sessionState"),
+            seq=int(result_payload.get("seq") or 0),
+            pending=int(result_payload.get("pending") or 0),
+            max_pending=int(result_payload.get("maxPending") or 0),
+            cancel_like=bool(result_payload.get("cancelLike", False)),
+            force_flush=bool(result_payload.get("forceFlush", False)),
+            payload=result_payload,
+        )
+
+    async def ingest(self, payload: dict | IngestMessageCommand) -> dict:
+        command = self._to_ingest_command(payload)
         await self._incr_metric("ingest_total")
-        account_id = str(payload.get("accountId") or "").strip()
-        content = str(payload.get("message") or "").strip()
-        platform_msg_id = str(payload.get("platformMsgId") or "").strip()
+        account_id = command.account_id
+        content = command.message
+        platform_msg_id = command.platform_msg_id
 
         if not account_id or not platform_msg_id:
             await self._incr_metric("ingest_invalid_payload")
@@ -71,8 +106,8 @@ class MessageOrchestrator:
 
         now_ms = self._now_ms()
         intent = self.classifier.classify(content)
-        normalized_timestamp = self._normalize_timestamp(payload.get("timestamp"))
-        if payload.get("timestamp") is not None and normalized_timestamp is None:
+        normalized_timestamp = self._normalize_timestamp(command.timestamp)
+        if command.timestamp is not None and normalized_timestamp is None:
             logger.warning(
                 "[mq.ingest] invalid timestamp ignored",
                 extra={"account_id": account_id, "platform_msg_id": platform_msg_id},
@@ -81,11 +116,11 @@ class MessageOrchestrator:
 
         incoming = IncomingMessage(
             account_id=account_id,
-            dialog_id=payload.get("dialogId"),
+            dialog_id=command.dialog_id,
             content=content,
             platform_msg_id=platform_msg_id,
             timestamp=normalized_timestamp,
-            sex=payload.get("sex"),
+            sex=command.sex,
             cancel_like=bool(intent.get("cancel_like", False)),
             force_flush=bool(intent.get("force_flush", False)),
         )
@@ -146,16 +181,16 @@ class MessageOrchestrator:
             latest_sex = self._last_non_empty(messages, "sex")
             latest_ts = self._last_non_empty(messages, "timestamp")
 
-            chat_request = ChatRequest(
-                question=combined_message,
-                accountId=account_id,
-                dialogId=latest_dialog,
-                sex=latest_sex,
-                timestamp=latest_ts,
+            result = await self._process_turn_command(
+                ProcessChatTurnCommand(
+                    question=combined_message,
+                    account_id=account_id,
+                    dialog_id=latest_dialog,
+                    sex=latest_sex,
+                    timestamp=latest_ts,
+                )
             )
-
-            result = await self.chat_service.process_chat_request(chat_request)
-            response = (result.get("response") or "").strip()
+            response = result.response.strip()
             now_ms = self._now_ms()
 
             if await self.queue_store.is_turn_stale(turn):
@@ -174,14 +209,14 @@ class MessageOrchestrator:
                     turn_id=turn.turn_id,
                     generation=turn.generation,
                     reply_text=response,
-                    dialog_id=result.get("dialogId") or latest_dialog,
+                    dialog_id=result.dialog_id or latest_dialog,
                     retry_count=0,
                     next_retry_at_ms=now_ms,
                 )
                 await self.queue_store.write_outbox(job)
                 await self._incr_metric("outbox_created")
             else:
-                if bool(result.get("success", True)):
+                if result.success:
                     await self._incr_metric("empty_response_business_silent")
                 else:
                     await self._incr_metric("empty_response_error")
@@ -210,6 +245,26 @@ class MessageOrchestrator:
             if value:
                 return value
         return None
+
+    async def _process_turn_command(self, command: ProcessChatTurnCommand):
+        use_case = getattr(self.chat_service, "process_chat_turn_use_case", None)
+        if use_case is not None and hasattr(use_case, "execute_command"):
+            return await use_case.execute_command(command)
+
+        chat_request = ChatRequest(
+            question=command.question,
+            accountId=command.account_id,
+            dialogId=command.dialog_id,
+            sex=command.sex,
+            timestamp=command.timestamp,
+        )
+        payload = await self.chat_service.process_chat_request(chat_request)
+        return ProcessChatTurnResult(
+            success=bool(payload.get("success", False)),
+            response=str(payload.get("response") or ""),
+            dialog_id=payload.get("dialogId"),
+            payload=payload,
+        )
 
     @staticmethod
     def combine_messages(

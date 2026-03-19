@@ -20,4 +20,3 @@ def test_normalize_extracted_value_filters_valuenull_variant():
     # 正常的职业名称应该保留
     assert ExtractionService._normalize_extracted_value("工程师") == "工程师"
     assert ExtractionService._normalize_extracted_value("教师") == "教师"
-

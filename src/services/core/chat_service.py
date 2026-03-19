@@ -20,20 +20,23 @@ from src.models.personality import PersonalityProfile
 from src.models.requests import ChatRequest
 from src.models.user_profile import UserProfile
 from src.services.ai_service import AIService
-from src.services.collection.ask_tracking_service import AskTrackingService
 from src.services.data.user_service import UserService
-from src.services.data.extraction_service import ExtractionService
-from src.services.data.validation_service import ValidationService
-from src.services.core.dialogue_manager import DialogueManager
-from src.services.refusal_service import RefusalService
-from src.services.field_skip_service import FieldSkipService
-from src.services.collection.contact_collection_service import ContactCollectionService
-from src.services.conversation.conversation_ending_service import ConversationEndingService
-from src.services.conversation.expectation_service import ExpectationService
-from src.services.conversation.greeting_service import GreetingService
-from src.services.conversation.input_fallback_service import InputFallbackService
-from src.services.conversation.user_question_service import UserQuestionService
-from src.services.collection.profile_collection_policy import ProfileCollectionPolicy
+from src.services.collection.profile_collection_coordinator import ProfileCollectionCoordinator
+from src.services.conversation.conversation_rule_service import ConversationRuleService
+from src.services.application.process_chat_turn import ProcessChatTurnUseCase
+from src.modules.contact_collection.domain.contact_collection_service import ContactCollectionService
+from src.modules.contact_collection.domain.refusal_service import RefusalService
+from src.modules.conversation.domain.dialogue_manager import DialogueManager
+from src.modules.conversation.domain.conversation_ending_service import ConversationEndingService
+from src.modules.conversation.domain.expectation_service import ExpectationService
+from src.modules.conversation.domain.greeting_service import GreetingService
+from src.modules.conversation.domain.input_fallback_service import InputFallbackService
+from src.modules.conversation.domain.user_question_service import UserQuestionService
+from src.modules.profile_collection.domain.ask_tracking_service import AskTrackingService
+from src.modules.profile_collection.domain.extraction_service import ExtractionService
+from src.modules.profile_collection.domain.validation_service import ValidationService
+from src.modules.profile_collection.domain.field_skip_service import FieldSkipService
+from src.modules.profile_collection.domain.profile_collection_policy import ProfileCollectionPolicy
 from src.utils.validators import InputValidator, RefusalDetector
 from src.core.exceptions import ValidationException, AIServiceException
 from src.config.settings import settings
@@ -112,495 +115,16 @@ class ChatService:
         self.user_question_service = UserQuestionService()
         self.collection_policy = ProfileCollectionPolicy()
         self.personality_profile = PersonalityProfile()
+        self.profile_collection_coordinator = ProfileCollectionCoordinator(self)
+        self.conversation_rule_service = ConversationRuleService(self)
+        self.process_chat_turn_use_case = ProcessChatTurnUseCase(self)
 
         # 临时存储可能的拒绝字段
         self._temp_refused_fields = {}
 
     async def process_chat_request(self, request: ChatRequest) -> Dict[str, Any]:
-        """
-        处理聊天请求 - 核心业务逻辑
-
-        Args:
-            request: 聊天请求
-
-        Returns:
-            Dict[str, Any]: 响应数据
-        """
-        import time
-        start_time = time.time()
-        account_id = request.accountId
-        logger.info(f"[⏱️ 性能] 开始处理请求: account_id={account_id}")
-
-        try:
-            # 1. 获取用户档案
-            user_profile = await self.user_service.get_user_profile(account_id)
-
-            # 1.1 信任上游传入的性别，并优先落档，避免首轮重复确认
-            if request.sex in ["男", "女"] and not user_profile.sex:
-                user_profile.sex = request.sex
-                user_profile.collection_progress["sex"] = True
-                await self.user_service.save_user_profile(account_id, user_profile)
-                logger.info(f"[请求性别同步] account_id={account_id}, sex={request.sex}")
-
-            # 1.5. 如果用户档案为空（全新用户），重置无意义输入计数器
-            # 这确保用户数据过期后，重新开始对话时不会受到之前计数的影响
-            is_empty = user_profile.is_empty()
-            message_count = await self.dialogue_manager.get_message_count(account_id)
-            is_new_user_session = is_empty and message_count == 0
-            is_first_user_turn = message_count == 0
-            logger.info(
-                f"[用户档案检查] account_id={account_id}, is_empty={is_empty}, "
-                f"message_count={message_count}, last_name={user_profile.last_name}"
-            )
-            if is_new_user_session:
-                await self.input_fallback_service.reset_nonsense_count(account_id)
-                # 重置对话结束状态（新用户重新开始）
-                user_profile.conversation_ended = False
-                # 注意：不重置 field_ask_count，因为它记录的是当前对话的追问次数
-                # 即使档案为空（Redis过期），追问计数也应该保持，因为这是当前对话的上下文
-                # 立即保存重置的状态，避免后续异常导致丢失
-                await self.user_service.save_user_profile(account_id, user_profile)
-                logger.info(f"[全新用户] 已重置无意义输入计数器和对话结束状态: {account_id}")
-
-            # 1.6. 检查对话是否已结束（挽留失败后）
-            # 如果已结束，用户再发消息时只返回简短告别，不再收集信息
-            if user_profile.conversation_ended:
-                logger.info(f"[对话已结束] 用户继续发消息，返回简短告别: {account_id}")
-                sex = user_profile.sex
-                call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
-                # 检查是否已经发送过告别（避免重复）
-                last_response = await self.dialogue_manager.get_last_response(account_id) or ""
-                if "有需要随时再来找我哦～拜拜" in last_response or "下次再聊～拜拜啦" in last_response:
-                    # 已经发送过告别，返回空响应
-                    return await self._build_chat_response(
-                        account_id,
-                        user_profile,
-                        "",
-                        {"collected": False, "all_fields": []},
-                        request.dialogId
-                    )
-                # 返回简短告别
-                return await self._build_chat_response(
-                    account_id,
-                    user_profile,
-                    f"好的～{call_name}，那先这样啦～有需要随时再来找我哦～拜拜👋",
-                    {"collected": False, "all_fields": []},
-                    request.dialogId
-                )
-
-            # 2. 检查信息是否已收集完成且用户只回复确认词（如"嗯"、"好"）
-            # 如果是，直接返回空响应，避免死循环
-            # 注意：只有联系方式已收集时才跳过，否则用户可能只是表示同意留电话
-            if user_profile.is_collection_complete() and user_profile.contact:
-                # 确认词列表
-                affirmative_words = ['嗯', '好', '好的', '行', '可以', 'ok', '是的', '对', '是']
-                is_affirmative = request.question.strip() in affirmative_words
-                if is_affirmative:
-                    logger.info(f"[信息收集完成] 用户只回复确认词，不调用AI，返回空响应")
-                    return {
-                        "success": True,
-                        "response": "",  # 空响应，不显示任何内容
-                        "collected_info": {},
-                        "collection_complete": True,
-                        "dialogId": request.dialogId
-                    }
-
-            # 2.5. 检测用户回复确认词但没留联系方式的情况
-            # 条件：择偶要求已收集 + 联系方式未收集 + 用户回复确认词
-            from src.services.data.extraction_service import ExtractionService
-            extraction_service = ExtractionService(self.user_service)
-            collected_info_summary = extraction_service.get_collected_info_summary(user_profile)
-            has_requirement = "要求:" in collected_info_summary
-            has_contact = "已留联系" in collected_info_summary
-            contact_next_action = self.contact_service.get_next_action(user_profile, request.question)
-            in_contact_flow = contact_next_action.value in {"ask_phone", "persuade_phone", "ask_wechat", "persuade_wechat"}
-
-            # 确认词列表
-            affirmative_words = ['嗯', '好', '好的', '行', '可以', 'ok', '是的', '对', '是', '恩', '嗯嗯', '好的呢', '好呀']
-            user_input = request.question.strip()
-            is_affirmative = user_input in affirmative_words
-
-            if (has_requirement or in_contact_flow) and not has_contact and is_affirmative:
-                # 用户在被问联系方式时只回复确认词，没有提供实际号码
-                confirm_count = await self.input_fallback_service.increment_confirm_count(account_id)
-                logger.info(f"[确认词检测] 用户第{confirm_count}次回复确认词但没留联系方式: {user_input}")
-
-                # 根据次数返回不同的回复
-                confirm_response = self.input_fallback_service.get_confirm_word_response(user_profile, confirm_count)
-                if confirm_response is not None:
-                    # 注意：空字符串 "" 也是有效响应，表示不回复用户
-                    return await self._build_chat_response(
-                        account_id,
-                        user_profile,
-                        confirm_response,  # 可能是空字符串
-                        {"collected": False, "all_fields": []},
-                        request.dialogId
-                    )
-            elif has_contact:
-                # 联系方式已收集，重置确认词计数器
-                await self.input_fallback_service.reset_confirm_count(account_id)
-
-            # 2.6. 用户询问匹配时长时，按业务规则直接回复，不交给 AI 自由发挥
-            if self.expectation_service.is_matching_timeline_question(request.question):
-                timeline_response = self.expectation_service.get_matching_timeline_response(user_profile)
-                logger.info(f"[匹配时长] 命中时长问答，快速通道回复: {timeline_response}")
-                return await self._build_chat_response(
-                    account_id,
-                    user_profile,
-                    timeline_response,
-                    {"collected": False, "all_fields": []},
-                    request.dialogId
-                )
-
-            # 3. 更新人设性别
-            self.dialogue_manager.update_user_sex(user_profile)
-
-            # 4. 检查输入是否可理解
-            if not InputValidator.is_understandable(request.question):
-                error_response = "抱歉，我没太理解您的意思，能换个方式说吗？"
-                return self._success_response(error_response, request.dialogId)
-
-            # 4.4. 检测用户结束对话意图（"不说了"、"算了"等）
-            end_intent_keywords = [
-                '不说了', '不聊了', '不想聊', '算了', '算了算了',
-                '不填了', '不填', '不写了', '不写', '下次吧',
-                '先这样', '不用了', '不用', '不要了', '不要',
-                '没兴趣', '没意思', '太麻烦', '太复杂', '太细了',
-                '问的太细', '问的太多', '问题太多', '太费事',
-                '不想说了', '豆不想说了', '不想填了', '拒绝了', '不再问了',
-                '不回答了', '不答了', '不聊', '不回', '不回复',
-                '不提供', '不给', '不愿意', '不方便', '不想给'
-            ]
-            user_input_lower = request.question.strip().lower()
-            is_end_intent = any(kw in user_input_lower for kw in end_intent_keywords)
-
-            if is_end_intent:
-                # 增加结束意图计数
-                user_profile.increment_ask_count('conversation_end_intent')
-                end_count = user_profile.get_ask_count('conversation_end_intent')
-                logger.info(f"[结束意图检测] 用户说: {request.question}，结束意图计数: {end_count}")
-                # 保存用户档案
-                await self.user_service.save_user_profile(account_id, user_profile)
-
-            # 4.4.1. 检测分居状态（用户直接说"分居中"、"正在分居"等）
-            # 分居状态说明用户还没离婚，不符合服务条件，需要结束对话
-            separation_keywords = [
-                '分居中', '正在分居', '分居状态', '分居的', '处于分居',
-                '已经分居', '目前分居', '现在分居', '还在分居'
-            ]
-            if any(kw in user_input_lower for kw in separation_keywords):
-                user_profile.conversation_ended = True
-                user_profile.marital_status = "离异（分居中）"
-                await self.user_service.save_user_profile(account_id, user_profile)
-                logger.info(f"[分居状态识别] 用户说: {request.question}，设置 conversation_ended=True, marital_status=离异（分居中）")
-
-                # 直接返回结束语，不调用 AI
-                end_responses = [
-                    "嗯嗯理解～分居中的话暂时还不符合我们的服务条件呢～等手续都办妥了再来找我吧，祝你顺利～",
-                    "好的呢～分居状态暂时还没法帮你匹配哦～等一切都处理好了再来，不着急的～如果后续有任何需要和帮助，欢迎随时找我呀～"
-                ]
-                return await self._build_chat_response(
-                    account_id,
-                    user_profile,
-                    random.choice(end_responses),
-                    {"collected": False, "all_fields": []},
-                    request.dialogId
-                )
-
-            # 4.5. 检测无意义输入（乱码、表情符号堆砌等）
-            last_ai_response = await self.dialogue_manager.get_last_response(account_id) or ""
-            nonsense_response = await self.input_fallback_service.check_and_handle_nonsense(
-                request.question,
-                account_id,
-                user_profile,
-                last_ai_response,
-            )
-            if nonsense_response:
-                # 返回人性化回复
-                return await self._build_chat_response(
-                    account_id,
-                    user_profile,
-                    nonsense_response,
-                    {},
-                    request.dialogId
-                )
-
-            # 4.6. 检测打招呼（首个用户输入优先承接，不受预填sex影响）
-            # 但如果用户同时表达了拒绝联系方式，则跳过打招呼检测，让拒绝检测处理
-            has_contact_refusal = any(kw in request.question for kw in ['不留微信', '不留电话', '不留联系方式', '不给微信', '不给电话'])
-            is_pure_greeting = self.greeting_service.is_greeting(request.question)
-            if is_pure_greeting and not has_contact_refusal:
-                if is_first_user_turn:
-                    greeting_response = self.greeting_service.get_greeting_response(request.question)
-                    await self._simulate_human_reply_delay(first_turn=True)
-                    logger.info(f"[打招呼检测] 用户打招呼: {request.question}，返回预设回复: {greeting_response}")
-                    await self._update_conversation_state(
-                        account_id,
-                        request.question,
-                        greeting_response,
-                        greeting_response,
-                        track_asked_fields=False,
-                    )
-                    return await self._build_chat_response(
-                        account_id,
-                        user_profile,
-                        greeting_response,
-                        {},
-                        request.dialogId
-                    )
-
-                if not self._should_route_followup_greeting_to_ai():
-                    followup_response = self.greeting_service.get_followup_greeting_response(request.question)
-                    await self._simulate_human_reply_delay(first_turn=False)
-                    logger.info(f"[打招呼检测] 非首轮寒暄，走轻量承接: {request.question} -> {followup_response}")
-                    await self._update_conversation_state(
-                        account_id,
-                        request.question,
-                        followup_response,
-                        followup_response,
-                        track_asked_fields=False,
-                    )
-                    return await self._build_chat_response(
-                        account_id,
-                        user_profile,
-                        followup_response,
-                        {},
-                        request.dialogId
-                    )
-
-                logger.info(
-                    f"[打招呼检测] 非首轮寒暄，按概率进入AI生成: {request.question}, "
-                    f"prob={self._get_followup_greeting_ai_prob():.2f}"
-                )
-
-            # 5. 检测用户拒绝（包含提前拒绝联系方式）
-            await self._handle_refusal_detection(request.question, account_id, user_profile)
-
-            # 5.1. 无需依赖 AI 的明显虚假信息检测
-            if self._looks_like_fake_info(request.question):
-                self.ending_service.update_profile_for_ending('fake_info', user_profile)
-                await self.user_service.save_user_profile(account_id, user_profile)
-                fake_info_response = self.ending_service.get_ending_response('fake_info') or ""
-                return await self._build_chat_response(
-                    account_id,
-                    user_profile,
-                    fake_info_response,
-                    {"collected": False, "all_fields": []},
-                    request.dialogId
-                )
-
-            conversation_context = await self.dialogue_manager.get_conversation_context(account_id)
-            prioritize_user_question = self.user_question_service.is_priority_question(request.question)
-            if prioritize_user_question:
-                logger.info(f"[答疑优先] 用户提问命中常见疑问，本轮暂停资料推进: {request.question}")
-                quick_faq_response = self.user_question_service.get_quick_faq_response(request.question)
-                if quick_faq_response:
-                    final_response = self._ensure_conservative_empathy(request.question, quick_faq_response)
-                    await self._update_conversation_state(
-                        account_id,
-                        request.question,
-                        final_response,
-                        final_response,
-                        track_asked_fields=False,
-                    )
-                    total_duration = time.time() - start_time
-                    logger.info(f"[⏱️ 性能] FAQ快速通道完成: account_id={account_id}, 总耗时={total_duration:.3f}秒")
-                    return await self._build_chat_response(
-                        account_id,
-                        user_profile,
-                        final_response,
-                        {"collected": False, "all_fields": []},
-                        request.dialogId
-                    )
-
-            # 6. 构建主对话提示词
-            main_prompt = self.dialogue_manager.build_main_dialogue_prompt(
-                request.question,
-                user_profile,
-                conversation_context,
-                prioritize_user_question=prioritize_user_question,
-            )
-
-            # 保存用户档案（因为 build_main_dialogue_prompt 可能递增了询问计数）
-            await self.user_service.save_user_profile(account_id, user_profile)
-
-            # 检查信息是否已收集完成（包含"已留联系"标记且包含"要求:"择偶要求）
-            from src.services.data.extraction_service import ExtractionService
-            extraction_service = ExtractionService(self.user_service)
-            collected_info = extraction_service.get_collected_info_summary(user_profile)
-
-            # 只有联系方式和择偶要求都收集了，才算进入收尾阶段
-            has_contact = "已留联系" in collected_info
-            has_requirement = "要求:" in collected_info
-
-            if has_contact and has_requirement:
-                # 用户已提供联系方式和择偶要求，检查是否表示结束
-                user_input = request.question.strip()
-
-                # 结束信号词（用户表示没有其他要求了）
-                ending_signals = ['没有了', '没啦', '没了', '就这些', '就这点', '暂时没有', '暂时没',
-                                  '先这样', '差不多', '应该没了', '应该没', '没有了呢', '没啥了',
-                                  '其他没了', '其他没', '暂时就这些', '目前没', '目前没有']
-                is_ending = any(signal in user_input for signal in ending_signals)
-
-                # 检查是否是问候语
-                greeting_words = ['在吗', '在不在', '你好', '您好', '嗨', '哈喽', 'hello', 'hi']
-                is_greeting = any(word in user_input for word in greeting_words)
-
-                if is_greeting:
-                    # 用户打招呼，自然回复
-                    logger.info(f"[信息收集完成] 用户打招呼，返回自然回复")
-                    natural_response = f"在的呀～{user_profile.get_greeting()}，你要是还有想了解的可以直接跟我说"
-                    return await self._build_chat_response(
-                        account_id,
-                        user_profile,
-                        natural_response,
-                        {"collected": False, "all_fields": []},
-                        request.dialogId
-                    )
-                elif is_ending:
-                    # 用户表示没有其他要求了，返回收尾话术
-                    logger.info(f"[信息收集完成] 用户表示结束: {user_input}")
-                    # 检查是否已经发送过收尾话术
-                    last_response = await self.dialogue_manager.get_last_response(account_id)
-                    timeline_text = self.expectation_service.get_closing_timeline_text(user_profile)
-                    closing_message = f"好的呀～那你等好消息啦，祝你早日脱单🥰 {timeline_text}，牵线同事联系前会提前约时间，不会打扰你的～"
-
-                    if last_response and closing_message in last_response:
-                        # 已经发送过收尾话术，返回空响应
-                        logger.info(f"[信息收集完成] 已发送过收尾话术，返回空响应")
-                        return await self._build_chat_response(
-                            account_id,
-                            user_profile,
-                            "",
-                            {"collected": False, "all_fields": []},
-                            request.dialogId
-                        )
-                    else:
-                        # 第一次，返回收尾话术
-                        return await self._build_chat_response(
-                            account_id,
-                            user_profile,
-                            closing_message,
-                            {"collected": False, "all_fields": []},
-                            request.dialogId
-                        )
-                # else: 用户可能还有其他要求要补充，继续让 AI 对话
-
-            # 7. 调用 AI 生成回复
-            ai_response = await self._call_ai(main_prompt, account_id, request.question)
-            if not ai_response:
-                ai_response = await self._build_no_ai_response(account_id, user_profile, request.question)
-
-            # 8. 从 AI 回复中提取信息
-            extracted_data = self.extraction_service.extract_json_from_response(ai_response)
-            if not extracted_data:
-                extracted_data = self._extract_basic_fields_from_message(request.question)
-
-            # 9. 处理提取的数据
-            collection_result = await self._process_collection_result(
-                account_id,
-                user_profile,
-                extracted_data,
-                request.question
-            )
-
-            # 收尾服务命中预设结束话术时，直接返回，不再继续联系方式验证或覆盖回复。
-            if collection_result.get("success") and "response" in collection_result:
-                final_response = collection_result.get("response", "")
-                await self._update_conversation_state(
-                    account_id,
-                    request.question,
-                    final_response,
-                    ai_response,
-                    track_asked_fields=False,
-                )
-                user_profile = await self.user_service.get_user_profile(account_id)
-                total_duration = time.time() - start_time
-                logger.info(f"[⏱️ 性能] 请求处理完成: account_id={account_id}, 总耗时={total_duration:.3f}秒")
-                return await self._build_chat_response(
-                    account_id,
-                    user_profile,
-                    final_response,
-                    {"collected": False, "all_fields": []},
-                    request.dialogId,
-                )
-
-            # 9.5. 如果用户提供了择偶要求，重置确认词计数器
-            # 因为接下来AI会问联系方式，这是新一轮的"问联系方式"流程
-            for field_info in collection_result.get('all_fields', []):
-                if field_info.get('field') == 'partner_requirement':
-                    await self.input_fallback_service.reset_confirm_count(account_id)
-                    logger.info(f"[确认词计数器] 用户提供了择偶要求，重置确认词计数器")
-                    break
-
-            # 重新获取 user_profile 以获得最新数据
-            user_profile = await self.user_service.get_user_profile(account_id)
-
-            # 10. 处理联系方式验证
-            enhanced_response = await self._handle_contact_validation(
-                account_id,
-                user_profile,
-                collection_result,
-                ai_response,
-                request.question
-            )
-
-            # 10.5. 香港用户：收集电话后询问微信
-            # 检查是否是香港用户且刚收集了电话但还没收集微信
-            is_hong_user = self._is_hong_user(user_profile.location)
-            contact_just_collected = any(
-                f.get('field') == 'contact' for f in collection_result.get('all_fields', [])
-            )
-            if is_hong_user and contact_just_collected and not user_profile.wechat:
-                # 香港用户刚提供了电话，需要询问微信
-                call_name = user_profile.get_greeting()
-                enhanced_response = f"好的呀～{call_name}的电话我记下啦😊 要是你微信方便的话，也可以留一个，后面联系会更顺手一点～"
-                logger.info(f"[香港用户] 电话收集完成，生成询问微信的回复")
-
-            # 11. 清理回复（移除 XML 标签）
-            # 如果 enhanced_response 为 None，表示使用原 AI 回复
-            response_to_clean = enhanced_response if enhanced_response is not None else ai_response
-            final_response = self._clean_response(response_to_clean)
-            if prioritize_user_question:
-                final_response = self._strip_collection_prompts_for_faq(final_response)
-            final_response = self._ensure_conservative_empathy(request.question, final_response)
-            final_response = self._ensure_humanlike_memory_ack(request.question, user_profile, final_response)
-
-            # 11.5. 保存 field_ask_count 快照（在 _track_ai_asked_fields 增加计数之前）
-            # 用于"已跳过"显示逻辑：使用"增加前"的值，这样用户还有机会回答当前问题
-            field_ask_count_before = dict(user_profile.field_ask_count) if user_profile.field_ask_count else {}
-
-            # 12. 更新对话状态
-            await self._update_conversation_state(
-                account_id,
-                request.question,
-                final_response,
-                ai_response,
-                track_asked_fields=not prioritize_user_question,
-            )
-
-            # 13. 重新获取最新的用户档案（包含刚更新的 field_ask_count）
-            user_profile = await self.user_service.get_user_profile(account_id)
-
-            # 14. 构建响应
-            total_duration = time.time() - start_time
-            logger.info(f"[⏱️ 性能] 请求处理完成: account_id={account_id}, 总耗时={total_duration:.3f}秒")
-            return await self._build_chat_response(
-                account_id,
-                user_profile,
-                final_response,
-                collection_result,
-                request.dialogId,
-                field_ask_count_before  # 传递"增加前"的快照，用于正确显示"已跳过"时机
-            )
-
-        except Exception as e:
-            total_duration = time.time() - start_time
-            logger.error(f"[⏱️ 性能] 请求处理异常: account_id={account_id}, 总耗时={total_duration:.3f}秒, 错误={e}")
-            from src.core.error_handler import handle_error
-            error_response = handle_error(e, context="chat", user_id=account_id)
-            return self._error_response(error_response.get('error', '处理失败'), request.dialogId)
+        """处理聊天请求 - 兼容入口，主流程已迁移到 use case。"""
+        return await self.process_chat_turn_use_case.execute(request)
 
     async def _handle_refusal_detection(self, user_message: str, account_id: str, user_profile: UserProfile) -> None:
         """
@@ -862,6 +386,7 @@ class ChatService:
         fallback_contact = self._extract_contact_candidate_from_message(user_message)
         fallback_candidate = fallback_contact["value"] if fallback_contact else None
         fallback_hint = fallback_contact["type"] if fallback_contact else None
+        fallback_contaminated = bool(fallback_contact.get("contaminated")) if fallback_contact else False
         contact_value = collected_phone or collected_contact
         invalid_contact_attempt = collection_result.get("invalid_contact_attempt") or fallback_candidate
 
@@ -874,12 +399,16 @@ class ChatService:
             from src.utils.validators import ContactValidator
 
             is_valid_fallback, fallback_type, _ = ContactValidator.is_valid_contact(fallback_candidate)
-            if is_valid_fallback:
+            if is_valid_fallback and not fallback_contaminated:
                 if fallback_hint == "wechat":
                     collected_wechat = fallback_candidate
                 else:
                     contact_value = fallback_candidate
                 logger.info(f"[联系方式兜底] 从原始消息恢复联系方式: type={fallback_hint or fallback_type}, value={fallback_candidate}")
+            elif is_valid_fallback and fallback_contaminated:
+                logger.info(
+                    f"[联系方式兜底] 检测到污染输入，拒绝自动收集: type={fallback_hint or fallback_type}, value={fallback_candidate}"
+                )
 
         contact_value = contact_value or collected_phone or collected_contact
         logger.info(f"[联系方式检查] collected_contact={contact_value}, collected_wechat={collected_wechat}, all_fields={collection_result.get('all_fields', [])}")
@@ -899,6 +428,8 @@ class ChatService:
         if contact_value is None and collected_wechat is None:
             if invalid_contact_attempt:
                 logger.info(f"[联系方式检查] 检测到疑似无效联系方式输入: {invalid_contact_attempt}")
+                if fallback_contaminated and (fallback_hint == "wechat" or "微信" in user_message):
+                    return f"{user_profile.get_greeting()}，这个微信号里好像混了多余字符，麻烦你重新确认一下微信号哈～"
                 if fallback_hint == "wechat" or "微信" in user_message:
                     is_valid, error_msg = self.validation_service.validate_wechat(invalid_contact_attempt)
                     if not is_valid and error_msg:
@@ -1219,9 +750,17 @@ class ChatService:
             marker = matched.group("marker").lower()
             hinted_type = "wechat" if marker in {"微信", "vx", "wx", "weixin"} else "phone"
             raw_value = matched.group("value").strip()
+            contaminated = False
             if hinted_type == "phone":
                 raw_value = re.sub(r'[\s-]', '', raw_value)
-            return {"value": raw_value, "type": hinted_type}
+            else:
+                value_end = matched.end("value")
+                if value_end < len(user_message):
+                    trailing_char = user_message[value_end]
+                    # 防止将 “wx12345让3” 这类混杂串误收集成合法微信
+                    if re.match(r"[A-Za-z0-9_\-\u4e00-\u9fff]", trailing_char):
+                        contaminated = True
+            return {"value": raw_value, "type": hinted_type, "contaminated": contaminated}
 
         return None
 
@@ -1240,9 +779,20 @@ class ChatService:
             if re.match(r'^1[3-9]\d{9}$', phone_value) or re.match(r'^[5-9]\d{7}$', phone_value):
                 contacts["phone"] = phone_value
 
-        wechat_match = re.search(r'(?:微信|vx|wx|weixin)[^a-zA-Z0-9_-]*(?:就是手机号)?([a-zA-Z][a-zA-Z0-9_-]{5,19}|1[3-9]\d{9}|[5-9]\d{7})\b', user_message, re.IGNORECASE)
+        wechat_match = re.search(
+            r'(?:微信|vx|wx|weixin)[^a-zA-Z0-9_-]*(?:就是手机号)?([a-zA-Z][a-zA-Z0-9_-]{5,19}|1[3-9]\d{9}|[5-9]\d{7})\b',
+            user_message,
+            re.IGNORECASE,
+        )
         if wechat_match:
-            contacts["wechat"] = wechat_match.group(1)
+            wechat_value = wechat_match.group(1)
+            value_end = wechat_match.end(1)
+            trailing_contaminated = False
+            if value_end < len(user_message):
+                trailing_char = user_message[value_end]
+                trailing_contaminated = bool(re.match(r"[A-Za-z0-9_\-\u4e00-\u9fff]", trailing_char))
+            if not trailing_contaminated:
+                contacts["wechat"] = wechat_value
 
         return contacts
 
@@ -1397,7 +947,8 @@ class ChatService:
         response: str,
         collection_result: Dict[str, Any],
         dialog_id: Optional[str],
-        field_ask_count_before: Dict[str, int] = None
+        field_ask_count_before: Dict[str, int] = None,
+        response_route: Optional[str] = None,
     ) -> Dict[str, Any]:
         """构建聊天响应
 
@@ -1405,6 +956,9 @@ class ChatService:
             field_ask_count_before: AI询问前的字段计数快照，用于正确显示"已跳过"时机
                                    （使用"增加前"的值，这样用户还有机会回答当前问题）
         """
+        if response_route:
+            await self._simulate_non_ai_human_delay(response, route=response_route)
+
         # 检查是否拒绝
         is_refusal = RefusalDetector.is_refusing(response)
 
@@ -1608,6 +1162,37 @@ class ChatService:
         min_s = max(0.0, min_s)
         max_s = max(min_s, max_s)
         await asyncio.sleep(random.uniform(min_s, max_s))
+
+    async def _simulate_non_ai_human_delay(self, response_text: str, route: str = "rule") -> None:
+        """给非 AI 直返路径加拟人延时，避免秒回暴露机器人。"""
+        enabled = os.getenv("MQ_NON_AI_DELAY_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            return
+        if not response_text or not response_text.strip():
+            return
+
+        base = self._env_float("MQ_NON_AI_DELAY_BASE", 0.7)
+        per_char = self._env_float("MQ_NON_AI_DELAY_PER_CHAR", 0.018)
+        jitter_min = self._env_float("MQ_NON_AI_DELAY_JITTER_MIN", 0.2)
+        jitter_max = self._env_float("MQ_NON_AI_DELAY_JITTER_MAX", 0.9)
+        cap = self._env_float("MQ_NON_AI_DELAY_MAX", 3.8)
+
+        if route == "quick_faq":
+            base = self._env_float("MQ_QUICK_FAQ_DELAY_BASE", base)
+            per_char = self._env_float("MQ_QUICK_FAQ_DELAY_PER_CHAR", per_char)
+            jitter_min = self._env_float("MQ_QUICK_FAQ_DELAY_JITTER_MIN", jitter_min)
+            jitter_max = self._env_float("MQ_QUICK_FAQ_DELAY_JITTER_MAX", jitter_max)
+            cap = self._env_float("MQ_QUICK_FAQ_DELAY_MAX", cap)
+
+        if jitter_max < jitter_min:
+            jitter_min, jitter_max = jitter_max, jitter_min
+
+        delay = base + max(0, len(response_text)) * per_char + random.uniform(jitter_min, jitter_max)
+        delay = max(0.0, min(delay, max(0.0, cap)))
+        logger.info(f"[拟人延时] route={route}, delay={delay:.3f}s")
+        await asyncio.sleep(delay)
 
     # ============ 打招呼检测 ============
 

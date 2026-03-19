@@ -79,18 +79,17 @@ class TestProfileCollectionPolicy:
         assert decision.main_target == "occupation"
         assert decision.side_target is None
 
-    def test_can_enter_contact_when_four_core_or_quasi_fields_ready(self):
+    def test_cannot_enter_contact_without_location_and_background(self):
         profile = UserProfile(account_id="u1")
-        for field in ["sex", "age", "location", "education"]:
+        for field in ["sex", "age", "education", "marital_status"]:
             profile.collection_progress[field] = True
 
-        assert self.policy.can_enter_contact(profile) is True
+        assert self.policy.can_enter_contact(profile) is False
 
-    def test_can_enter_contact_when_minimum_required_combination_ready(self):
+    def test_can_enter_contact_when_location_background_and_core_ready(self):
         profile = UserProfile(account_id="u1")
-        for field in ["age", "location", "marital_status"]:
+        for field in ["sex", "age", "location", "occupation", "marital_status"]:
             profile.collection_progress[field] = True
-        profile.collection_progress["occupation"] = True
 
         assert self.policy.can_enter_contact(profile) is True
 

@@ -11,6 +11,17 @@ def test_enqueue_and_turn_flow_memory_mode():
     asyncio.run(_test_enqueue_and_turn_flow_memory_mode())
 
 
+def test_queue_ttl_supports_duration_strings():
+    store = QueueStore()
+    store._cfg = lambda name, default: {  # type: ignore[assignment]
+        "mq_session_ttl_seconds": "7d",
+        "mq_dedupe_ttl_seconds": "24h",
+    }.get(name, default)
+
+    assert store._session_ttl() == 604800
+    assert store._dedupe_ttl() == 86400
+
+
 async def _test_enqueue_and_turn_flow_memory_mode():
     redis_service.enabled = False
     store = QueueStore()

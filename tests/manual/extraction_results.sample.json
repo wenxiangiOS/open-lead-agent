@@ -1,0 +1,10 @@
+[
+  {
+    "id": "E001",
+    "response": "测试回复\n<extract>\n年龄:31岁\n</extract>"
+  },
+  {
+    "id": "E002",
+    "response": "<extract>\n年龄:28岁\n</extract>"
+  }
+]

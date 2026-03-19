@@ -1,4 +1,5 @@
 from argparse import Namespace
+import asyncio
 
 from scripts.run_real_ai_regression import RUN_PROFILES, apply_filters, apply_profile, load_failed_ids, print_progress
 from tests.real_ai.scenario_runner import AssertionEvaluator, ScenarioLoader, ScenarioValidationError
@@ -264,3 +265,75 @@ def test_print_progress_outputs_start_and_finish(capsys):
     assert "[1/2] FAIL demo (1.23s)" in captured.out
     assert "missing keyword" in captured.out
     assert "transcript:" in captured.out
+
+
+def test_runner_tolerates_empty_message_for_mq_placeholder_scenario(tmp_path, monkeypatch):
+    from tests.real_ai.scenario_runner import RealAIScenarioRunner, ScenarioCase
+
+    runner = RealAIScenarioRunner(tmp_path, report_dir=tmp_path)
+
+    async def _noop_reset(_account_id):
+        return None
+
+    async def _noop_profile(_account_id):
+        return {"success": True, "profile": {}}
+
+    async def _should_not_be_called(_request):
+        raise AssertionError("process_chat_request should not be called for invalid turn")
+
+    monkeypatch.setattr(runner.chat_service, "reset_user_conversation", _noop_reset)
+    monkeypatch.setattr(runner.chat_service, "get_user_profile", _noop_profile)
+    monkeypatch.setattr(runner.chat_service, "process_chat_request", _should_not_be_called)
+
+    scenario = ScenarioCase(
+        scenario_id="invalid_empty_question",
+        category="mq",
+        tags=["pending"],
+        description="",
+        messages=[" "],
+        assertions=[],
+    )
+
+    result = asyncio.run(runner._run_one(scenario))
+
+    assert result.passed is True
+    assert result.checks_total == 0
+    assert result.checks_passed == 0
+    assert result.failures == []
+
+
+def test_runner_records_runtime_failure_for_non_mq_invalid_turn(tmp_path, monkeypatch):
+    from tests.real_ai.scenario_runner import RealAIScenarioRunner, ScenarioCase
+
+    runner = RealAIScenarioRunner(tmp_path, report_dir=tmp_path)
+
+    async def _noop_reset(_account_id):
+        return None
+
+    async def _noop_profile(_account_id):
+        return {"success": True, "profile": {}}
+
+    async def _should_not_be_called(_request):
+        raise AssertionError("process_chat_request should not be called for invalid turn")
+
+    monkeypatch.setattr(runner.chat_service, "reset_user_conversation", _noop_reset)
+    monkeypatch.setattr(runner.chat_service, "get_user_profile", _noop_profile)
+    monkeypatch.setattr(runner.chat_service, "process_chat_request", _should_not_be_called)
+
+    scenario = ScenarioCase(
+        scenario_id="invalid_empty_question_non_mq",
+        category="humanlike_queue",
+        tags=["pending"],
+        description="",
+        messages=[" "],
+        assertions=[],
+    )
+
+    result = asyncio.run(runner._run_one(scenario))
+
+    assert result.passed is False
+    assert result.checks_total == 1
+    assert result.checks_passed == 0
+    assert len(result.failures) == 1
+    assert result.failures[0].assertion_type == "scenario_runtime_error"
+    assert "Question cannot be empty" in result.failures[0].message

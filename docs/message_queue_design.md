@@ -1,7 +1,7 @@
 # 多次发送消息处理方案设计文档
 
 > 创建时间：2026-03-06
-> 最后更新：2026-03-18
+> 最后更新：2026-03-19
 > 状态：建议按本方案实施
 > 文档类型：正式技术方案
 
@@ -24,10 +24,10 @@
 
 当前状态（人工摘要）：
 
-- P0：`IN_PROGRESS`（代码与测试已就绪，仅剩真实外部发送端到端验收）
+- P0：`DONE`（代码、本地 E2E、108 场景回归已收口）
 - P1：`DONE`（六项优化已完成并提供验收报告）
 - P2：`DONE`（六项优化已完成并提供验收报告）
-- 最近更新时间：`2026-03-18 12:37:18 +0800`
+- 最近更新时间：`2026-03-18 23:59:30 +0800`
 - 基线 commit：`2bef0da`
 
 协作规则：
@@ -57,19 +57,16 @@
    - 入站：`POST /api/xiaohongshu/messages/ingest`
    - 回执：`GET /api/xiaohongshu/messages/replies`
 
-### B. 未完成（必须补齐）
+### B. 未完成（可选增强）
 
-1. `P0` 仍是 `IN_PROGRESS`，缺口只有线上联调类事项：
-2. 真实外部发送端点 `XHS_REPLY_API` 生产端到端验收未完成。
-3. 外部调用方（如 3chat.ai）是否已全量切换到 `ingest` 未在仓库内闭环确认。
+1. 真实外部发送端点 `XHS_REPLY_API` 生产端到端 smoke 报告可持续补充。
+2. 外部调用方（如 3chat.ai）是否已全量切换到 `ingest` 建议在仓库外补闭环记录。
 
-### C. 下一步执行顺序（其他模型必须按序）
+### C. 下一步执行顺序（回归口径）
 
-1. 先读 `docs/message_queue_status.yaml`，确认 `open_items` 与当前代码一致。
-2. 完成 `XHS_REPLY_API` 真实联调（使用 `scripts/run_mq_p0_production_smoke.py` 产出报告）。
-3. 执行回归并更新：
-   - `reports/mq/p0_acceptance_*.md`
-   - `docs/message_queue_status.yaml`（仅全部通过后将 `p0.state` 改为 `DONE`）
+1. Chat 场景回归（默认自动排除 `mq`）：`python3 scripts/run_real_ai_regression.py`
+2. MQ ingest 回归（真实接口口径）：`python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000`
+3. 若需一键串行执行：`python3 scripts/run_real_ai_regression.py --include-mq --mq-base-url http://127.0.0.1:8000`
 
 ## 零、2026-03-18 最终实施基线（给其他模型的强约束版本）
 
@@ -385,6 +382,30 @@ MQ_PRIORITY_BOOST_MS=1200
 MQ_HOT_SESSION_THRESHOLD=20
 MQ_FIELD_ASK_COOLDOWN_TURNS=2
 MQ_SKIP_GUARD_ENABLED=true
+```
+
+### 0.5.1 TTL 分环境推荐清单（开发/测试/生产）
+
+> 目的：避免把 `chat` 用户状态 TTL 和 `mq` 会话 TTL 配成同一值，导致重启恢复或上下文保留异常。
+
+| 环境 | `REDIS_TTL`（chat 用户状态） | `MQ_SESSION_TTL_SECONDS`（mq 会话） | `MQ_DEDUPE_TTL_SECONDS`（mq 去重） | 说明 |
+|------|------------------------------|-------------------------------------|------------------------------------|------|
+| 开发（本地） | `3600`（1h） | `86400`（1d） | `21600`（6h） | 便于快速验证与清理，仍保留基本恢复能力 |
+| 测试（联调/预发） | `21600`（6h） | `259200`（3d） | `43200`（12h） | 支持长链路回放与重启恢复测试 |
+| 生产 | `86400`（24h） | `604800`（7d） | `86400`（24h） | 推荐基线；`mq` TTL 明显长于 chat TTL |
+
+约束：
+
+1. `MQ_SESSION_TTL_SECONDS` 必须 `>= REDIS_TTL`。
+2. `MQ_DEDUPE_TTL_SECONDS` 不应低于平台重试窗口，建议至少 24h（生产）。
+3. `REDIS_TTL=60`（1 分钟）仅适合临时调试，不适合稳定回归或线上环境。
+
+可直接复制到 `.env`（生产）：
+
+```ini
+REDIS_TTL=86400
+MQ_SESSION_TTL_SECONDS=604800
+MQ_DEDUPE_TTL_SECONDS=86400
 ```
 
 ### 0.6 接入方契约（3chat.ai / 小红书调用方）

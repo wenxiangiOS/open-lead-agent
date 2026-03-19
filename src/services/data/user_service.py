@@ -349,6 +349,8 @@ class UserService:
         """Update user preference"""
         user_state = await self.get_user_state(user_id)
         user_state.update_preference(key, value)
+        await self.save_user_state(user_id, user_state)
+        self._memory_states[user_id] = user_state
         logger.info(f"Updated preference {key} for user: {user_id}")
 
     async def get_user_preference(self, user_id: str, key: str, default: Any = None) -> Any:

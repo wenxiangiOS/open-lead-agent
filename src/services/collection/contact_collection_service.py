@@ -25,6 +25,7 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
 import logging
+import re
 
 from src.models.user_profile import UserProfile
 
@@ -48,6 +49,36 @@ class RefusalResult:
     is_refusal: bool       # 是否为拒绝
     is_final: bool         # 是否为最终拒绝（达到上限）
     ask_count_after: int   # 更新后的询问次数
+
+
+class ContactFlowState(Enum):
+    """显式联系方式流程状态。"""
+    NO_CONTACT = "no_contact"
+    PHONE_REQUESTED = "phone_requested"
+    PHONE_PERSUADING = "phone_persuading"
+    PHONE_FINAL_REFUSED = "phone_final_refused"
+    PHONE_COLLECTED = "phone_collected"
+    WECHAT_REQUESTED = "wechat_requested"
+    WECHAT_PERSUADING = "wechat_persuading"
+    WECHAT_FINAL_REFUSED = "wechat_final_refused"
+    WECHAT_COLLECTED = "wechat_collected"
+    CONTACT_CLOSED = "contact_closed"
+    CONTACT_COLLECTED = "contact_collected"
+
+
+@dataclass
+class ContactFlowSnapshot:
+    """联系方式流程的显式快照，用于解释当前状态而不改变现有业务逻辑。"""
+    state: ContactFlowState
+    next_action: NextAction
+    phone_collected: bool
+    wechat_collected: bool
+    rejected_phone: bool
+    rejected_wechat: bool
+    phone_ask_count: int
+    wechat_ask_count: int
+    should_end_conversation: bool
+    is_hongkong_user: bool
 
 
 class ContactCollectionService:
@@ -98,6 +129,10 @@ class ContactCollectionService:
     # 通用联系方式偏好（用户明确说用某种方式）
     CONTACT_PREFERENCE_KEYWORDS: List[str] = [
         "用微信联系吧", "微信吧", "用微信吧", "加微信吧", "微信也行",
+    ]
+
+    SOFT_ACK_MESSAGES: List[str] = [
+        "嗯", "嗯嗯", "恩", "好", "好的", "好呀", "好的呢", "行", "可以", "ok", "好的哈"
     ]
     # ==================== 提示词模板 ====================
 
@@ -351,6 +386,14 @@ class ContactCollectionService:
 
         is_hk = self.is_hongkong_user(profile)
 
+        if self._should_switch_from_phone_to_wechat(profile, user_message, is_hk):
+            logger.info("[联系方式保护] 低信息确认后不继续追问电话，切到微信方案")
+            return NextAction.ASK_WECHAT
+
+        if self._should_switch_from_wechat_to_phone(profile, user_message, is_hk):
+            logger.info("[联系方式保护] 低信息确认后不继续追问微信，切到电话方案")
+            return NextAction.ASK_PHONE
+
         # 场景1: 双方都被拒绝 → 结束对话
         if profile.rejected_phone and profile.rejected_wechat:
             return NextAction.END_CONVERSATION
@@ -422,6 +465,57 @@ class ContactCollectionService:
                     return NextAction.PERSUADE_PHONE
 
         return NextAction.NONE
+
+    def get_flow_state(self, profile: UserProfile, user_message: str = "") -> ContactFlowState:
+        """
+        返回显式联系方式流程状态。
+
+        说明：
+        - 该状态是对现有 `UserProfile` 字段和 `get_next_action()` 结果的派生视图
+        - 不引入第二套业务真源
+        - 不改变现有动作决策
+        """
+        next_action = self.get_next_action(profile, user_message)
+        phone_collected = bool(profile.phone_collected and profile.phone)
+        wechat_collected = bool(profile.wechat_collected and profile.wechat)
+
+        if self.should_end_conversation(profile):
+            return ContactFlowState.CONTACT_CLOSED
+        if phone_collected and wechat_collected:
+            return ContactFlowState.CONTACT_COLLECTED
+        if next_action == NextAction.ASK_PHONE:
+            return ContactFlowState.PHONE_REQUESTED
+        if next_action == NextAction.PERSUADE_PHONE:
+            return ContactFlowState.PHONE_PERSUADING
+        if next_action == NextAction.ASK_WECHAT:
+            return ContactFlowState.WECHAT_REQUESTED
+        if next_action == NextAction.PERSUADE_WECHAT:
+            return ContactFlowState.WECHAT_PERSUADING
+        if phone_collected:
+            return ContactFlowState.PHONE_COLLECTED
+        if wechat_collected:
+            return ContactFlowState.WECHAT_COLLECTED
+        if profile.rejected_phone and not profile.rejected_wechat:
+            return ContactFlowState.PHONE_FINAL_REFUSED
+        if profile.rejected_wechat and not profile.rejected_phone:
+            return ContactFlowState.WECHAT_FINAL_REFUSED
+        return ContactFlowState.NO_CONTACT
+
+    def get_flow_snapshot(self, profile: UserProfile, user_message: str = "") -> ContactFlowSnapshot:
+        """返回联系方式流程显式快照。"""
+        next_action = self.get_next_action(profile, user_message)
+        return ContactFlowSnapshot(
+            state=self.get_flow_state(profile, user_message),
+            next_action=next_action,
+            phone_collected=bool(profile.phone_collected and profile.phone),
+            wechat_collected=bool(profile.wechat_collected and profile.wechat),
+            rejected_phone=bool(profile.rejected_phone),
+            rejected_wechat=bool(profile.rejected_wechat),
+            phone_ask_count=int(profile.phone_ask_count),
+            wechat_ask_count=int(profile.wechat_ask_count),
+            should_end_conversation=self.should_end_conversation(profile),
+            is_hongkong_user=self.is_hongkong_user(profile),
+        )
 
     # 联系方式已收集，继续收集其他字段的指令
     PROMPT_CONTINUE_OTHER_FIELDS = """
@@ -512,6 +606,46 @@ class ContactCollectionService:
         explicit_contact_preference = any(keyword in user_message for keyword in self.CONTACT_PREFERENCE_KEYWORDS)
         refuses_phone = self._message_indicates_phone_refusal_preference(user_message)
         return wants_wechat and (refuses_phone or explicit_contact_preference)
+
+    def _is_soft_ack_without_contact(self, user_message: str) -> bool:
+        message = (user_message or "").strip().lower()
+        if not message:
+            return False
+        if re.search(r"\d", message):
+            return False
+        return message in self.SOFT_ACK_MESSAGES
+
+    def _should_switch_from_phone_to_wechat(
+        self,
+        profile: UserProfile,
+        user_message: str,
+        is_hk: bool,
+    ) -> bool:
+        if is_hk or not self._is_soft_ack_without_contact(user_message):
+            return False
+        return (
+            profile.phone_ask_count >= 1
+            and not profile.phone_collected
+            and not profile.rejected_phone
+            and not profile.wechat_collected
+            and not profile.rejected_wechat
+        )
+
+    def _should_switch_from_wechat_to_phone(
+        self,
+        profile: UserProfile,
+        user_message: str,
+        is_hk: bool,
+    ) -> bool:
+        if is_hk or not self._is_soft_ack_without_contact(user_message):
+            return False
+        return (
+            profile.wechat_ask_count >= 1
+            and not profile.wechat_collected
+            and not profile.rejected_wechat
+            and not profile.phone_collected
+            and not profile.rejected_phone
+        )
 
     def _message_indicates_phone_refusal_preference(self, user_message: str) -> bool:
         """判断用户是否表达了“电话不方便，优先微信”的拒绝偏好。"""
@@ -677,7 +811,18 @@ class ContactCollectionService:
 
     def _has_general_refusal(self, message_lower: str) -> bool:
         """判断是否包含通用拒绝词"""
-        return any(kw in message_lower for kw in self.GENERAL_REFUSAL_KEYWORDS)
+        if any(kw in message_lower for kw in self.GENERAL_REFUSAL_KEYWORDS):
+            return True
+        # 口语与轻微噪声鲁棒匹配：不太方便 / 不方便啊 / 先不留 / 暂时不留 等
+        soft_patterns = [
+            r'不.{0,2}方便',
+            r'先不留',
+            r'暂时不留',
+            r'不想留',
+            r'不太想留',
+            r'不.{0,2}给',
+        ]
+        return any(re.search(pattern, message_lower) for pattern in soft_patterns)
 
     def _is_context_about(self, last_response: Optional[str], contact_type: str) -> bool:
         """

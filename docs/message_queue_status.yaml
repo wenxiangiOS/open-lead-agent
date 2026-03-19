@@ -1,17 +1,14 @@
 version: 1
 project: message_queue_orchestration
-last_updated: "2026-03-18 18:01:00 +0800"
+last_updated: "2026-03-18 23:59:30 +0800"
 baseline_commit: "2bef0da"
 owner: "unassigned"
 
 status:
   p0:
-    state: IN_PROGRESS
-    summary: "P0 功能与本地真实 HTTP E2E 已完成；时延优化已落地防抖/轮询/快失败+FAQ快速通道，并新增可回退模型路由，待本机真实AI全量压测验收"
-    open_items:
-      - "真实 XHS_REPLY_API 生产端到端验收未完成（需产出 smoke 报告）"
-      - "外部调用方（3chat.ai）是否全量切到 ingest 未在仓库内闭环验证"
-      - "时延优化P0需在可用AI网络环境下完成 108 场景前后对比并产出报告"
+    state: DONE
+    summary: "P0 功能与时延优化已完成并通过本地真实 HTTP E2E 与 108 场景全量回归验收"
+    open_items: []
     checklist:
       atomic_enqueue_lua: true
       ingest_api: true

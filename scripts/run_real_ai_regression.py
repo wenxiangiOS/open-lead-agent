@@ -8,6 +8,7 @@ import asyncio
 import json
 import random
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -111,6 +112,21 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="实时打印每轮用户输入、AI 回复和已收集信息",
     )
+    parser.add_argument(
+        "--include-mq",
+        action="store_true",
+        help="附加执行 MQ ingest API 回归（category=mq 走独立 runner）",
+    )
+    parser.add_argument(
+        "--mq-base-url",
+        default="http://127.0.0.1:8000",
+        help="MQ ingest 回归服务地址，仅 --include-mq 时生效",
+    )
+    parser.add_argument(
+        "--mq-api-key",
+        default="",
+        help="MQ ingest 可选 X-API-Key，仅 --include-mq 时生效",
+    )
     return parser.parse_args()
 
 
@@ -188,7 +204,8 @@ def resolve_scenario_source(args: argparse.Namespace) -> tuple[str, Path | None]
         if not src_dir.exists():
             continue
         for json_file in sorted(src_dir.glob("*.json")):
-            shutil.copy2(json_file, merged_dir / json_file.name)
+            target_name = f"{src_dir.name}__{json_file.name}"
+            shutil.copy2(json_file, merged_dir / target_name)
     return str(merged_dir), merged_dir
 
 
@@ -241,46 +258,51 @@ async def main() -> int:
                 print("警告:")
                 for item in result["warnings"]:
                     print(f"- {item}")
+            if temp_dir is not None:
+                shutil.rmtree(temp_dir, ignore_errors=True)
             return 0
 
         scenarios = loader.load()
     except ScenarioValidationError as exc:
         print(f"场景加载失败: {exc}")
-        return 1
-    finally:
         if temp_dir is not None:
-            # runner 在 run 阶段还会再次读取；这里只在提前返回时由 finally 兜底清理
-            pass
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        return 1
 
     scenarios = apply_filters(scenarios, args)
+    mq_scenarios = [item for item in scenarios if item.category == "mq"]
+    chat_scenarios = [item for item in scenarios if item.category != "mq"]
 
     if args.list:
-        try:
-            for item in scenarios:
-                tags = ",".join(item.tags) if item.tags else "-"
-                print(f"{item.scenario_id}\t{item.category}\t{tags}\t{item.description}")
-            return 0
-        finally:
-            if temp_dir is not None:
-                shutil.rmtree(temp_dir, ignore_errors=True)
+        for item in scenarios:
+            tags = ",".join(item.tags) if item.tags else "-"
+            print(f"{item.scenario_id}\t{item.category}\t{tags}\t{item.description}")
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        return 0
 
-    runner = RealAIScenarioRunner(
-        scenario_file=scenario_source,
-        report_dir=args.report_dir,
-    )
+    if mq_scenarios and not args.include_mq:
+        print(f"提示: 已自动跳过 {len(mq_scenarios)} 个 mq 场景（默认不在 chat runner 执行）。")
+        print("如需执行 mq 场景，请追加 --include-mq。")
 
-    def progress(event, scenario, index, total, result):
-        print_progress(event, scenario, index, total, result, verbose=args.verbose)
+    report = {
+        "summary": {"failed": 0, "total": 0, "passed": 0, "total_duration_seconds": 0, "avg_duration_seconds": 0, "max_duration_seconds": 0, "token_usage": {"total_tokens": 0, "call_count": 0}},
+        "results": [],
+    }
+    if chat_scenarios:
+        runner = RealAIScenarioRunner(
+            scenario_file=scenario_source,
+            report_dir=args.report_dir,
+        )
 
-    try:
+        def progress(event, scenario, index, total, result):
+            print_progress(event, scenario, index, total, result, verbose=args.verbose)
+
         report = await runner.run(
-            scenario_ids=[item.scenario_id for item in scenarios],
+            scenario_ids=[item.scenario_id for item in chat_scenarios],
             stop_on_failure=args.stop_on_failure,
             progress_callback=progress,
         )
-    finally:
-        if temp_dir is not None:
-            shutil.rmtree(temp_dir, ignore_errors=True)
 
     summary = report["summary"]
     print(f"总场景: {summary['total']}")
@@ -299,7 +321,35 @@ async def main() -> int:
             turn_label = f"turn={failure['turn']}" if failure.get("turn") else "turn=-"
             print(f"  - [{failure['assertion_type']}] {turn_label} {failure['message']}")
 
-    return 0 if summary["failed"] == 0 else 1
+    exit_code = 0 if summary["failed"] == 0 else 1
+
+    if args.include_mq and mq_scenarios:
+        mq_cmd = [
+            sys.executable,
+            str(PROJECT_ROOT / "scripts" / "run_mq_ingest_regression.py"),
+            "--scenario-file",
+            scenario_source,
+            "--base-url",
+            args.mq_base_url,
+        ]
+        if args.mq_api_key:
+            mq_cmd.extend(["--api-key", args.mq_api_key])
+        if args.max_scenarios is not None:
+            mq_cmd.extend(["--max-scenarios", str(args.max_scenarios)])
+        if args.verbose:
+            mq_cmd.append("--verbose")
+        for item in mq_scenarios:
+            mq_cmd.extend(["--scenario-id", item.scenario_id])
+
+        print("\n=== MQ ingest 回归（独立 runner）===\n")
+        mq_result = subprocess.run(mq_cmd, check=False)
+        if mq_result.returncode != 0:
+            exit_code = 1
+
+    if temp_dir is not None:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return exit_code
 
 
 if __name__ == "__main__":

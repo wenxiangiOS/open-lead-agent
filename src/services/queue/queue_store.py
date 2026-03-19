@@ -10,6 +10,7 @@ from dataclasses import asdict
 from typing import Dict, List, Optional
 
 from src.config.settings import settings
+from src.config.components.redis_config import parse_ttl
 from src.services.data.redis_service import redis_service
 from src.services.queue.message_models import (
     EnqueueResult,
@@ -86,10 +87,10 @@ class QueueStore:
         return raw
 
     def _session_ttl(self) -> int:
-        return int(self._cfg("mq_session_ttl_seconds", 604800))
+        return parse_ttl(self._cfg("mq_session_ttl_seconds", 604800))
 
     def _dedupe_ttl(self) -> int:
-        return int(self._cfg("mq_dedupe_ttl_seconds", 86400))
+        return parse_ttl(self._cfg("mq_dedupe_ttl_seconds", 86400))
 
     @staticmethod
     def _metric_key(name: str) -> str:

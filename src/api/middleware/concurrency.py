@@ -140,7 +140,7 @@ class ConcurrencyMiddleware(BaseHTTPMiddleware):
 
         # 尝试从 JSON body 获取 accountId/userId。
         # Starlette 会缓存 body，不会影响后续路由读取。
-        if request.method in {"POST", "PUT", "PATCH"}:
+        if request.method in {"POST", "PUT", "PATCH"} and request.url.path in self.BODY_USER_ID_PATHS:
             content_type = request.headers.get("content-type", "")
             if "application/json" in content_type:
                 try:
@@ -183,3 +183,8 @@ class ConcurrencyMiddleware(BaseHTTPMiddleware):
             return client_host
 
         return "unknown"
+    BODY_USER_ID_PATHS = frozenset({
+        "/api/doubao/chat",
+        "/api/v1/chat",
+        "/api/xiaohongshu/messages/ingest",
+    })

@@ -7,6 +7,7 @@ def test_priority_question_detection_matches_business_questions():
     assert service.is_priority_question("你是中介吗")
     assert service.is_priority_question("怎么收费")
     assert service.is_priority_question("你们成功率怎么样")
+    assert service.is_priority_question("会泄露隐私吗")
     assert not service.is_priority_question("深圳呢")
 
 
@@ -24,3 +25,7 @@ def test_quick_faq_response_hits_known_intents():
     safety = service.get_quick_faq_response("你们平台安全吗")
     assert safety is not None
     assert "安全" in safety
+
+    privacy = service.get_quick_faq_response("会泄露隐私吗")
+    assert privacy is not None
+    assert any(token in privacy for token in ("隐私", "泄露", "安全"))

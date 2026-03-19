@@ -4,8 +4,8 @@ import asyncio
 import logging
 import time
 
-from src.services.queue.message_orchestrator import MessageOrchestrator
-from src.services.queue.queue_store import QueueStore
+from src.modules.message_queue.application.message_orchestrator import MessageOrchestrator
+from src.modules.message_queue.infrastructure.queue_store import QueueStore
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)

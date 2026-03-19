@@ -388,6 +388,20 @@
       ]
     },
     {
+      "id": "contact_wechat_contaminated_mixed_token_retry",
+      "category": "contact",
+      "tags": ["contact_wechat", "retry", "normalization", "critical"],
+      "description": "用户提供混合脏串微信号（如 wx72378让3）时，不应截断收集，应提示重新确认。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，想找男生",
+        "微信wx72378让3"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "wechat" },
+        { "type": "final_response_contains_any", "values": ["微信", "确认", "重新"] }
+      ]
+    },
+    {
       "id": "contact_wechat_invalid_then_valid",
       "category": "contact",
       "tags": ["contact_wechat", "retry"],
