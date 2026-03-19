@@ -77,7 +77,20 @@ class ProcessChatTurnUseCase:
                 message_count=message_count,
             )
             if rule_result.handled:
-                return rule_result.response_payload or {}
+                payload = rule_result.response_payload or {}
+                response_text = str(payload.get("response") or "")
+                if response_text:
+                    # 规则分支若未更新上下文，会导致后续拒绝检测读取到旧 last_response。
+                    last_response = await self.chat_service.dialogue_manager.get_last_response(account_id)
+                    if last_response != response_text:
+                        await self.chat_service._update_conversation_state(  # noqa: SLF001
+                            account_id,
+                            request.question,
+                            response_text,
+                            response_text,
+                            track_asked_fields=False,
+                        )
+                return payload
 
             self.chat_service.dialogue_manager.update_user_sex(user_profile)
             await self.chat_service._handle_refusal_detection(request.question, account_id, user_profile)  # noqa: SLF001
@@ -217,6 +230,7 @@ class ProcessChatTurnUseCase:
                     final_response,
                     {"collected": False, "all_fields": []},
                     request.dialogId,
+                    response_route="collection_short_circuit",
                 )
 
             for field_info in collection_result.get("all_fields", []):

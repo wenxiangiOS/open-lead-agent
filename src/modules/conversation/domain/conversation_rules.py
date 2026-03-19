@@ -90,14 +90,16 @@ class ContactFlowAffirmativeRule(ConversationRule):
     async def apply(self, ctx: ConversationRuleContext) -> RuleCheckResult:
         extraction_service = ctx.chat_service.extraction_service
         collected_info_summary = extraction_service.get_collected_info_summary(ctx.user_profile)
-        has_requirement = "要求:" in collected_info_summary
         has_contact = "已留联系" in collected_info_summary
         contact_next_action = ctx.chat_service.contact_service.get_next_action(ctx.user_profile, ctx.user_message)
         in_contact_flow = contact_next_action.value in {"ask_phone", "persuade_phone", "ask_wechat", "persuade_wechat"}
         affirmative_words = ["嗯", "好", "好的", "行", "可以", "ok", "是的", "对", "是", "恩", "嗯嗯", "好的呢", "好呀"]
         is_affirmative = ctx.user_message.strip() in affirmative_words
+        last_response = await ctx.chat_service.dialogue_manager.get_last_response(ctx.account_id) or ""
+        contact_context_markers = ["电话", "手机号", "号码", "微信", "联系方式", "留个", "联系你"]
+        last_response_about_contact = any(marker in last_response for marker in contact_context_markers)
 
-        if (has_requirement or in_contact_flow) and not has_contact and is_affirmative:
+        if (in_contact_flow or last_response_about_contact) and not has_contact and is_affirmative:
             confirm_count = await ctx.chat_service.input_fallback_service.increment_confirm_count(ctx.account_id)
             logger.info(f"[确认词检测] 用户第{confirm_count}次回复确认词但没留联系方式: {ctx.user_message.strip()}")
             confirm_response = ctx.chat_service.input_fallback_service.get_confirm_word_response(ctx.user_profile, confirm_count)

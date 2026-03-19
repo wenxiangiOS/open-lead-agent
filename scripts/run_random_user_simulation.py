@@ -35,6 +35,12 @@ PREFERENCES = ["成熟稳重", "三观合拍", "上进", "脾气好", "会沟通
 KNOWN_OCCUPATIONS = OCCUPATIONS + ["文员", "老师", "医生", "行政", "人事", "客服", "自由职业"]
 KNOWN_EDUCATIONS = EDUCATIONS + ["博士", "高中", "中专"]
 KNOWN_MARITAL_STATUSES = ["单身", "未婚", "离异", "离婚", "已婚"]
+FORBIDDEN_ASSISTANT_PATTERNS = [
+    r"(通知|安排|约)(你)?(见面|线下见面)",
+    r"(给你|发你|发送给你)(对方)?资料",
+    r"(发|给)(你)?(对方)?资料",
+    r"对方资料",
+]
 
 
 @dataclass
@@ -162,7 +168,21 @@ def parse_args() -> argparse.Namespace:
         default=str(PROJECT_ROOT / "reports/real_ai_realism"),
         help="报告输出目录",
     )
+    parser.add_argument("--min-human-latency", type=float, default=0.9, help="非首轮最小拟人时延阈值（秒）")
+    parser.add_argument("--faq-min-human-latency", type=float, default=1.2, help="FAQ轮次最小拟人时延阈值（秒）")
     parser.add_argument("--verbose", action="store_true", help="打印逐轮详情")
+    parser.add_argument(
+        "--strict-humanlike",
+        action="store_true",
+        default=True,
+        help="严格拟人化闸门：命中关键风险项时返回退出码1",
+    )
+    parser.add_argument(
+        "--no-strict-humanlike",
+        action="store_false",
+        dest="strict_humanlike",
+        help="关闭严格拟人化闸门（默认开启）",
+    )
     return parser.parse_args()
 
 
@@ -252,7 +272,16 @@ def _percentile(values: list[float], p: float) -> float:
     return ordered[f] + (ordered[c] - ordered[f]) * (k - f)
 
 
-def _check_turn(user: str, assistant: str) -> list[str]:
+def _check_turn(
+    user: str,
+    assistant: str,
+    previous_assistant: str = "",
+    *,
+    latency_s: float = 0.0,
+    turn_index: int = 1,
+    min_human_latency: float = 0.9,
+    faq_min_human_latency: float = 1.2,
+) -> list[str]:
     fails: list[str] = []
     if not assistant.strip():
         fails.append("empty_response")
@@ -261,6 +290,46 @@ def _check_turn(user: str, assistant: str) -> list[str]:
     faq_keys = ["收费", "靠谱", "匹配", "照片", "隐私", "安全"]
     if any(k in user for k in faq_keys) and not any(k in assistant for k in faq_keys + ["免费", "牵线", "安排"]):
         fails.append("faq_not_answered_first")
+    if turn_index > 1 and assistant.strip():
+        if latency_s < max(0.0, min_human_latency):
+            fails.append("reply_too_fast_nonhuman")
+        if any(k in user for k in faq_keys) and latency_s < max(0.0, faq_min_human_latency):
+            fails.append("faq_reply_too_fast")
+    if any(re.search(pattern, assistant) for pattern in FORBIDDEN_ASSISTANT_PATTERNS):
+        fails.append("forbidden_business_phrase")
+    # 确认词不应脱离联系方式上下文就跳转到索要联系方式
+    affirmative_words = {"嗯", "好", "好的", "行", "可以", "ok", "是的", "对", "是", "恩", "嗯嗯", "好的呢", "好呀"}
+    current_is_affirmative = str(user or "").strip() in affirmative_words
+    prev_is_contact_related = any(k in (previous_assistant or "") for k in ["电话", "手机号", "号码", "微信", "联系方式", "留个"])
+    now_asks_contact = any(k in (assistant or "") for k in ["电话", "手机号", "号码", "微信", "留个"])
+    if current_is_affirmative and (not prev_is_contact_related) and now_asks_contact:
+        fails.append("confirm_word_misrouted_to_contact")
+
+    retry_markers = ["重新", "确认", "格式", "不太对", "再发", "核对", "检查一下"]
+    asks_phone_prev = any(k in (previous_assistant or "") for k in ["电话", "手机号", "号码"])
+    asks_wechat_prev = any(k in (previous_assistant or "") for k in ["微信", "wx", "vx"])
+
+    # 无效电话检测：上一轮在要电话，本轮用户给了数字，但位数/号段不合法，助手应提示重试
+    user_digits = re.sub(r"\D", "", str(user or ""))
+    normalized_digits = user_digits
+    if normalized_digits.startswith("86") and len(normalized_digits) == 13 and normalized_digits[2] == "1":
+        normalized_digits = normalized_digits[2:]
+    looks_phone_attempt = len(normalized_digits) >= 7
+    valid_phone = bool(
+        re.match(r"^1[3-9]\d{9}$", normalized_digits)
+        or re.match(r"^[5-9]\d{7}$", normalized_digits)
+    )
+    if asks_phone_prev and looks_phone_attempt and not valid_phone and not any(m in assistant for m in retry_markers):
+        fails.append("invalid_phone_not_retried")
+
+    # 无效微信检测：上一轮在要微信，本轮用户给了看似微信串但格式不合法，助手应提示重试
+    if asks_wechat_prev:
+        raw = str(user or "").strip()
+        candidate = re.sub(r"^(微信|微信号|weixin)[:：\s]*", "", raw, flags=re.IGNORECASE).strip()
+        looks_wechat_attempt = bool(re.search(r"[A-Za-z]", candidate))
+        valid_wechat = bool(re.match(r"^[A-Za-z][A-Za-z0-9_-]{5,19}$", candidate))
+        if looks_wechat_attempt and not valid_wechat and not any(m in assistant for m in retry_markers):
+            fails.append("invalid_wechat_not_retried")
     return fails
 
 
@@ -411,8 +480,16 @@ def _check_profile_fields_with_expected_sex(
             failures.append(f"{name}: expected={expected!r}, actual={actual!r}{' (' + note + ')' if note else ''}")
 
     # 基础字段
-    if expected_sex:
-        add("sex_equals_persona", profile.get("sex") == expected_sex, expected_sex, profile.get("sex"))
+    if expected_profile.get("sex"):
+        add("sex_matches_user_stated", profile.get("sex") == expected_profile["sex"], expected_profile["sex"], profile.get("sex"))
+    else:
+        add(
+            "sex_not_inferred_without_self_declare",
+            str(profile.get("sex") or "").strip() in {"", "未留", "未知"},
+            "empty/unknown",
+            profile.get("sex"),
+            "no explicit self sex in user turns",
+        )
     add("location_truthy", bool(profile.get("location")), "non-empty", profile.get("location"))
     add("education_truthy", bool(profile.get("education")), "non-empty", profile.get("education"))
     add("occupation_truthy", bool(profile.get("occupation")), "non-empty", profile.get("occupation"))
@@ -618,6 +695,8 @@ async def _run_one(
     category: str,
     tags: list[str],
     verbose: bool,
+    min_human_latency: float,
+    faq_min_human_latency: float,
 ) -> SessionResult:
     session_id = f"realism_{idx}_{uuid.uuid4().hex[:8]}"
     dialog_base = f"realism_dialog_{uuid.uuid4().hex[:8]}"
@@ -655,7 +734,16 @@ async def _run_one(
 
         ai_text = str(resp.get("response", ""))
         last_ai = ai_text
-        turn_failures = _check_turn(msg, ai_text)
+        prev_ai = records[-1].assistant if records else ""
+        turn_failures = _check_turn(
+            msg,
+            ai_text,
+            previous_assistant=prev_ai,
+            latency_s=total_s,
+            turn_index=i,
+            min_human_latency=min_human_latency,
+            faq_min_human_latency=faq_min_human_latency,
+        )
         rec = TurnRecord(
             index=i,
             user=msg,
@@ -1073,6 +1161,8 @@ async def main() -> int:
             category=item["category"],
             tags=item["tags"],
             verbose=args.verbose,
+            min_human_latency=args.min_human_latency,
+            faq_min_human_latency=args.faq_min_human_latency,
         )
         print(f"[{i}/{len(workload)}] DONE turns={len(result.turns)} duration={result.duration_s:.2f}s")
         results.append(result)
@@ -1087,6 +1177,33 @@ async def main() -> int:
     print(f"字段完整性通过率: {analysis['extraction_accuracy']['completeness_pass_rate']:.1%}")
     print(f"JSON: {json_path}")
     print(f"MD:   {md_path}")
+    if args.strict_humanlike:
+        strict_turn_failures = {
+            "forbidden_business_phrase",
+            "confirm_word_misrouted_to_contact",
+            "invalid_phone_not_retried",
+            "invalid_wechat_not_retried",
+            "reply_too_fast_nonhuman",
+            "faq_reply_too_fast",
+        }
+        strict_field_failures = {"sex_not_inferred_without_self_declare"}
+
+        strict_hit_counter: dict[str, int] = {}
+        for session in results:
+            for turn in session.turns:
+                for failure in turn.failures:
+                    if failure in strict_turn_failures:
+                        strict_hit_counter[failure] = strict_hit_counter.get(failure, 0) + 1
+            for check in session.field_checks:
+                name = str(check.get("name") or "")
+                if name in strict_field_failures and not check.get("passed"):
+                    strict_hit_counter[name] = strict_hit_counter.get(name, 0) + 1
+
+        if strict_hit_counter:
+            print("STRICT_HUMANLIKE 失败：命中关键风险项")
+            for name, count in sorted(strict_hit_counter.items(), key=lambda x: x[1], reverse=True):
+                print(f"- {name}: {count}")
+            return 1
     return 0
 
 

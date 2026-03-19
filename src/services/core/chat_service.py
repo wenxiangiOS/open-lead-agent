@@ -80,6 +80,12 @@ class ChatService:
         # 常见复姓
         '欧阳', '司马', '上官', '诸葛', '东方', '皇甫', '令狐', '夏侯',
     })
+    FORBIDDEN_SALES_PATTERNS = (
+        r"(通知|安排|约)(你)?(见面|线下见面)",
+        r"(给你|发你|发送给你)(对方)?资料",
+        r"(发|给)(你)?(对方)?资料",
+        r"对方资料",
+    )
 
     def __init__(
         self,
@@ -279,6 +285,7 @@ class ChatService:
         user_message: str
     ) -> Dict[str, Any]:
         """处理收集结果"""
+        extracted_data = self._apply_extraction_guards(extracted_data, user_message)
         # 处理提取的数据
         collection_result = await self.extraction_service.process_extracted_data(
             account_id,
@@ -387,6 +394,7 @@ class ChatService:
         fallback_candidate = fallback_contact["value"] if fallback_contact else None
         fallback_hint = fallback_contact["type"] if fallback_contact else None
         fallback_contaminated = bool(fallback_contact.get("contaminated")) if fallback_contact else False
+        next_action = self.contact_service.get_next_action(user_profile, user_message)
         contact_value = collected_phone or collected_contact
         invalid_contact_attempt = collection_result.get("invalid_contact_attempt") or fallback_candidate
 
@@ -409,6 +417,14 @@ class ChatService:
                 logger.info(
                     f"[联系方式兜底] 检测到污染输入，拒绝自动收集: type={fallback_hint or fallback_type}, value={fallback_candidate}"
                 )
+
+        # 用户可能直接发了“看起来像联系方式”的内容，但提取器没识别到字段。
+        # 在联系方式流程中启用上下文兜底，确保能走到“格式校验失败 -> 重新确认”。
+        if contact_value is None and collected_wechat is None and not invalid_contact_attempt:
+            hinted_attempt, hinted_type = self._infer_contact_attempt_from_context(user_message, next_action.value)
+            if hinted_attempt:
+                invalid_contact_attempt = hinted_attempt
+                fallback_hint = fallback_hint or hinted_type
 
         contact_value = contact_value or collected_phone or collected_contact
         logger.info(f"[联系方式检查] collected_contact={contact_value}, collected_wechat={collected_wechat}, all_fields={collection_result.get('all_fields', [])}")
@@ -796,6 +812,32 @@ class ChatService:
 
         return contacts
 
+    def _infer_contact_attempt_from_context(self, user_message: str, next_action: str) -> tuple[Optional[str], Optional[str]]:
+        """根据当前联系方式流程动作，推断用户是否在尝试提供联系方式（即便格式错误）。"""
+        message = (user_message or "").strip()
+        if not message:
+            return None, None
+
+        # 电话流程：只要出现较长数字串，就认为是电话尝试
+        if next_action in {"ask_phone", "persuade_phone"}:
+            digits = re.sub(r"\D", "", message)
+            if digits.startswith("86") and len(digits) >= 12:
+                digits = digits[2:]
+            if len(digits) >= 7:
+                return digits, "phone"
+            return None, None
+
+        # 微信流程：包含字母/数字组合或微信标识，视作微信尝试
+        if next_action in {"ask_wechat", "persuade_wechat"}:
+            lowered = message.lower()
+            cleaned = re.sub(r"^(微信|微信号|weixin)[:：\s]*", "", lowered, flags=re.IGNORECASE).strip()
+            if re.search(r"[a-z]", cleaned) and re.search(r"\d", cleaned):
+                return cleaned, "wechat"
+            if "微信" in message or lowered.startswith(("wx", "vx", "weixin")):
+                return cleaned or lowered, "wechat"
+
+        return None, None
+
     def _looks_like_fake_info(self, user_message: str) -> bool:
         """基于原始文本识别明显虚假年龄/身高。"""
         if not user_message:
@@ -956,6 +998,7 @@ class ChatService:
             field_ask_count_before: AI询问前的字段计数快照，用于正确显示"已跳过"时机
                                    （使用"增加前"的值，这样用户还有机会回答当前问题）
         """
+        response = self._sanitize_forbidden_sales_phrases(response)
         if response_route:
             await self._simulate_non_ai_human_delay(response, route=response_route)
 
@@ -1035,6 +1078,41 @@ class ChatService:
             "response": response,
             "dialogId": dialog_id
         }
+
+    def _sanitize_forbidden_sales_phrases(self, response: str) -> str:
+        """清理会暴露业务流程或违规承诺的固定话术。"""
+        text = str(response or "")
+        if not text:
+            return text
+
+        original = text
+        for pattern in self.FORBIDDEN_SALES_PATTERNS:
+            text = re.sub(pattern, "后续有合适人选我会第一时间联系你", text)
+
+        # 去除重复替换导致的冗余表达
+        text = re.sub(r"(后续有合适人选我会第一时间联系你){2,}", "后续有合适人选我会第一时间联系你", text)
+        text = re.sub(r"\s+", " ", text).strip()
+
+        if text != original:
+            logger.info("[话术合规] 已替换禁语表达，避免出现见面/发资料承诺")
+        return text
+
+    def _apply_extraction_guards(self, extracted_data: Dict[str, Any], user_message: str) -> Dict[str, Any]:
+        """对高风险提取结果做入库前保护，避免偏好信息污染用户主档。"""
+        if not extracted_data:
+            return extracted_data
+
+        guarded = dict(extracted_data)
+        message = (user_message or "").strip()
+
+        # 仅凭“找男的/找女生”这类择偶偏好，不允许反推用户自身 sex。
+        explicit_self_sex = re.search(r"(我是|本人|我)\s*(男生|女生|男的|女的|男|女)", message)
+        preference_sex_hint = re.search(r"(找|想找|喜欢|偏好).{0,4}(男生|女生|男的|女的|男|女)", message)
+        if "sex" in guarded and not explicit_self_sex and preference_sex_hint:
+            guarded.pop("sex", None)
+            logger.info("[提取保护] 检测到择偶偏好语境，忽略 sex 提取，避免误写用户性别")
+
+        return guarded
 
     def _error_response(self, error: str, dialog_id: Optional[str]) -> Dict[str, Any]:
         """构建错误响应"""

@@ -17,16 +17,24 @@
 
 ## 运行
 
-推荐首选（真实性仿真）：要看每条用户和 AI 内容，加 --verbose
+推荐首选（真实性仿真）：要看每条用户和 AI 内容，加 `--verbose`
 
 ```bash
-python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42
+python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose
 ```
 
-134 全覆盖建议执行顺序：
+说明（默认已开启，不需要额外加参数）：
 
-1. chat 真实性回归（114）：  
-`python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42`
+1. 严格拟人化闸门默认开启（命中关键风险项会返回退出码 1）。
+2. 秒回检测默认开启：
+`--min-human-latency 0.9`、`--faq-min-human-latency 1.2`。
+3. 如果想临时放宽，可加：
+`--no-strict-humanlike` 或自行调整上述两个阈值。
+
+全覆盖建议执行顺序：
+
+1. chat 真实性回归（默认跑全部非 mq 场景）：  
+`python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose`
 2. mq 链路回归（20）：  
 `python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000`
 
@@ -39,13 +47,13 @@ python3 scripts/run_random_user_simulation.py --sessions 20 --min-turns 6 --max-
 覆盖场景模式（按场景逐个模拟真人式聊天，默认跳过 mq）：
 
 ```bash
-python3 scripts/run_random_user_simulation.py --cover-scenarios --max-scenarios 114 --seed 42
+python3 scripts/run_random_user_simulation.py --cover-scenarios --max-scenarios 117 --seed 42 --verbose
 ```
 
 完整覆盖（按场景逐个模拟，输出时延异常与模板化风险）：
 
 ```bash
-python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42
+python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose
 ```
 
 逻辑硬回归（原有）：
