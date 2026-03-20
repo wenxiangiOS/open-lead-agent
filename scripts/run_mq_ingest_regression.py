@@ -118,13 +118,12 @@ def _http_json(
             return int(exc.code), {"detail": raw or str(exc)}
 
 
-def _default_payload(message: str, scenario_id: str, step: int) -> dict[str, Any]:
-    account_id = f"mq_reg_{scenario_id}_{uuid.uuid4().hex[:8]}"
+def _default_payload(message: str, scenario_id: str, step: int, account_id: str, run_id: str) -> dict[str, Any]:
     return {
         "accountId": account_id,
-        "dialogId": f"d_{scenario_id}",
+        "dialogId": f"d_{scenario_id}_{run_id}",
         "message": message,
-        "platformMsgId": f"{scenario_id}_{step}_{uuid.uuid4().hex[:6]}",
+        "platformMsgId": f"{scenario_id}_{step}_{run_id}",
         "timestamp": str(int(time.time() * 1000)),
     }
 
@@ -135,23 +134,121 @@ def _normalize_expected_list(value: Any, size: int) -> list[Any]:
     return [value] * size
 
 
+def _normalize_allowed_list(value: Any, size: int) -> list[list[str]]:
+    if not isinstance(value, list):
+        return [[str(value)] for _ in range(size)]
+    if value and all(not isinstance(item, list) for item in value):
+        return [[str(item) for item in value] for _ in range(size)]
+    normalized: list[list[str]] = []
+    for item in value:
+        if isinstance(item, list):
+            normalized.append([str(v) for v in item])
+        else:
+            normalized.append([str(item)])
+    return normalized
+
+
 def _evaluate_result(responses: list[dict[str, Any]], mq_expect: dict[str, Any]) -> tuple[bool, str]:
     statuses = [str(item.get("status", "")) for item in responses]
     accepted_flags = [bool(item.get("accepted", False)) for item in responses]
+    session_states = [str(item.get("sessionState", "")) for item in responses]
+    cancel_like_flags = [bool(item.get("cancelLike", False)) for item in responses]
+    force_flush_flags = [bool(item.get("forceFlush", False)) for item in responses]
+    pending_values = [int(item.get("pending", 0) or 0) for item in responses]
+    seq_values = [int(item.get("seq", 0) or 0) for item in responses]
+
     expected_statuses = mq_expect.get("expected_statuses")
+    expected_statuses_any = mq_expect.get("expected_statuses_any")
+    must_contain_status = mq_expect.get("must_contain_status")
     expected_accepted = mq_expect.get("expected_accepted")
+    expected_session_states = mq_expect.get("expected_session_states")
+    expected_cancel_like = mq_expect.get("expected_cancel_like")
+    expected_force_flush = mq_expect.get("expected_force_flush")
+    pending_min = mq_expect.get("expected_pending_min")
+    pending_max = mq_expect.get("expected_pending_max")
+    expect_seq_strictly_increasing = bool(mq_expect.get("expect_seq_strictly_increasing", False))
 
     if expected_statuses is not None:
         expected_statuses_list = _normalize_expected_list(expected_statuses, len(statuses))
         if list(expected_statuses_list) != statuses:
             return False, f"status mismatch: expected={expected_statuses_list}, actual={statuses}"
 
+    if expected_statuses_any is not None:
+        expected_any_list = _normalize_allowed_list(expected_statuses_any, len(statuses))
+        if len(expected_any_list) != len(statuses):
+            return False, f"expected_statuses_any size mismatch: expected={len(statuses)}, actual={len(expected_any_list)}"
+        for idx, (actual, allowed) in enumerate(zip(statuses, expected_any_list), start=1):
+            if actual not in allowed:
+                return False, f"status_any mismatch at step {idx}: allowed={allowed}, actual={actual}"
+
+    if must_contain_status is not None:
+        required_statuses = [str(must_contain_status)] if not isinstance(must_contain_status, list) else [str(v) for v in must_contain_status]
+        missing = [status for status in required_statuses if status not in statuses]
+        if missing:
+            return False, f"must_contain_status missing={missing}, actual={statuses}"
+
     if expected_accepted is not None:
         expected_accepted_list = [bool(v) for v in _normalize_expected_list(expected_accepted, len(accepted_flags))]
         if list(expected_accepted_list) != accepted_flags:
             return False, f"accepted mismatch: expected={expected_accepted_list}, actual={accepted_flags}"
 
+    if expected_session_states is not None:
+        expected_states_list = [str(v) for v in _normalize_expected_list(expected_session_states, len(session_states))]
+        if list(expected_states_list) != session_states:
+            return False, f"sessionState mismatch: expected={expected_states_list}, actual={session_states}"
+
+    if expected_cancel_like is not None:
+        expected_cancel_like_list = [bool(v) for v in _normalize_expected_list(expected_cancel_like, len(cancel_like_flags))]
+        if list(expected_cancel_like_list) != cancel_like_flags:
+            return False, f"cancelLike mismatch: expected={expected_cancel_like_list}, actual={cancel_like_flags}"
+
+    if expected_force_flush is not None:
+        expected_force_flush_list = [bool(v) for v in _normalize_expected_list(expected_force_flush, len(force_flush_flags))]
+        if list(expected_force_flush_list) != force_flush_flags:
+            return False, f"forceFlush mismatch: expected={expected_force_flush_list}, actual={force_flush_flags}"
+
+    if pending_min is not None:
+        expected_pending_min = [int(v) for v in _normalize_expected_list(pending_min, len(pending_values))]
+        for idx, (actual, minimum) in enumerate(zip(pending_values, expected_pending_min), start=1):
+            if actual < minimum:
+                return False, f"pending min mismatch at step {idx}: expected>={minimum}, actual={actual}"
+
+    if pending_max is not None:
+        expected_pending_max = [int(v) for v in _normalize_expected_list(pending_max, len(pending_values))]
+        for idx, (actual, maximum) in enumerate(zip(pending_values, expected_pending_max), start=1):
+            if actual > maximum:
+                return False, f"pending max mismatch at step {idx}: expected<={maximum}, actual={actual}"
+
+    if expect_seq_strictly_increasing and len(seq_values) >= 2:
+        for idx in range(1, len(seq_values)):
+            if seq_values[idx] <= seq_values[idx - 1]:
+                return False, f"seq not strictly increasing at step {idx + 1}: actual={seq_values}"
+
     return True, "ok"
+
+
+def _render_payload_template(raw_payload: Any, context: dict[str, Any]) -> Any:
+    if isinstance(raw_payload, dict):
+        return {k: _render_payload_template(v, context) for k, v in raw_payload.items()}
+    if isinstance(raw_payload, list):
+        return [_render_payload_template(v, context) for v in raw_payload]
+    if isinstance(raw_payload, str):
+        rendered = raw_payload
+        for key, value in context.items():
+            rendered = rendered.replace(f"{{{{{key}}}}}", str(value))
+        return rendered
+    return raw_payload
+
+
+def _namespace_payload(payload: dict[str, Any], run_id: str) -> dict[str, Any]:
+    namespaced = dict(payload)
+    if "accountId" in namespaced and str(namespaced.get("accountId") or "").strip():
+        namespaced["accountId"] = f"{str(namespaced['accountId']).strip()}_{run_id}"
+    if "dialogId" in namespaced and str(namespaced.get("dialogId") or "").strip():
+        namespaced["dialogId"] = f"{str(namespaced['dialogId']).strip()}_{run_id}"
+    if "platformMsgId" in namespaced and str(namespaced.get("platformMsgId") or "").strip():
+        namespaced["platformMsgId"] = f"{str(namespaced['platformMsgId']).strip()}_{run_id}"
+    return namespaced
 
 
 def run_one(scenario: dict[str, Any], args: argparse.Namespace, index: int, total: int) -> MQScenarioResult:
@@ -183,14 +280,49 @@ def run_one(scenario: dict[str, Any], args: argparse.Namespace, index: int, tota
     if args.api_key:
         headers["X-API-Key"] = args.api_key
 
+    run_id = uuid.uuid4().hex[:8]
+    default_account_id = f"mq_reg_{scenario_id}_{run_id}"
+    messages = scenario.get("messages", [])
+    repeat_times = int(scenario.get("repeat_times", 1) or 1)
+    if repeat_times > 1 and len(messages) == 1:
+        messages = messages * repeat_times
+
     payloads = scenario.get("ingest_payloads")
-    if not payloads:
-        messages = scenario.get("messages", [])
-        payloads = [_default_payload(str(message or ""), scenario_id, i) for i, message in enumerate(messages, start=1)]
+    if payloads:
+        rendered_payloads: list[dict[str, Any]] = []
+        for step, payload in enumerate(payloads, start=1):
+            context = {
+                "RUN_ID": run_id,
+                "SCENARIO_ID": scenario_id,
+                "STEP": step,
+                "ACCOUNT_ID": default_account_id,
+            }
+            rendered_payload = _render_payload_template(payload, context)
+            if isinstance(rendered_payload, dict):
+                rendered_payloads.append(_namespace_payload(rendered_payload, run_id))
+        payloads = rendered_payloads
+    else:
+        payloads = [
+            _default_payload(str(message or ""), scenario_id, i, default_account_id, run_id)
+            for i, message in enumerate(messages, start=1)
+        ]
 
     responses: list[dict[str, Any]] = []
     for step, payload in enumerate(payloads, start=1):
-        http_status, body = _http_json("POST", ingest_url, payload, headers, args.timeout_seconds)
+        try:
+            http_status, body = _http_json("POST", ingest_url, payload, headers, args.timeout_seconds)
+        except Exception as exc:
+            duration = round(time.time() - started, 2)
+            print(f"[{index}/{total}] FAIL {scenario_id} ({duration:.2f}s)")
+            return MQScenarioResult(
+                scenario_id=scenario_id,
+                category=category,
+                tags=tags,
+                passed=False,
+                skipped=False,
+                duration_seconds=duration,
+                message=f"request_error step={step}: {exc}",
+            )
         if args.verbose:
             print(f"  STEP{step} payload={payload}")
             print(f"  STEP{step} http={http_status} body={body}")
@@ -272,4 +404,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

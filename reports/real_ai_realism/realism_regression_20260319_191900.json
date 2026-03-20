@@ -1,0 +1,603 @@
+{
+  "created_at": "2026-03-19T19:19:00",
+  "summary": {
+    "sessions": 1,
+    "turns": 6,
+    "failed_checks": 6,
+    "failed_check_breakdown": {
+      "turn": 2,
+      "field": 3,
+      "policy": 1
+    },
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "call_count": 0
+    },
+    "latency": {
+      "p50": 0.992,
+      "p90": 2.195,
+      "p95": 2.366,
+      "p99": 2.504,
+      "max": 2.538,
+      "avg": 1.067
+    }
+  },
+  "analysis": {
+    "humanlike_quality": {
+      "total_checks": 19,
+      "failed_checks": 3,
+      "pass_rate": 0.8421,
+      "turn_level_failures": 2,
+      "policy_rule_failures": 1,
+      "top_turn_failures": [
+        {
+          "name": "reply_too_fast_nonhuman",
+          "count": 2
+        }
+      ],
+      "top_policy_failures": [
+        {
+          "name": "no_consecutive_same_field_ask",
+          "count": 1
+        }
+      ],
+      "template_top1_ratio": 0.5,
+      "latency_p95": 2.366,
+      "latency_p99": 2.504
+    },
+    "extraction_accuracy": {
+      "total_checks": 6,
+      "failed_checks": 3,
+      "pass_rate": 0.5,
+      "exact_match_checks": 1,
+      "exact_match_failures": 1,
+      "exact_match_pass_rate": 0.0,
+      "completeness_checks": 5,
+      "completeness_failures": 2,
+      "completeness_pass_rate": 0.6,
+      "top_failed_checks": [
+        {
+          "name": "sex_not_inferred_without_self_declare",
+          "count": 1
+        },
+        {
+          "name": "partner_requirement_when_mentioned",
+          "count": 1
+        },
+        {
+          "name": "partner_requirement_matches_user_stated",
+          "count": 1
+        }
+      ]
+    },
+    "field_quality": {
+      "total_checks": 6,
+      "failed_checks": 3,
+      "pass_rate": 0.5,
+      "top_failed_checks": [
+        {
+          "name": "sex_not_inferred_without_self_declare",
+          "count": 1
+        },
+        {
+          "name": "partner_requirement_when_mentioned",
+          "count": 1
+        },
+        {
+          "name": "partner_requirement_matches_user_stated",
+          "count": 1
+        }
+      ],
+      "failed_sessions": [
+        {
+          "scenario_id": "random_1",
+          "session_id": "realism_1_07495537",
+          "failures": [
+            "sex_not_inferred_without_self_declare: expected='empty/unknown', actual='男' (no explicit self sex in user turns)",
+            "partner_requirement_when_mentioned: expected='non-empty', actual=None (user mentioned preference in turns)",
+            "partner_requirement_matches_user_stated: expected='上进 你们靠谱吗 你们靠谱吗', actual=None"
+          ]
+        }
+      ]
+    },
+    "policy_quality": {
+      "total_checks": 13,
+      "failed_checks": 1,
+      "pass_rate": 0.9231,
+      "top_failed_checks": [
+        {
+          "name": "no_consecutive_same_field_ask",
+          "count": 1
+        }
+      ],
+      "failed_sessions": [
+        {
+          "scenario_id": "random_1",
+          "session_id": "realism_1_07495537",
+          "failures": [
+            "no_consecutive_same_field_ask: expected=0, actual=1"
+          ]
+        }
+      ]
+    },
+    "latency": {
+      "p50": 0.992,
+      "p90": 2.195,
+      "p95": 2.366,
+      "p99": 2.504,
+      "max": 2.538,
+      "avg": 1.067
+    },
+    "phase_latency_avg": {
+      "profile_load": 0.0001,
+      "profile_save": 0.0005,
+      "context_load": 0.0047,
+      "rule_check": 0.0026,
+      "ai_call": 0.0592,
+      "extract_collect": 0.0001,
+      "response_build": 1.0281,
+      "other": 0.0022,
+      "total": 1.0676
+    },
+    "slow_turns_top20": [],
+    "template_risk": {
+      "top_templates": [
+        {
+          "template": "方便留个电话吗后续有合适的人选时联系你",
+          "count": 3,
+          "ratio": 0.5
+        },
+        {
+          "template": "这块可以放心我们是做真人审核和牵线流程把控的整体会以安全和靠谱为优先你要是还有顾虑也可以继续问我",
+          "count": 1,
+          "ratio": 0.1667
+        },
+        {
+          "template": "可以理解你会担心我们是按真人审核和牵线流程来做不是随便对接",
+          "count": 1,
+          "ratio": 0.1667
+        },
+        {
+          "template": "照片通常是双方都觉得合适后再互换这样更尊重彼此隐私你要是还有顾虑也可以继续问我",
+          "count": 1,
+          "ratio": 0.1667
+        }
+      ],
+      "top1_ratio": 0.5,
+      "threshold": 0.18,
+      "at_risk": true
+    },
+    "optimization_hints": [
+      "模板化风险偏高：Top1 模板占比 50.0% > 阈值 18.0%，建议扩写多样化话术。"
+    ]
+  },
+  "results": [
+    {
+      "session_id": "realism_1_07495537",
+      "scenario_id": "random_1",
+      "category": "random",
+      "tags": [
+        "realism",
+        "random"
+      ],
+      "persona": {
+        "sex": "男",
+        "age_bucket": "95后",
+        "location": "北京",
+        "education": "大专",
+        "occupation": "教师",
+        "preference": "上进",
+        "faq_prob": 0.27884722782428334,
+        "joking_prob": 0.1853398974845823,
+        "defensive_prob": 0.2284359135409691,
+        "contact_willingness": "phone"
+      },
+      "turns": [
+        {
+          "index": 1,
+          "user": "喜欢上进",
+          "assistant": "方便留个电话吗？后续有合适的人选时联系你～",
+          "latency_s": 0.18,
+          "perf": {
+            "profile_load": 0.0007,
+            "profile_save": 0.0005,
+            "context_load": 0.0021,
+            "rule_check": 0.0094,
+            "ai_call": 0.163,
+            "extract_collect": 0.0001,
+            "response_build": 0.0004,
+            "other": 0.004,
+            "total": 0.1802
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": []
+        },
+        {
+          "index": 2,
+          "user": "你们靠谱吗",
+          "assistant": "这块可以放心，我们是做真人审核和牵线流程把控的，整体会以安全和靠谱为优先。你要是还有顾虑也可以继续问我。",
+          "latency_s": 2.538,
+          "perf": {
+            "profile_load": 0.0,
+            "context_load": 0.0043,
+            "rule_check": 0.0008,
+            "response_build": 2.5334,
+            "other": 0.0,
+            "total": 2.5383
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": []
+        },
+        {
+          "index": 3,
+          "user": "你们靠谱吗",
+          "assistant": "可以理解你会担心，我们是按真人审核和牵线流程来做，不是随便对接。",
+          "latency_s": 1.804,
+          "perf": {
+            "profile_load": 0.0,
+            "context_load": 0.0052,
+            "rule_check": 0.0019,
+            "response_build": 1.7935,
+            "other": 0.0035,
+            "total": 1.8042
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": []
+        },
+        {
+          "index": 4,
+          "user": "喜欢上进",
+          "assistant": "方便留个电话吗？后续有合适的人选时联系你～",
+          "latency_s": 0.021,
+          "perf": {
+            "profile_load": 0.0001,
+            "context_load": 0.0045,
+            "rule_check": 0.0016,
+            "profile_save": 0.0005,
+            "ai_call": 0.0118,
+            "extract_collect": 0.0002,
+            "response_build": 0.0004,
+            "other": 0.0022,
+            "total": 0.0212
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": [
+            "reply_too_fast_nonhuman"
+          ]
+        },
+        {
+          "index": 5,
+          "user": "这个为啥要问",
+          "assistant": "方便留个电话吗？后续有合适的人选时联系你～",
+          "latency_s": 0.01,
+          "perf": {
+            "profile_load": 0.0,
+            "context_load": 0.0032,
+            "rule_check": 0.001,
+            "profile_save": 0.0004,
+            "ai_call": 0.0027,
+            "extract_collect": 0.0001,
+            "response_build": 0.0005,
+            "other": 0.0017,
+            "total": 0.0097
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": [
+            "reply_too_fast_nonhuman"
+          ]
+        },
+        {
+          "index": 6,
+          "user": "可以先看照片吗",
+          "assistant": "照片通常是双方都觉得合适后再互换，这样更尊重彼此隐私。你要是还有顾虑也可以继续问我。",
+          "latency_s": 1.852,
+          "perf": {
+            "profile_load": 0.0,
+            "context_load": 0.0088,
+            "rule_check": 0.0011,
+            "response_build": 1.8402,
+            "other": 0.0018,
+            "total": 1.8519
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": []
+        }
+      ],
+      "final_profile": {
+        "account_id": "realism_1_07495537",
+        "created_at": "2026-03-19T19:18:51.908211",
+        "updated_at": "2026-03-19T19:18:51.908523",
+        "sex": "男",
+        "last_name": null,
+        "age": null,
+        "height": null,
+        "weight": null,
+        "location": null,
+        "education": null,
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": null,
+        "contact": null,
+        "phone": null,
+        "wechat": null,
+        "partner_requirement": null,
+        "collection_progress": {
+          "sex": true,
+          "last_name": false,
+          "age": false,
+          "height": false,
+          "weight": false,
+          "location": false,
+          "education": false,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": false,
+          "contact": false,
+          "partner_requirement": false
+        },
+        "progress_percentage": 8.33,
+        "missing_fields": [
+          "last_name",
+          "age",
+          "height",
+          "weight",
+          "location",
+          "education",
+          "marital_status",
+          "monthly_income",
+          "occupation",
+          "contact",
+          "partner_requirement"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {},
+        "recent_asked_fields": [],
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": false,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "is_hongkong_user": null,
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "field_checks": [
+        {
+          "name": "sex_not_inferred_without_self_declare",
+          "passed": false,
+          "expected": "empty/unknown",
+          "actual": "男",
+          "note": "no explicit self sex in user turns"
+        },
+        {
+          "name": "occupation_not_placeholder",
+          "passed": true,
+          "expected": "not in ['None', 'null', '值', '未知']",
+          "actual": null,
+          "note": ""
+        },
+        {
+          "name": "age_reasonable_if_present",
+          "passed": true,
+          "expected": "18-60 or empty",
+          "actual": null,
+          "note": ""
+        },
+        {
+          "name": "contact_consistency",
+          "passed": true,
+          "expected": "if contact shows collected then phone/wechat exists",
+          "actual": {
+            "contact": "",
+            "phone": null,
+            "wechat": null
+          },
+          "note": ""
+        },
+        {
+          "name": "partner_requirement_when_mentioned",
+          "passed": false,
+          "expected": "non-empty",
+          "actual": null,
+          "note": "user mentioned preference in turns"
+        },
+        {
+          "name": "partner_requirement_matches_user_stated",
+          "passed": false,
+          "expected": "上进 你们靠谱吗 你们靠谱吗",
+          "actual": null,
+          "note": ""
+        }
+      ],
+      "field_failures": [
+        "sex_not_inferred_without_self_declare: expected='empty/unknown', actual='男' (no explicit self sex in user turns)",
+        "partner_requirement_when_mentioned: expected='non-empty', actual=None (user mentioned preference in turns)",
+        "partner_requirement_matches_user_stated: expected='上进 你们靠谱吗 你们靠谱吗', actual=None"
+      ],
+      "policy_checks": [
+        {
+          "name": "core_ask_limit_sex",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_age",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_education",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_occupation",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_location",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "quasi_core_ask_limit_marital_status",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "medium_ask_limit_monthly_income",
+          "passed": true,
+          "expected": "<=1",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "medium_ask_limit_partner_requirement",
+          "passed": true,
+          "expected": "<=1",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "low_priority_never_ask_height",
+          "passed": true,
+          "expected": "0",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "low_priority_never_ask_weight",
+          "passed": true,
+          "expected": "0",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "low_priority_never_ask_last_name",
+          "passed": true,
+          "expected": "0",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "no_consecutive_same_field_ask",
+          "passed": false,
+          "expected": 0,
+          "actual": 1,
+          "note": ""
+        },
+        {
+          "name": "income_question_soft_tone",
+          "passed": true,
+          "expected": 0,
+          "actual": 0,
+          "note": ""
+        }
+      ],
+      "policy_failures": [
+        "no_consecutive_same_field_ask: expected=0, actual=1"
+      ],
+      "duration_s": 8.348
+    }
+  ]
+}

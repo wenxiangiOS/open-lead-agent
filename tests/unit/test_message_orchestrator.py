@@ -219,3 +219,30 @@ async def _test_process_turn_command_prefers_process_chat_turn_command_protocol(
     assert command.account_id == "u_protocol_turn"
     assert command.dialog_id == "d_protocol_turn"
     assert result.response == "协议回复"
+
+
+def test_process_turn_command_normalizes_numeric_timestamp_for_protocol():
+    asyncio.run(_test_process_turn_command_normalizes_numeric_timestamp_for_protocol())
+
+
+async def _test_process_turn_command_normalizes_numeric_timestamp_for_protocol():
+    redis_service.enabled = False
+    chat_service = DummyChatServiceWithProtocol()
+    store = QueueStore()
+    orchestrator = MessageOrchestrator(chat_service=chat_service, queue_store=store)
+
+    result = await orchestrator._process_turn_command(  # noqa: SLF001
+        ProcessChatTurnCommand(
+            question="第一句",
+            account_id="u_numeric_ts",
+            dialog_id="d_numeric_ts",
+            sex="女",
+            timestamp="1773975052525",
+        )
+    )
+
+    assert len(chat_service.commands) == 1
+    command = chat_service.commands[0]
+    assert command.timestamp is not None
+    assert "T" in command.timestamp
+    assert result.response == "协议回复"

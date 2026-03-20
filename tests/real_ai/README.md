@@ -31,6 +31,30 @@ python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verb
 3. 如果想临时放宽，可加：
 `--no-strict-humanlike` 或自行调整上述两个阈值。
 
+报告新增指标（用于“质量优先”优化）：
+
+1. 总耗时（墙钟）、平均每会话耗时、平均每轮耗时、分位时延（p50/p90/p95/p99/max）。
+2. 分阶段耗时均值（`ai_call` / `rule_check` / `extract_collect` / `profile_load` / `profile_save` / `response_build`）。
+3. 对话自然度：情绪承接命中率、FAQ 非复读率、FAQ 转场自然率、按意图话术多样性。
+4. 提问压迫感：连续提问轮次统计（avg/p95/max，>=3 连问占比）。
+5. 提取诊断：字段冲突修复率、证据链覆盖率、误提取类型分桶。
+6. 联系方式专项：成功率、无效电话/微信未重试次数。
+7. 质量护栏：字段稳定性分数、拒绝后尊重率、记忆回用准确率、收尾自然度、异常恢复率。
+8. 一致性指标：人设一致性分、动作一致性分。
+9. 自动失败样本：按 turn/field/policy 每类自动抽样复现片段。
+10. 身份暴露防线：覆盖“你是AI吗/是不是机器人”问法，并在 strict 模式拦截 `ai_identity_exposed`。
+11. 异常用户鲁棒性：覆盖乱码、辱骂、污言、反复捣乱，并在 strict 模式拦截 `abuse_not_deescalated`、`nonsense_not_guided`。
+12. 高级鲁棒性：覆盖越权请求、隐私套取、多意图冲突、语言混杂，并在 strict 模式拦截 `overreach_not_guarded`、`privacy_internal_leak`。
+13. 高风险安全护栏：覆盖法律/医疗越界问询与自伤暗示，并在 strict 模式拦截 `high_risk_advice_overreach`、`safety_signal_not_deescalated`。
+
+发布前基线建议（冻结回归口径）：
+
+1. 固定命令：`python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose`
+2. 固定阈值：保留默认 strict（不加 `--no-strict-humanlike`）。
+3. 基线文件：将当次通过报告复制为 `reports/real_ai_realism/baseline_release.json|md`，后续发版必须与基线对比不退化。
+4. 自动对比：可加 `--baseline-json reports/real_ai_realism/baseline_release.json`，跑完自动输出退化项。
+5. strict 灰度回滚：可加 `--strict-ignore-failures a,b,c` 临时忽略指定失败项（建议仅短期使用并留审计记录）。
+
 全覆盖建议执行顺序：
 
 1. chat 真实性回归（默认跑全部非 mq 场景）：  
@@ -89,6 +113,48 @@ python3 scripts/run_real_ai_regression.py --include-mq --mq-base-url http://127.
 ```bash
 python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000
 ```
+
+说明：
+
+1. 当前 20 个 mq 场景都已具备 `mq_expect`，不会再因 `missing mq_expect` 被占位跳过。
+2. 其中含 `ingest 代理断言` 标记的场景，是基于 ingest 返回字段（如 `status/accepted/cancelLike/seq`）做前置验证，不等同于完整 worker/replies/outbox 端到端验证。
+
+MQ 小并发压测（上线前建议执行）：
+
+```bash
+python3 scripts/run_mq_load_test.py \
+  --base-url http://127.0.0.1:8000 \
+  --accounts 20 \
+  --messages-per-account 10 \
+  --concurrency 20 \
+  --include-dashboard
+```
+
+MQ 发布门禁（不达标返回非 0）：
+
+```bash
+python3 scripts/run_mq_load_test.py \
+  --base-url http://127.0.0.1:8000 \
+  --accounts 20 \
+  --messages-per-account 10 \
+  --concurrency 20 \
+  --include-dashboard \
+  --gate \
+  --max-fail-rate 0.02 \
+  --max-p95-ms 400 \
+  --max-p99-ms 800 \
+  --max-latency-ms 3000 \
+  --min-rps 1.0 \
+  --max-queue-full-rate 0.5
+```
+
+压测输出：
+
+1. 总请求数、HTTP 成功/失败、accepted/queued/duplicate/queue_full 分布。
+2. 时延指标：`avg/p50/p90/p95/p99/max`。
+3. 吞吐：`rps`。
+4. 压测前后 dashboard 快照（`--include-dashboard`）。
+5. 门禁结果（`--gate`）：阈值不达标会返回退出码 `1`。
 
 只跑某个分类：
 

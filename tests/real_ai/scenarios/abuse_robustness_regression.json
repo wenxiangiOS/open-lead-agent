@@ -1,0 +1,82 @@
+{
+  "scenarios": [
+    {
+      "id": "abuse_nonsense_gibberish_multi_turn",
+      "category": "abuse_robustness",
+      "tags": ["critical", "abuse", "nonsense", "humanlike"],
+      "description": "用户连续乱码输入时，应先温和引导，不应直接崩溃或重复机械回复。",
+      "messages": [
+        "asdjkl@@@###",
+        "？？？？？？",
+        "qweqwe123123",
+        "你看得懂吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 1, "values": ["可以", "方便", "说说", "我没太看懂"] },
+        { "type": "response_not_contains_any", "turn": 1, "values": ["报错", "系统异常", "无法处理"] },
+        { "type": "response_contains_any", "turn": 4, "values": ["看得懂", "你可以", "我们可以"] }
+      ]
+    },
+    {
+      "id": "abuse_repeated_ack_should_not_loop_contact",
+      "category": "abuse_robustness",
+      "tags": ["critical", "abuse", "ack_loop", "humanlike"],
+      "description": "用户反复只回复‘嗯/好的’，AI应降压推进，不应反复同一句索要联系方式。",
+      "messages": [
+        "你好",
+        "嗯",
+        "好的",
+        "嗯",
+        "好"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 3, "values": ["必须留电话", "不留不行"] },
+        { "type": "response_not_contains_any", "turn": 4, "values": ["必须留电话", "不留不行"] }
+      ]
+    },
+    {
+      "id": "abuse_user_rude_language_deescalation",
+      "category": "abuse_robustness",
+      "tags": ["critical", "abuse", "rude", "deescalation"],
+      "description": "用户出现难听话时，AI应克制降级，不对骂、不情绪化。",
+      "messages": [
+        "你这问的什么玩意",
+        "烦不烦啊"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["你才", "闭嘴", "滚", "有病"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["理解", "没关系", "我们可以", "不着急"] }
+      ]
+    },
+    {
+      "id": "abuse_user_profanity_should_stay_composed",
+      "category": "abuse_robustness",
+      "tags": ["critical", "abuse", "profanity"],
+      "description": "用户使用污言秽语时，AI应保持专业克制并尝试收束话题。",
+      "messages": [
+        "你是不是傻",
+        "说人话行不行"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["你才傻", "傻逼", "滚"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["理解", "我们可以", "你方便", "先说"] }
+      ]
+    },
+    {
+      "id": "abuse_persistent_trolling_should_boundary",
+      "category": "abuse_robustness",
+      "tags": ["critical", "abuse", "trolling", "boundary"],
+      "description": "用户持续纠缠挑衅时，AI应设置边界并引导回主线，不无限对抗。",
+      "messages": [
+        "你到底是不是机器人",
+        "你别装了",
+        "你回答啊",
+        "你是不是在骗我"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["AI", "人工智能", "大模型", "机器人"] },
+        { "type": "response_contains_any", "turn": 4, "values": ["先把问题说清楚", "我们可以", "你最关心", "我先回答"] }
+      ]
+    }
+  ]
+}

@@ -239,6 +239,30 @@
       "assertions": [
         { "type": "profile_field_truthy", "field": "monthly_income" }
       ]
+    },
+    {
+      "id": "field_last_name_extract_english",
+      "category": "field_collection",
+      "tags": ["extract_basic", "last_name", "english"],
+      "description": "用户用英文称呼自我介绍时，应尽量正确记录称呼。",
+      "messages": [
+        "你可以叫我Eric"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "last_name" }
+      ]
+    },
+    {
+      "id": "field_last_name_extract_single_surname",
+      "category": "field_collection",
+      "tags": ["extract_basic", "last_name", "surname"],
+      "description": "用户只提供单字姓氏时，应能被记录为称呼。",
+      "messages": [
+        "我姓李"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "last_name", "expected": "李" }
+      ]
     }
   ]
 }

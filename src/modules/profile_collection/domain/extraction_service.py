@@ -516,6 +516,16 @@ class ExtractionService:
                         continue
 
                 # 检查字段是否需要更新
+                if mapped_field == "sex":
+                    # 只在用户明确自述性别时写入 sex，避免由“找男/找女”等择偶偏好误推断污染主档。
+                    explicit_self_sex = re.search(
+                        r"(我是|本人|我)\s*(男生|女生|男的|女的|男|女)",
+                        user_message or "",
+                    )
+                    if not explicit_self_sex:
+                        logger.info("[提取保护] sex 仅允许用户自述写入，本轮跳过 sex 更新")
+                        continue
+
                 is_collected = user_profile.collection_progress.get(mapped_field, False)
                 current_value = getattr(user_profile, mapped_field, None)
 

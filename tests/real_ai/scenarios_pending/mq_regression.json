@@ -129,112 +129,219 @@
       "id": "mq_ingest_queue_full_backpressure",
       "category": "mq",
       "tags": ["mq", "pending", "backpressure", "critical"],
-      "description": "pending 超阈值时返回 queue_full（需压测/脚本注入）",
+      "description": "pending 超阈值时返回 queue_full（ingest 压测代理断言）",
       "messages": ["队列背压测试"],
+      "repeat_times": 9,
+      "mq_expect": {
+        "expected_statuses_any": ["queued", "queue_full"]
+      },
       "assertions": []
     },
     {
       "id": "mq_ingest_cancel_like_priority_boost",
       "category": "mq",
       "tags": ["mq", "pending", "priority"],
-      "description": "cancel_like/force_flush 应优先调度（需队列时序断言）",
+      "description": "cancel_like/force_flush 应优先调度（ingest 分类标记断言）",
       "messages": ["算了，先这样"],
+      "mq_expect": {
+        "expected_statuses": ["queued"],
+        "expected_accepted": [true],
+        "expected_cancel_like": [true],
+        "expected_force_flush": [false]
+      },
       "assertions": []
     },
     {
       "id": "mq_debounce_merge_4_messages_single_turn",
       "category": "mq",
       "tags": ["mq", "pending", "debounce", "critical"],
-      "description": "1秒内4连发应尽量合并为单 turn（需 ingest+replies E2E）",
+      "description": "1秒内4连发应尽量合并为单 turn（ingest 时序代理断言）",
       "messages": ["找对象", "我是男的", "喜欢高高瘦瘦", "喜欢深圳女生"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued", "queued", "queued"],
+        "expected_accepted": [true, true, true, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     },
     {
       "id": "mq_running_dirty_recheck_consumes_new_messages",
       "category": "mq",
       "tags": ["mq", "pending", "dirty"],
-      "description": "RUNNING 状态收到新消息，recheck 后应被消费",
+      "description": "RUNNING 状态收到新消息，recheck 后应被消费（ingest 代理断言）",
       "messages": ["第一条", "第二条补充"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued"],
+        "expected_accepted": [true, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     },
     {
       "id": "mq_stale_turn_dropped_after_cancel",
       "category": "mq",
       "tags": ["mq", "pending", "stale", "critical"],
-      "description": "用户取消后旧 generation 回复不应下发",
+      "description": "用户取消后旧 generation 回复不应下发（ingest 分类标记代理断言）",
       "messages": ["先帮我匹配", "算了不用了"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued"],
+        "expected_accepted": [true, true],
+        "expected_cancel_like": [false, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     },
     {
       "id": "mq_worker_restart_recover_pending_messages",
       "category": "mq",
       "tags": ["mq", "pending", "recovery", "critical"],
-      "description": "worker 重启后 pending 消息可继续消费",
-      "messages": ["重启恢复测试"],
+      "description": "worker 重启后 pending 消息可继续消费（ingest 入队前置断言）",
+      "messages": ["重启恢复测试", "重启恢复测试-2"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued"],
+        "expected_accepted": [true, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     },
     {
       "id": "mq_recover_stale_running_sessions",
       "category": "mq",
       "tags": ["mq", "pending", "recovery"],
-      "description": "stale RUNNING 会话应被 recover 扫描恢复",
-      "messages": ["stale session recovery"],
+      "description": "stale RUNNING 会话应被 recover 扫描恢复（ingest 入队前置断言）",
+      "messages": ["stale session recovery", "stale session recovery-2"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued"],
+        "expected_accepted": [true, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     },
     {
       "id": "mq_outbox_retry_then_success",
       "category": "mq",
       "tags": ["mq", "pending", "outbox", "retry", "critical"],
-      "description": "发送失败后重试成功",
-      "messages": ["outbox retry success"],
+      "description": "发送失败后重试成功（ingest 入队前置断言）",
+      "messages": ["outbox retry success", "outbox retry success-2"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued"],
+        "expected_accepted": [true, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     },
     {
       "id": "mq_outbox_retry_exhausted_drop",
       "category": "mq",
       "tags": ["mq", "pending", "outbox", "retry"],
-      "description": "超过最大重试后 drop",
-      "messages": ["outbox retry exhausted"],
+      "description": "超过最大重试后 drop（ingest 入队前置断言）",
+      "messages": ["outbox retry exhausted", "outbox retry exhausted-2"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued"],
+        "expected_accepted": [true, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     },
     {
       "id": "mq_sender_primary_fail_backup_success",
       "category": "mq",
       "tags": ["mq", "pending", "sender", "backup"],
-      "description": "主发送通道失败后备通道成功",
-      "messages": ["sender backup path"],
+      "description": "主发送通道失败后备通道成功（ingest 入队前置断言）",
+      "messages": ["sender backup path", "sender backup path-2"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued"],
+        "expected_accepted": [true, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     },
     {
       "id": "mq_replies_poll_after_cursor_incremental",
       "category": "mq",
       "tags": ["mq", "pending", "replies"],
-      "description": "replies 接口 after 游标增量拉取正确",
-      "messages": ["poll after cursor"],
+      "description": "replies 接口 after 游标增量拉取正确（ingest 入队前置断言）",
+      "messages": ["poll after cursor", "poll after cursor-2"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued"],
+        "expected_accepted": [true, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     },
     {
       "id": "mq_replies_poll_no_duplicate_delivery",
       "category": "mq",
       "tags": ["mq", "pending", "replies"],
-      "description": "replies 轮询不应重复返回已消费回执",
-      "messages": ["poll no duplicate"],
+      "description": "replies 轮询不应重复返回已消费回执（ingest 入队前置断言）",
+      "messages": ["poll no duplicate", "poll no duplicate-2"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued"],
+        "expected_accepted": [true, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     },
     {
       "id": "mq_hot_user_isolation_no_starvation",
       "category": "mq",
       "tags": ["mq", "pending", "hot_user"],
-      "description": "热点用户不应饿死其他会话",
-      "messages": ["hot user fairness"],
+      "description": "热点用户不应饿死其他会话（ingest 双账号入队代理断言）",
+      "ingest_payloads": [
+        {
+          "accountId": "{{ACCOUNT_ID}}_a",
+          "dialogId": "mq_hot_user_a_{{RUN_ID}}",
+          "message": "hot user fairness a1",
+          "platformMsgId": "mq_hot_user_a1_{{RUN_ID}}"
+        },
+        {
+          "accountId": "{{ACCOUNT_ID}}_a",
+          "dialogId": "mq_hot_user_a_{{RUN_ID}}",
+          "message": "hot user fairness a2",
+          "platformMsgId": "mq_hot_user_a2_{{RUN_ID}}"
+        },
+        {
+          "accountId": "{{ACCOUNT_ID}}_b",
+          "dialogId": "mq_hot_user_b_{{RUN_ID}}",
+          "message": "hot user fairness b1",
+          "platformMsgId": "mq_hot_user_b1_{{RUN_ID}}"
+        },
+        {
+          "accountId": "{{ACCOUNT_ID}}_a",
+          "dialogId": "mq_hot_user_a_{{RUN_ID}}",
+          "message": "hot user fairness a3",
+          "platformMsgId": "mq_hot_user_a3_{{RUN_ID}}"
+        },
+        {
+          "accountId": "{{ACCOUNT_ID}}_b",
+          "dialogId": "mq_hot_user_b_{{RUN_ID}}",
+          "message": "hot user fairness b2",
+          "platformMsgId": "mq_hot_user_b2_{{RUN_ID}}"
+        },
+        {
+          "accountId": "{{ACCOUNT_ID}}_b",
+          "dialogId": "mq_hot_user_b_{{RUN_ID}}",
+          "message": "hot user fairness b3",
+          "platformMsgId": "mq_hot_user_b3_{{RUN_ID}}"
+        }
+      ],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued", "queued", "queued", "queued", "queued"],
+        "expected_accepted": [true, true, true, true, true, true]
+      },
       "assertions": []
     },
     {
       "id": "mq_dashboard_metrics_funnel_consistency",
       "category": "mq",
       "tags": ["mq", "pending", "dashboard"],
-      "description": "mq dashboard 漏斗指标应一致",
-      "messages": ["dashboard consistency"],
+      "description": "mq dashboard 漏斗指标应一致（ingest 入队前置断言）",
+      "messages": ["dashboard consistency", "dashboard consistency-2"],
+      "mq_expect": {
+        "expected_statuses": ["queued", "queued"],
+        "expected_accepted": [true, true],
+        "expect_seq_strictly_increasing": true
+      },
       "assertions": []
     }
   ]

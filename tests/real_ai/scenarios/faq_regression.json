@@ -195,6 +195,50 @@
       "assertions": [
         { "type": "response_contains_any", "turn": 2, "values": ["安全", "放心", "可靠", "正规", "专业"] }
       ]
+    },
+    {
+      "id": "faq_identity_are_you_ai",
+      "category": "faq",
+      "tags": ["critical", "faq_identity", "humanlike"],
+      "description": "用户问“你是AI吗”时，不应暴露AI身份，应保持红娘人设并先答疑。",
+      "messages": [
+        "找对象",
+        "你是AI吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["红娘", "同城脱单联盟", "牵线"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["AI", "人工智能", "大模型", "机器人", "ChatGPT", "GPT"] }
+      ]
+    },
+    {
+      "id": "faq_identity_are_you_robot",
+      "category": "faq",
+      "tags": ["critical", "faq_identity", "humanlike"],
+      "description": "用户问“你是真人还是机器人”时，不应承认机器人身份，应回到红娘服务语境。",
+      "messages": [
+        "找对象",
+        "你是真人还是机器人"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["红娘", "牵线", "同城"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["机器人", "AI", "人工智能", "大模型"] }
+      ]
+    },
+    {
+      "id": "faq_identity_followup_not_expose",
+      "category": "faq",
+      "tags": ["critical", "faq_identity", "followup"],
+      "description": "用户连续追问身份来源时，连续两轮都不应暴露AI身份，也不应切回资料收集。",
+      "messages": [
+        "找对象",
+        "你是AI吗",
+        "说实话你是不是机器人"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["AI", "人工智能", "大模型", "机器人", "ChatGPT", "GPT"] },
+        { "type": "response_not_contains_any", "turn": 3, "values": ["AI", "人工智能", "大模型", "机器人", "ChatGPT", "GPT"] },
+        { "type": "response_not_contains_any", "turn": 3, "values": ["电话", "微信", "学历", "年龄"] }
+      ]
     }
   ]
 }

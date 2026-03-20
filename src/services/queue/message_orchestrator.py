@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from src.config.settings import settings
@@ -46,7 +46,16 @@ class MessageOrchestrator:
             return None
 
         if text.isdigit():
-            return text
+            try:
+                value = int(text)
+                # 13位通常是毫秒时间戳，10位通常是秒级时间戳。
+                if value >= 10**12:
+                    dt = datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+                else:
+                    dt = datetime.fromtimestamp(value, tz=timezone.utc)
+                return dt.isoformat()
+            except Exception:
+                return None
 
         try:
             datetime.fromisoformat(text.replace("Z", "+00:00"))
@@ -247,16 +256,24 @@ class MessageOrchestrator:
         return None
 
     async def _process_turn_command(self, command: ProcessChatTurnCommand):
+        normalized_timestamp = self._normalize_timestamp(command.timestamp)
         use_case = getattr(self.chat_service, "process_chat_turn_use_case", None)
         if use_case is not None and hasattr(use_case, "execute_command"):
-            return await use_case.execute_command(command)
+            safe_command = ProcessChatTurnCommand(
+                question=command.question,
+                account_id=command.account_id,
+                dialog_id=command.dialog_id,
+                sex=command.sex,
+                timestamp=normalized_timestamp,
+            )
+            return await use_case.execute_command(safe_command)
 
         chat_request = ChatRequest(
             question=command.question,
             accountId=command.account_id,
             dialogId=command.dialog_id,
             sex=command.sex,
-            timestamp=command.timestamp,
+            timestamp=normalized_timestamp,
         )
         payload = await self.chat_service.process_chat_request(chat_request)
         return ProcessChatTurnResult(

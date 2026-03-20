@@ -936,8 +936,23 @@ class ChatService:
             return "那微信或者电话留一个都可以，主要是方便后面联系你～"
 
         if message in {'好', '嗯', '嗯嗯', '好的', 'ok', '可以'}:
-            confirm_count = await self.input_fallback_service.increment_confirm_count(account_id)
-            return self.input_fallback_service.get_confirm_word_response(user_profile, confirm_count) or ""
+            # 仅在明确联系方式语境中，确认词才进入联系方式兜底。
+            last_response = await self.dialogue_manager.get_last_response(account_id) or ""
+            contact_context_markers = ["电话", "手机号", "号码", "微信", "联系方式", "留个", "联系你"]
+            has_contact_stage_signal = any(
+                [
+                    bool(user_profile.phone_ask_count > 0),
+                    bool(user_profile.wechat_ask_count > 0),
+                    bool(user_profile.phone_collected),
+                    bool(user_profile.wechat_collected),
+                    bool(user_profile.rejected_phone),
+                    bool(user_profile.rejected_wechat),
+                ]
+            )
+            last_response_about_contact = any(marker in last_response for marker in contact_context_markers)
+            if has_contact_stage_signal or last_response_about_contact:
+                confirm_count = await self.input_fallback_service.increment_confirm_count(account_id)
+                return self.input_fallback_service.get_confirm_word_response(user_profile, confirm_count) or ""
 
         next_action = self.contact_service.get_next_action(user_profile, message)
         if next_action.value == "ask_phone":

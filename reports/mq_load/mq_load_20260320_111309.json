@@ -1,0 +1,130 @@
+{
+  "summary": {
+    "run_id": "5782b074",
+    "base_url": "http://127.0.0.1:8000",
+    "accounts": 20,
+    "messages_per_account": 10,
+    "concurrency": 20,
+    "total_requests": 200,
+    "http_success": 200,
+    "http_failed": 0,
+    "accepted": 200,
+    "queued": 200,
+    "duplicate": 0,
+    "queue_full": 0,
+    "invalid_payload": 0,
+    "ignored_empty": 0,
+    "duration_seconds": 0.235,
+    "rps": 852.6,
+    "latency_ms": {
+      "avg": 22.81,
+      "p50": 18.82,
+      "p90": 39.06,
+      "p95": 44.61,
+      "p99": 46.16,
+      "max": 46.83
+    },
+    "dashboard_before": {
+      "http_status": 200,
+      "body": {
+        "success": true,
+        "dashboard": {
+          "snapshot": {
+            "pending_depth": 390,
+            "running_sessions": 2,
+            "debouncing_sessions": 59,
+            "ready_users": 36,
+            "outbox_ready": 0,
+            "invalid_timestamp_count": 5,
+            "queue_full_count": 0,
+            "stale_drop_count": 0,
+            "ingest_total": 594,
+            "ingest_invalid_payload": 10,
+            "ingest_ignored_empty": 5,
+            "ingest_accepted": 571,
+            "ingest_duplicate": 8,
+            "ingest_queue_full": 0,
+            "turn_started": 101079,
+            "turn_succeeded": 91,
+            "turn_failed": 100985,
+            "turn_stale": 0,
+            "empty_response_business_silent": 0,
+            "empty_response_error": 0,
+            "outbox_created": 91,
+            "outbox_delivery_success": 91,
+            "outbox_delivery_retry": 0,
+            "outbox_delivery_drop": 0
+          },
+          "ratios": {
+            "ingest_accept_rate": 0.9613,
+            "delivery_success_rate": 1.0,
+            "turn_success_rate": 0.0009
+          }
+        },
+        "timestamp": "2026-03-20T11:13:09.465989"
+      }
+    },
+    "dashboard_after": {
+      "http_status": 200,
+      "body": {
+        "success": true,
+        "dashboard": {
+          "snapshot": {
+            "pending_depth": 590,
+            "running_sessions": 2,
+            "debouncing_sessions": 79,
+            "ready_users": 56,
+            "outbox_ready": 0,
+            "invalid_timestamp_count": 5,
+            "queue_full_count": 0,
+            "stale_drop_count": 0,
+            "ingest_total": 794,
+            "ingest_invalid_payload": 10,
+            "ingest_ignored_empty": 5,
+            "ingest_accepted": 771,
+            "ingest_duplicate": 8,
+            "ingest_queue_full": 0,
+            "turn_started": 101079,
+            "turn_succeeded": 91,
+            "turn_failed": 100985,
+            "turn_stale": 0,
+            "empty_response_business_silent": 0,
+            "empty_response_error": 0,
+            "outbox_created": 91,
+            "outbox_delivery_success": 91,
+            "outbox_delivery_retry": 0,
+            "outbox_delivery_drop": 0
+          },
+          "ratios": {
+            "ingest_accept_rate": 0.971,
+            "delivery_success_rate": 1.0,
+            "turn_success_rate": 0.0009
+          }
+        },
+        "timestamp": "2026-03-20T11:13:09.791020"
+      }
+    },
+    "timestamp": "2026-03-20T11:13:09.791698"
+  },
+  "gate": {
+    "enabled": true,
+    "passed": true,
+    "thresholds": {
+      "max_fail_rate": 0.02,
+      "max_p95_ms": 400.0,
+      "max_p99_ms": 800.0,
+      "max_latency_ms": 3000.0,
+      "min_rps": 1.0,
+      "max_queue_full_rate": 0.5
+    },
+    "observed": {
+      "fail_rate": 0.0,
+      "queue_full_rate": 0.0,
+      "p95_ms": 44.61,
+      "p99_ms": 46.16,
+      "max_latency_ms": 46.83,
+      "rps": 852.6
+    },
+    "reasons": []
+  }
+}

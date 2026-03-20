@@ -1,0 +1,1528 @@
+{
+  "created_at": "2026-03-19T19:11:53",
+  "summary": {
+    "sessions": 1,
+    "turns": 30,
+    "failed_checks": 10,
+    "failed_check_breakdown": {
+      "turn": 0,
+      "field": 4,
+      "policy": 6
+    },
+    "token_usage": {
+      "prompt_tokens": 113991,
+      "completion_tokens": 10994,
+      "total_tokens": 124985,
+      "call_count": 21
+    },
+    "latency": {
+      "p50": 14.264,
+      "p90": 21.18,
+      "p95": 23.044,
+      "p99": 27.689,
+      "max": 29.024,
+      "avg": 12.33
+    }
+  },
+  "analysis": {
+    "humanlike_quality": {
+      "total_checks": 43,
+      "failed_checks": 6,
+      "pass_rate": 0.8605,
+      "turn_level_failures": 0,
+      "policy_rule_failures": 6,
+      "top_turn_failures": [],
+      "top_policy_failures": [
+        {
+          "name": "core_ask_limit_age",
+          "count": 1
+        },
+        {
+          "name": "core_ask_limit_education",
+          "count": 1
+        },
+        {
+          "name": "core_ask_limit_location",
+          "count": 1
+        },
+        {
+          "name": "quasi_core_ask_limit_marital_status",
+          "count": 1
+        },
+        {
+          "name": "medium_ask_limit_partner_requirement",
+          "count": 1
+        },
+        {
+          "name": "no_consecutive_same_field_ask",
+          "count": 1
+        }
+      ],
+      "template_top1_ratio": 0.0667,
+      "latency_p95": 23.044,
+      "latency_p99": 27.689
+    },
+    "extraction_accuracy": {
+      "total_checks": 10,
+      "failed_checks": 4,
+      "pass_rate": 0.6,
+      "exact_match_checks": 2,
+      "exact_match_failures": 1,
+      "exact_match_pass_rate": 0.5,
+      "completeness_checks": 8,
+      "completeness_failures": 3,
+      "completeness_pass_rate": 0.625,
+      "top_failed_checks": [
+        {
+          "name": "sex_not_inferred_without_self_declare",
+          "count": 1
+        },
+        {
+          "name": "education_truthy",
+          "count": 1
+        },
+        {
+          "name": "occupation_truthy",
+          "count": 1
+        },
+        {
+          "name": "partner_requirement_matches_user_stated",
+          "count": 1
+        }
+      ]
+    },
+    "field_quality": {
+      "total_checks": 10,
+      "failed_checks": 4,
+      "pass_rate": 0.6,
+      "top_failed_checks": [
+        {
+          "name": "sex_not_inferred_without_self_declare",
+          "count": 1
+        },
+        {
+          "name": "education_truthy",
+          "count": 1
+        },
+        {
+          "name": "occupation_truthy",
+          "count": 1
+        },
+        {
+          "name": "partner_requirement_matches_user_stated",
+          "count": 1
+        }
+      ],
+      "failed_sessions": [
+        {
+          "scenario_id": "random_1",
+          "session_id": "realism_1_40cbde24",
+          "failures": [
+            "sex_not_inferred_without_self_declare: expected='empty/unknown', actual='男' (no explicit self sex in user turns)",
+            "education_truthy: expected='non-empty', actual=None",
+            "occupation_truthy: expected='non-empty', actual=None",
+            "partner_requirement_matches_user_stated: expected='上进 你们靠谱吗 你们靠谱吗', actual='喜欢上进的,希望另一半上进'"
+          ]
+        }
+      ]
+    },
+    "policy_quality": {
+      "total_checks": 13,
+      "failed_checks": 6,
+      "pass_rate": 0.5385,
+      "top_failed_checks": [
+        {
+          "name": "core_ask_limit_age",
+          "count": 1
+        },
+        {
+          "name": "core_ask_limit_education",
+          "count": 1
+        },
+        {
+          "name": "core_ask_limit_location",
+          "count": 1
+        },
+        {
+          "name": "quasi_core_ask_limit_marital_status",
+          "count": 1
+        },
+        {
+          "name": "medium_ask_limit_partner_requirement",
+          "count": 1
+        },
+        {
+          "name": "no_consecutive_same_field_ask",
+          "count": 1
+        }
+      ],
+      "failed_sessions": [
+        {
+          "scenario_id": "random_1",
+          "session_id": "realism_1_40cbde24",
+          "failures": [
+            "core_ask_limit_age: expected='<=2', actual=3",
+            "core_ask_limit_education: expected='<=2', actual=4",
+            "core_ask_limit_location: expected='<=2', actual=4",
+            "quasi_core_ask_limit_marital_status: expected='<=2', actual=10",
+            "medium_ask_limit_partner_requirement: expected='<=1', actual=3",
+            "no_consecutive_same_field_ask: expected=0, actual=10"
+          ]
+        }
+      ]
+    },
+    "latency": {
+      "p50": 14.264,
+      "p90": 21.18,
+      "p95": 23.044,
+      "p99": 27.689,
+      "max": 29.024,
+      "avg": 12.33
+    },
+    "phase_latency_avg": {
+      "profile_load": 0.0093,
+      "profile_save": 0.0043,
+      "context_load": 0.0131,
+      "rule_check": 0.0052,
+      "ai_call": 16.7387,
+      "extract_collect": 0.0069,
+      "response_build": 0.576,
+      "other": 0.0026,
+      "total": 12.33
+    },
+    "slow_turns_top20": [],
+    "template_risk": {
+      "top_templates": [
+        {
+          "template": "这块可以放心我们是做真人审核和牵线流程把控的整体会以安全和靠谱为优先你要是还有顾虑也可以继续问我",
+          "count": 2,
+          "ratio": 0.0667
+        },
+        {
+          "template": "照片通常是双方都觉得合适后再互换这样更尊重彼此隐私你要是还有顾虑也可以继续问我",
+          "count": 2,
+          "ratio": 0.0667
+        },
+        {
+          "template": "喜欢上进的另一半确实很重要呀对啦你今年大概多大呀我也好帮你匹配年龄合适的人选",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "可以理解你会担心我们是按真人审核和牵线流程来做不是随便对接",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "嗯嗯我记住你希望另一半是上进的啦对了你平时主要在哪个城市工作生活呀我们可以优先筛同城的资源匹配效率更高哦",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "哈哈是这样的知道你所在的城市我可以优先给你筛同城的合适资源后续你们接触起来也更方便对啦顺便问问你是什么学历呀我也好帮你找更契合的人选",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "流程是先线上了解并做匹配筛选双方聊得来再后续有合适人选我会第一时间联系你这样更稳妥你要是还有顾虑也可以继续问我",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "哈哈也是为了帮你筛到更合拍的对象嘛信息越贴合匹配到的人也更合适呀对了你大概是哪个年龄段的呀",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "哈哈不好意思呀要是你不想说年龄也没关系的我主要是想了解下你平时在哪个城市工作生活呀毕竟咱们是做同城脱单匹配的知道你所在的城市才能优先给你推同个地方的合适人选也不",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "没关系呀不方便说就不说哈对了想问下你是什么学历呀知道这个的话我后面给你推合适的人选时也能筛得更贴合你的情况哦",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "哈哈当然不是面试呀就是了解点基础信息后续给你推荐的人才更贴合你要的上进的要求嘛对了顺带问下你现在是单身状态在认真了解脱单吗",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "哦原来你在北京呀对啦顺带确认下你现在是单身状态在认真找对象吗",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "好哒我记下你在北京啦我顺带确认下你现在是单身状态在认真了解脱单的吗",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "哈哈正常哒毕竟要给你找符合你要求的上进对象嘛多了解点才能匹配得更准信息我们也都会严格保密的哈我顺带确认下你现在是单身状态在认真了解脱单的吗",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "哈哈毕竟要给你匹配到符合你要求的上进另一半呀信息越准匹配到合适的人的概率越高嘛你放心所有信息我们都会严格保密的我顺便确认下你现在是单身状态在认真了解脱单的吗",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "没关系呀不想留咱们就先不留完全不用有压力的对了我顺道问下你是什么学历呀了解这个方便给你筛更适配的人选哦",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "哈哈没关系呀不想留联系方式咱们就先不急完全没有负担的对了我想问下你是什么学历呀了解这个方便给你匹配到三观更契合的人选哦不方便说也没关系哒",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "哈哈不好意思呀我之前是想着了解清楚能帮你匹配到更聊得来的人选你不方便说也完全没关系的对啦我顺带确认下你现在是单身状态在认真了解脱单吗",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "哈哈哪里是面试呀我就是想多了解点基础情况好给你匹配到合心意的对象嘛你要是觉得啥不方便说完全没问题的对啦我顺带问下你现在是单身状态在认真了解脱单吗",
+          "count": 1,
+          "ratio": 0.0333
+        },
+        {
+          "template": "我们先线上把关资料和偏好匹配到合适的人再后续有合适人选我会第一时间联系你",
+          "count": 1,
+          "ratio": 0.0333
+        }
+      ],
+      "top1_ratio": 0.0667,
+      "threshold": 0.18,
+      "at_risk": false
+    },
+    "optimization_hints": [
+      "LLM 阶段占比过高：优先优化 prompt 长度、FAQ 快速通道和模型路由。"
+    ]
+  },
+  "results": [
+    {
+      "session_id": "realism_1_40cbde24",
+      "scenario_id": "random_1",
+      "category": "random",
+      "tags": [
+        "realism",
+        "random"
+      ],
+      "persona": {
+        "sex": "男",
+        "age_bucket": "95后",
+        "location": "北京",
+        "education": "大专",
+        "occupation": "教师",
+        "preference": "上进",
+        "faq_prob": 0.27884722782428334,
+        "joking_prob": 0.1853398974845823,
+        "defensive_prob": 0.2284359135409691,
+        "contact_willingness": "phone"
+      },
+      "turns": [
+        {
+          "index": 1,
+          "user": "喜欢上进",
+          "assistant": "喜欢上进的另一半确实很重要呀～对啦，你今年大概多大呀？我也好帮你匹配年龄合适的人选。",
+          "latency_s": 13.74,
+          "perf": {
+            "profile_load": 0.0089,
+            "profile_save": 0.0043,
+            "context_load": 0.0076,
+            "rule_check": 0.0048,
+            "ai_call": 13.7023,
+            "extract_collect": 0.0098,
+            "response_build": 0.0019,
+            "other": 0.0004,
+            "total": 13.7401
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的"
+          },
+          "failures": []
+        },
+        {
+          "index": 2,
+          "user": "你们靠谱吗",
+          "assistant": "这块可以放心，我们是做真人审核和牵线流程把控的，整体会以安全和靠谱为优先。你要是还有顾虑也可以继续问我。",
+          "latency_s": 2.552,
+          "perf": {
+            "profile_load": 0.0033,
+            "context_load": 0.0103,
+            "rule_check": 0.0041,
+            "response_build": 2.5299,
+            "other": 0.0044,
+            "total": 2.5521
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的"
+          },
+          "failures": []
+        },
+        {
+          "index": 3,
+          "user": "你们靠谱吗",
+          "assistant": "可以理解你会担心，我们是按真人审核和牵线流程来做，不是随便对接。",
+          "latency_s": 1.884,
+          "perf": {
+            "profile_load": 0.0029,
+            "context_load": 0.0136,
+            "rule_check": 0.0049,
+            "response_build": 1.8543,
+            "other": 0.008,
+            "total": 1.8838
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的"
+          },
+          "failures": []
+        },
+        {
+          "index": 4,
+          "user": "喜欢上进",
+          "assistant": "嗯嗯，我记住你希望另一半是上进的啦~对了，你平时主要在哪个城市工作生活呀？我们可以优先筛同城的资源，匹配效率更高哦。",
+          "latency_s": 17.047,
+          "perf": {
+            "profile_load": 0.0114,
+            "context_load": 0.024,
+            "rule_check": 0.008,
+            "profile_save": 0.0082,
+            "ai_call": 16.9846,
+            "extract_collect": 0.0071,
+            "response_build": 0.0012,
+            "other": 0.0026,
+            "total": 17.0471
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 5,
+          "user": "这个为啥要问",
+          "assistant": "哈哈是这样的，知道你所在的城市我可以优先给你筛同城的合适资源，后续你们接触起来也更方便~对啦，顺便问问你是什么学历呀？我也好帮你找更契合的人选~",
+          "latency_s": 17.541,
+          "perf": {
+            "profile_load": 0.0123,
+            "context_load": 0.0143,
+            "rule_check": 0.0059,
+            "profile_save": 0.0031,
+            "ai_call": 17.4981,
+            "extract_collect": 0.0061,
+            "response_build": 0.0015,
+            "other": 0.0001,
+            "total": 17.5414
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 6,
+          "user": "可以先看照片吗",
+          "assistant": "照片通常是双方都觉得合适后再互换，这样更尊重彼此隐私。你要是还有顾虑也可以继续问我。",
+          "latency_s": 1.7,
+          "perf": {
+            "profile_load": 0.0032,
+            "context_load": 0.0129,
+            "rule_check": 0.0036,
+            "response_build": 1.6767,
+            "other": 0.0034,
+            "total": 1.6997
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 7,
+          "user": "怎么匹配",
+          "assistant": "流程是先线上了解并做匹配筛选，双方聊得来再后续有合适人选我会第一时间联系你，这样更稳妥。你要是还有顾虑也可以继续问我。",
+          "latency_s": 2.139,
+          "perf": {
+            "profile_load": 0.0029,
+            "context_load": 0.0128,
+            "rule_check": 0.004,
+            "response_build": 2.1148,
+            "other": 0.004,
+            "total": 2.1386
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 8,
+          "user": "问得挺细啊",
+          "assistant": "哈哈，也是为了帮你筛到更合拍的对象嘛，信息越贴合匹配到的人也更合适呀~对了，你大概是哪个年龄段的呀？",
+          "latency_s": 9.877,
+          "perf": {
+            "profile_load": 0.0118,
+            "context_load": 0.0132,
+            "rule_check": 0.0039,
+            "profile_save": 0.003,
+            "ai_call": 9.8369,
+            "extract_collect": 0.0059,
+            "response_build": 0.0011,
+            "other": 0.0015,
+            "total": 9.8772
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 9,
+          "user": "这个为啥要问",
+          "assistant": "哈哈不好意思呀，要是你不想说年龄也没关系的~我主要是想了解下你平时在哪个城市工作生活呀，毕竟咱们是做同城脱单匹配的，知道你所在的城市才能优先给你推同个地方的合适人选，也不会浪费你时间哒。",
+          "latency_s": 29.024,
+          "perf": {
+            "profile_load": 0.0106,
+            "context_load": 0.0102,
+            "rule_check": 0.0032,
+            "profile_save": 0.0029,
+            "ai_call": 28.9874,
+            "extract_collect": 0.0052,
+            "response_build": 0.0012,
+            "other": 0.0031,
+            "total": 29.0238
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 10,
+          "user": "这个不方便说",
+          "assistant": "没关系呀，不方便说就不说哈~对了想问下你是什么学历呀？知道这个的话我后面给你推合适的人选时也能筛得更贴合你的情况哦",
+          "latency_s": 13.956,
+          "perf": {
+            "profile_load": 0.0148,
+            "context_load": 0.0108,
+            "profile_save": 0.0101,
+            "rule_check": 0.0062,
+            "ai_call": 13.9105,
+            "extract_collect": 0.0156,
+            "response_build": 0.0012,
+            "other": 0.0,
+            "total": 13.9562
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "已跳过(2次未答)",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 11,
+          "user": "这是面试吗",
+          "assistant": "哈哈当然不是面试呀，就是了解点基础信息，后续给你推荐的人才更贴合你要的上进的要求嘛~对了顺带问下，你现在是单身状态在认真了解脱单吗？",
+          "latency_s": 11.948,
+          "perf": {
+            "profile_load": 0.0097,
+            "context_load": 0.0086,
+            "rule_check": 0.0028,
+            "profile_save": 0.0026,
+            "ai_call": 11.9175,
+            "extract_collect": 0.0044,
+            "response_build": 0.0012,
+            "other": 0.0015,
+            "total": 11.9483
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "已跳过(2次未答)",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 12,
+          "user": "在北京",
+          "assistant": "哦原来你在北京呀～对啦，顺带确认下，你现在是单身状态在认真找对象吗？",
+          "latency_s": 21.363,
+          "perf": {
+            "profile_load": 0.0108,
+            "context_load": 0.0084,
+            "rule_check": 0.0063,
+            "profile_save": 0.0054,
+            "ai_call": 21.3264,
+            "extract_collect": 0.0089,
+            "response_build": 0.001,
+            "other": 0.0,
+            "total": 21.3631
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 13,
+          "user": "你们靠谱吗",
+          "assistant": "这块可以放心，我们是做真人审核和牵线流程把控的，整体会以安全和靠谱为优先。你要是还有顾虑也可以继续问我。",
+          "latency_s": 2.122,
+          "perf": {
+            "profile_load": 0.0032,
+            "context_load": 0.0153,
+            "rule_check": 0.0061,
+            "response_build": 2.0897,
+            "other": 0.008,
+            "total": 2.1223
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 14,
+          "user": "在北京",
+          "assistant": "好哒，我记下你在北京啦～我顺带确认下，你现在是单身状态在认真了解脱单的吗？",
+          "latency_s": 21.16,
+          "perf": {
+            "profile_load": 0.0129,
+            "context_load": 0.014,
+            "rule_check": 0.0056,
+            "profile_save": 0.0033,
+            "ai_call": 21.1151,
+            "extract_collect": 0.0063,
+            "response_build": 0.0012,
+            "other": 0.0018,
+            "total": 21.1603
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 15,
+          "user": "问得挺细啊",
+          "assistant": "哈哈正常哒～毕竟要给你找符合你要求的上进对象嘛，多了解点才能匹配得更准，信息我们也都会严格保密的哈。我顺带确认下，你现在是单身状态在认真了解脱单的吗？",
+          "latency_s": 14.786,
+          "perf": {
+            "profile_load": 0.0128,
+            "context_load": 0.0125,
+            "rule_check": 0.0062,
+            "profile_save": 0.0042,
+            "ai_call": 14.7438,
+            "extract_collect": 0.0057,
+            "response_build": 0.0014,
+            "other": 0.0,
+            "total": 14.7857
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 16,
+          "user": "问得挺细啊",
+          "assistant": "哈哈毕竟要给你匹配到符合你要求的上进另一半呀，信息越准匹配到合适的人的概率越高嘛，你放心所有信息我们都会严格保密的~我顺便确认下，你现在是单身状态在认真了解脱单的吗？",
+          "latency_s": 14.571,
+          "perf": {
+            "profile_load": 0.0124,
+            "context_load": 0.0122,
+            "rule_check": 0.0056,
+            "profile_save": 0.0031,
+            "ai_call": 14.5322,
+            "extract_collect": 0.0068,
+            "response_build": 0.0017,
+            "other": 0.0,
+            "total": 14.571
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 17,
+          "user": "我先不想留联系方式",
+          "assistant": "没关系呀，不想留咱们就先不留，完全不用有压力的~对了我顺道问下，你是什么学历呀？了解这个方便给你筛更适配的人选哦。",
+          "latency_s": 15.592,
+          "perf": {
+            "profile_load": 0.0096,
+            "context_load": 0.0116,
+            "rule_check": 0.0061,
+            "profile_save": 0.0047,
+            "ai_call": 15.5539,
+            "extract_collect": 0.0069,
+            "response_build": 0.001,
+            "other": 0.0,
+            "total": 15.592
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 18,
+          "user": "我先不想留联系方式",
+          "assistant": "哈哈没关系呀，不想留联系方式咱们就先不急，完全没有负担的~对了我想问下你是什么学历呀？了解这个方便给你匹配到三观更契合的人选哦，不方便说也没关系哒。",
+          "latency_s": 24.419,
+          "perf": {
+            "profile_load": 0.0125,
+            "context_load": 0.0111,
+            "rule_check": 0.0045,
+            "profile_save": 0.0046,
+            "ai_call": 24.38,
+            "extract_collect": 0.0075,
+            "response_build": 0.0015,
+            "other": 0.0,
+            "total": 24.4188
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 19,
+          "user": "这个为啥要问",
+          "assistant": "哈哈不好意思呀，我之前是想着了解清楚能帮你匹配到更聊得来的人选，你不方便说也完全没关系的~对啦我顺带确认下，你现在是单身状态在认真了解脱单吗？",
+          "latency_s": 17.616,
+          "perf": {
+            "profile_load": 0.0124,
+            "context_load": 0.0141,
+            "rule_check": 0.0049,
+            "profile_save": 0.0049,
+            "ai_call": 17.5689,
+            "extract_collect": 0.0065,
+            "response_build": 0.0013,
+            "other": 0.0027,
+            "total": 17.6156
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 20,
+          "user": "这是面试吗",
+          "assistant": "哈哈哪里是面试呀，我就是想多了解点基础情况，好给你匹配到合心意的对象嘛，你要是觉得啥不方便说完全没问题的~对啦我顺带问下，你现在是单身状态在认真了解脱单吗？",
+          "latency_s": 15.417,
+          "perf": {
+            "profile_load": 0.0092,
+            "context_load": 0.0122,
+            "rule_check": 0.0044,
+            "profile_save": 0.0022,
+            "ai_call": 15.3823,
+            "extract_collect": 0.0047,
+            "response_build": 0.0012,
+            "other": 0.001,
+            "total": 15.4173
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 21,
+          "user": "怎么匹配",
+          "assistant": "我们先线上把关资料和偏好，匹配到合适的人再后续有合适人选我会第一时间联系你。",
+          "latency_s": 1.687,
+          "perf": {
+            "profile_load": 0.0033,
+            "context_load": 0.0144,
+            "rule_check": 0.0048,
+            "response_build": 1.6535,
+            "other": 0.0106,
+            "total": 1.6866
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 22,
+          "user": "在北京",
+          "assistant": "哈哈我记着你在北京哒～对了顺带问下，你现在是单身状态在认真找对象吗？",
+          "latency_s": 17.961,
+          "perf": {
+            "profile_load": 0.0146,
+            "context_load": 0.0148,
+            "rule_check": 0.0062,
+            "profile_save": 0.0043,
+            "ai_call": 17.9146,
+            "extract_collect": 0.0078,
+            "response_build": 0.0018,
+            "other": 0.0,
+            "total": 17.9607
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 23,
+          "user": "喜欢上进",
+          "assistant": "上进的另一半确实很靠谱呀，对啦我顺带确认下，你现在是单身状态在认真了解脱单相关的吗？",
+          "latency_s": 18.827,
+          "perf": {
+            "profile_load": 0.0206,
+            "context_load": 0.0293,
+            "rule_check": 0.0141,
+            "profile_save": 0.0034,
+            "ai_call": 18.7537,
+            "extract_collect": 0.0091,
+            "response_build": 0.0013,
+            "other": 0.0,
+            "total": 18.8269
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 24,
+          "user": "会泄露隐私吗",
+          "assistant": "这块你可以放心，资料和联系方式只用于匹配与牵线，不会对外乱传，我们会尽量保护你的隐私。",
+          "latency_s": 1.918,
+          "perf": {
+            "profile_load": 0.002,
+            "context_load": 0.0111,
+            "rule_check": 0.0043,
+            "response_build": 1.8974,
+            "other": 0.0036,
+            "total": 1.9183
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 25,
+          "user": "这是面试吗",
+          "assistant": "哈哈当然不是面试啦，就是想多了解点你的情况，尽量给你匹配合适的有缘人嘛，省得给你推的不符合你预期~对了我顺带确认下，你现在是单身状态在认真了解脱单的事吗？",
+          "latency_s": 12.589,
+          "perf": {
+            "profile_load": 0.0103,
+            "context_load": 0.0122,
+            "rule_check": 0.0048,
+            "profile_save": 0.0037,
+            "ai_call": 12.5531,
+            "extract_collect": 0.0043,
+            "response_build": 0.001,
+            "other": 0.0,
+            "total": 12.589
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 26,
+          "user": "电话不太方便",
+          "assistant": "这个电话只是用于系统登记哦，有合适的人选才能联系到你，我们不会私下打扰也会严格保护你的隐私，请放心~",
+          "latency_s": 16.034,
+          "perf": {
+            "profile_load": 0.0106,
+            "context_load": 0.0126,
+            "rule_check": 0.0055,
+            "profile_save": 0.0047,
+            "ai_call": 15.9917,
+            "extract_collect": 0.0039,
+            "response_build": 0.0012,
+            "other": 0.004,
+            "total": 16.0342
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "电话争取中",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 27,
+          "user": "会泄露隐私吗",
+          "assistant": "我们会把隐私和信息安全放在前面，资料不会拿去乱用，这点你可以放心。",
+          "latency_s": 1.633,
+          "perf": {
+            "profile_load": 0.0013,
+            "context_load": 0.0101,
+            "rule_check": 0.0033,
+            "response_build": 1.6139,
+            "other": 0.0045,
+            "total": 1.6332
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "电话争取中",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 28,
+          "user": "喜欢上进",
+          "assistant": "这个电话只是用于系统登记哈，我们会严格保护你的隐私，只有匹配到合适的人选时才会联系你，不会私下打扰的，请你放心。",
+          "latency_s": 13.842,
+          "perf": {
+            "profile_load": 0.0115,
+            "context_load": 0.0126,
+            "rule_check": 0.005,
+            "profile_save": 0.0038,
+            "ai_call": 13.8022,
+            "extract_collect": 0.0056,
+            "response_build": 0.0009,
+            "other": 0.0006,
+            "total": 13.8422
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "电话争取中",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 29,
+          "user": "你查户口呢",
+          "assistant": "实在抱歉让你不舒服啦，电话只是系统登记用的，我们会严格保护你的隐私，只有匹配到合适的人选才会联系你，绝不会私下打扰哦。",
+          "latency_s": 15.102,
+          "perf": {
+            "profile_load": 0.0128,
+            "context_load": 0.0127,
+            "rule_check": 0.0046,
+            "profile_save": 0.0029,
+            "ai_call": 15.0579,
+            "extract_collect": 0.0059,
+            "response_build": 0.0011,
+            "other": 0.0038,
+            "total": 15.1018
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "已跳过(2次未答)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "已跳过(2次未答)",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "电话争取中",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        },
+        {
+          "index": 30,
+          "user": "可以先看照片吗",
+          "assistant": "照片通常是双方都觉得合适后再互换，这样更尊重彼此隐私。你要是还有顾虑也可以继续问我。",
+          "latency_s": 1.853,
+          "perf": {
+            "profile_load": 0.0032,
+            "context_load": 0.0123,
+            "rule_check": 0.0037,
+            "response_build": 1.8244,
+            "other": 0.009,
+            "total": 1.8526
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "北京",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "电话争取中",
+            "partner_requirement": "喜欢上进的,希望另一半上进"
+          },
+          "failures": []
+        }
+      ],
+      "final_profile": {
+        "account_id": "realism_1_40cbde24",
+        "created_at": "2026-03-19T19:05:32.483118",
+        "updated_at": "2026-03-19T19:07:58.881940",
+        "sex": "男",
+        "last_name": null,
+        "age": null,
+        "height": null,
+        "weight": null,
+        "location": "北京",
+        "education": null,
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": null,
+        "contact": null,
+        "phone": null,
+        "wechat": null,
+        "partner_requirement": "喜欢上进的,希望另一半上进",
+        "collection_progress": {
+          "sex": true,
+          "last_name": false,
+          "age": false,
+          "height": false,
+          "weight": false,
+          "location": true,
+          "education": false,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": false,
+          "contact": false,
+          "partner_requirement": true
+        },
+        "progress_percentage": 66.67,
+        "missing_fields": [
+          "last_name",
+          "height",
+          "weight",
+          "marital_status",
+          "monthly_income",
+          "contact"
+        ],
+        "skipped_fields": {
+          "location": true,
+          "age": true,
+          "occupation": true,
+          "partner_requirement": true,
+          "education": true
+        },
+        "field_ask_count": {
+          "age": 2,
+          "location": 0,
+          "education": 2,
+          "conversation_end_intent": 1,
+          "marital_status": 1,
+          "contact": 1
+        },
+        "recent_asked_fields": [
+          "age",
+          "location",
+          "education",
+          "age",
+          "location",
+          "education",
+          "marital_status"
+        ],
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": false,
+        "phone_ask_count": 1,
+        "wechat_ask_count": 0,
+        "is_hongkong_user": false,
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "field_checks": [
+        {
+          "name": "sex_not_inferred_without_self_declare",
+          "passed": false,
+          "expected": "empty/unknown",
+          "actual": "男",
+          "note": "no explicit self sex in user turns"
+        },
+        {
+          "name": "location_truthy",
+          "passed": true,
+          "expected": "non-empty",
+          "actual": "北京",
+          "note": ""
+        },
+        {
+          "name": "education_truthy",
+          "passed": false,
+          "expected": "non-empty",
+          "actual": null,
+          "note": ""
+        },
+        {
+          "name": "occupation_truthy",
+          "passed": false,
+          "expected": "non-empty",
+          "actual": null,
+          "note": ""
+        },
+        {
+          "name": "occupation_not_placeholder",
+          "passed": true,
+          "expected": "not in ['None', 'null', '值', '未知']",
+          "actual": null,
+          "note": ""
+        },
+        {
+          "name": "age_reasonable_if_present",
+          "passed": true,
+          "expected": "18-60 or empty",
+          "actual": null,
+          "note": ""
+        },
+        {
+          "name": "location_matches_user_stated",
+          "passed": true,
+          "expected": "北京",
+          "actual": "北京",
+          "note": ""
+        },
+        {
+          "name": "contact_consistency",
+          "passed": true,
+          "expected": "if contact shows collected then phone/wechat exists",
+          "actual": {
+            "contact": "",
+            "phone": null,
+            "wechat": null
+          },
+          "note": ""
+        },
+        {
+          "name": "partner_requirement_when_mentioned",
+          "passed": true,
+          "expected": "non-empty",
+          "actual": "喜欢上进的,希望另一半上进",
+          "note": "user mentioned preference in turns"
+        },
+        {
+          "name": "partner_requirement_matches_user_stated",
+          "passed": false,
+          "expected": "上进 你们靠谱吗 你们靠谱吗",
+          "actual": "喜欢上进的,希望另一半上进",
+          "note": ""
+        }
+      ],
+      "field_failures": [
+        "sex_not_inferred_without_self_declare: expected='empty/unknown', actual='男' (no explicit self sex in user turns)",
+        "education_truthy: expected='non-empty', actual=None",
+        "occupation_truthy: expected='non-empty', actual=None",
+        "partner_requirement_matches_user_stated: expected='上进 你们靠谱吗 你们靠谱吗', actual='喜欢上进的,希望另一半上进'"
+      ],
+      "policy_checks": [
+        {
+          "name": "core_ask_limit_sex",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_age",
+          "passed": false,
+          "expected": "<=2",
+          "actual": 3,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_education",
+          "passed": false,
+          "expected": "<=2",
+          "actual": 4,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_occupation",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 2,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_location",
+          "passed": false,
+          "expected": "<=2",
+          "actual": 4,
+          "note": ""
+        },
+        {
+          "name": "quasi_core_ask_limit_marital_status",
+          "passed": false,
+          "expected": "<=2",
+          "actual": 10,
+          "note": ""
+        },
+        {
+          "name": "medium_ask_limit_monthly_income",
+          "passed": true,
+          "expected": "<=1",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "medium_ask_limit_partner_requirement",
+          "passed": false,
+          "expected": "<=1",
+          "actual": 3,
+          "note": ""
+        },
+        {
+          "name": "low_priority_never_ask_height",
+          "passed": true,
+          "expected": "0",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "low_priority_never_ask_weight",
+          "passed": true,
+          "expected": "0",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "low_priority_never_ask_last_name",
+          "passed": true,
+          "expected": "0",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "no_consecutive_same_field_ask",
+          "passed": false,
+          "expected": 0,
+          "actual": 10,
+          "note": ""
+        },
+        {
+          "name": "income_question_soft_tone",
+          "passed": true,
+          "expected": 0,
+          "actual": 0,
+          "note": ""
+        }
+      ],
+      "policy_failures": [
+        "core_ask_limit_age: expected='<=2', actual=3",
+        "core_ask_limit_education: expected='<=2', actual=4",
+        "core_ask_limit_location: expected='<=2', actual=4",
+        "quasi_core_ask_limit_marital_status: expected='<=2', actual=10",
+        "medium_ask_limit_partner_requirement: expected='<=1', actual=3",
+        "no_consecutive_same_field_ask: expected=0, actual=10"
+      ],
+      "duration_s": 381.129
+    }
+  ]
+}
