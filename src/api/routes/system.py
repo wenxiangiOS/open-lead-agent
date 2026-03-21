@@ -9,6 +9,7 @@ from src.models.requests import ErrorResponse
 from src.models.personality import PersonalityProfile
 from src.services.data.user_service import UserService
 from src.services.queue.queue_store import QueueStore
+from src.services.ai_service import AIService
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -165,6 +166,42 @@ async def get_message_queue_dashboard() -> Dict[str, Any]:
 
 
 @router.get(
+    "/api/doubao/token-usage",
+    summary="获取大模型 Token 用量",
+    description="返回进程内累计的大模型 token 使用统计（输入/输出/总量/调用次数）",
+)
+async def get_token_usage() -> Dict[str, Any]:
+    try:
+        usage = await AIService.get_token_usage()
+        return {
+            "success": True,
+            "token_usage": usage,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Token usage retrieval error: {e}")
+        raise HTTPException(status_code=500, detail="获取 token 用量时出错")
+
+
+@router.post(
+    "/api/doubao/token-usage/reset",
+    summary="重置大模型 Token 用量统计",
+    description="将进程内累计的大模型 token 使用统计清零",
+)
+async def reset_token_usage() -> Dict[str, Any]:
+    try:
+        await AIService.reset_token_usage()
+        return {
+            "success": True,
+            "message": "token usage reset",
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Token usage reset error: {e}")
+        raise HTTPException(status_code=500, detail="重置 token 用量时出错")
+
+
+@router.get(
     "/api",
     summary="API信息",
     description="获取API基本信息和所有可用端点列表",
@@ -209,6 +246,8 @@ async def api_info() -> Dict[str, Any]:
             "stats": "/api/doubao/stats",
             "personality": "/api/doubao/personality",
             "mq_dashboard": "/api/doubao/mq/dashboard",
+            "token_usage": "/api/doubao/token-usage",
+            "token_usage_reset": "/api/doubao/token-usage/reset",
             "health": "/health"
         },
         "timestamp": datetime.now().isoformat()

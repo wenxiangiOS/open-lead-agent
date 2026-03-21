@@ -26,14 +26,13 @@
 命令：
 
 ```bash
-bash scripts/run_quality_upper_bound_gate.sh
+bash scripts/run_release_preflight.sh
 ```
 
 结果：
 
-- 金标长链通过（Y/N）：
-- strict gate 通过（Y/N）：
-- 输出包含 `[quality-gate] PASS`（Y/N）：
+- 预检脚本通过（Y/N）：
+- 输出包含 `[preflight] PASS`（Y/N）：
 - 报告路径：
 
 ### 2.2 Chat 回归（抽检，可选）

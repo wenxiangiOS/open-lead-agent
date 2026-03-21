@@ -119,15 +119,16 @@ class AskTrackingService:
                     logger.debug("[智能追问] 检测到联系方式询问，由 ContactCollectionService 管理")
                     continue
 
-            if field in self.MEDIUM_FIELDS:
-                continue
-
             user_profile.increment_ask_count(field)
             current_count = user_profile.get_ask_count(field)
             logger.info(f"[智能追问] AI询问了字段 {field}，当前追问次数: {current_count}")
             if field in self.COOLDOWN_MANAGED_FIELDS and not recorded_primary:
                 user_profile.mark_recent_asked_field(field, max_history=max_history)
                 recorded_primary = True
+
+            # 中等字段（如择偶要求、月收入）只做计数限流，不做自动 skip。
+            if field in self.MEDIUM_FIELDS:
+                continue
 
             if current_count >= 2 and not skip_guard_enabled:
                 user_profile.skipped_fields[field] = True

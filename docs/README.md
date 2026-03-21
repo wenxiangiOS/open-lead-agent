@@ -1,9 +1,24 @@
 # Docs 导航（唯一入口）
 
+## 🚩 最前必读顺序（发布/上线）
+
+先看下面 6 个文档，按顺序执行：
+
+1. `docs/00_ALIYUN_RELEASE_CHECKLIST.md`
+2. `docs/ai_dialog_policy.md`
+3. `docs/01_ALIYUN_OBS_ALERT_PLAYBOOK.md`
+4. `docs/02_ALIYUN_SLS_ALERT_SETUP.md`
+5. `docs/03_REPORT_AUTOMATION.md`
+6. `docs/04_ALIYUN_RELEASE_RECORD_TEMPLATE.md`（可选，发布留痕）
+
+说明：
+- 如果你当前还没上阿里云，先看前 2 个即可。
+- 上云前再补看后 3 个（告警、排障、自动化）。
+
 发布前一键顺序执行命令（最前入口，直接复制）：
 
 ```bash
-python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose && python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000 && python3 scripts/run_mq_load_test.py --base-url http://127.0.0.1:8000 --accounts 20 --messages-per-account 10 --concurrency 20 --include-dashboard --gate
+bash scripts/run_release_preflight.sh
 ```
 
 质量上限门禁（拟人化/对话质量/提取准确度优先）：
@@ -12,7 +27,35 @@ python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verb
 bash scripts/run_quality_upper_bound_gate.sh
 ```
 
-说明：这是单行链式命令，会按顺序依次执行；前一步失败，后一步不会继续执行。
+报告索引（统一查看所有最新报告）：
+
+```bash
+python3 scripts/generate_report_index.py
+```
+
+查看路径：`reports/INDEX.md`
+
+说明：脚本会按顺序执行质量门禁、MQ ingest 回归、MQ 压测门禁，并自动刷新 `reports/INDEX.md`。
+
+全场景单命令测试（自动识别问题）：
+
+```bash
+python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose
+```
+
+说明：
+- 自动读取 `reports/real_ai_realism/latest.json` 做基线对比（若存在）。
+- 自动输出“项目健康门禁” PASS/FAIL 和失败项（拟人化/提取/时延/模板风险/隔离等）。
+- 自动补充 MQ ingest 检查（可用 `--no-include-mq-checks` 关闭）。
+- 自动生成：
+  - `reports/latest_summary.txt`
+  - `docs/next_fix_todo.md`
+
+快速模式（同一命令，缩短时长）：
+
+```bash
+python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose --fast
+```
 
 本目录文档较多。后续你本人或其他模型协作时，先看本文件，再按顺序阅读。
 
@@ -21,7 +64,7 @@ bash scripts/run_quality_upper_bound_gate.sh
 每次发布前，先按这份流程清单逐项执行：
 
 1. `docs/00_ALIYUN_RELEASE_CHECKLIST.md`
-2. `docs/00_ALIYUN_RELEASE_RECORD_TEMPLATE.md`（发布执行记录模板）
+2. `docs/04_ALIYUN_RELEASE_RECORD_TEMPLATE.md`（发布执行记录模板，可选）
 
 说明：这是发布前唯一执行版清单，按顺序走，不跳步。
 
@@ -136,6 +179,11 @@ bash scripts/run_quality_upper_bound_gate.sh
 - 全量回归（chat + mq，一条命令）  
   `python3 scripts/run_real_ai_regression.py --include-mq --mq-base-url http://127.0.0.1:8000`
 
+## 3.2 报告自动化（新增）
+
+- 文档：`docs/03_REPORT_AUTOMATION.md`
+- 作用：定时自动刷新 `reports/INDEX.md`，避免遗忘报告入口。
+
 ## 4. 历史或补充文档
 
 这些文档偏治理、补充说明或历史记录，不是当前主链路执行入口：
@@ -148,6 +196,7 @@ bash scripts/run_quality_upper_bound_gate.sh
 - `docs/archive/reorg/services_reorg_plan.md`
 - `docs/archive/architecture/ARCHITECTURE_REVIEW.md`
 - `docs/archive/architecture/OPTIMIZATION_SUMMARY.md`
+- `docs/PROMPT_OPTIMIZATION_COMMIT_RUNBOOK.md`
 
 ## 5. 给其他模型的最短指令
 

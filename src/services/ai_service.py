@@ -138,6 +138,15 @@ class AIService:
                     logger.error(f"AI 调用超时（{timeout}秒），已重试 {max_retries} 次")
             except Exception as e:
                 last_error = e
+                status_code = self._extract_status_code(e)
+                if self._is_non_retryable_client_error(e):
+                    logger.error(
+                        "AI 调用失败(非重试错误): %s (status=%s)",
+                        e,
+                        status_code if status_code is not None else "unknown",
+                    )
+                    break
+
                 await self._reset_client(f"generate_response_error:{type(e).__name__}")
                 if attempt < max_retries - 1:
                     logger.warning(f"AI 调用失败: {e}，第 {attempt + 1} 次重试...")
@@ -148,8 +157,39 @@ class AIService:
         if isinstance(last_error, asyncio.TimeoutError):
             raise AIServiceException(f"AI 服务响应超时（{timeout}秒），已重试 {max_retries} 次")
         if last_error is not None:
-            raise AIServiceException(f"AI 服务错误: {str(last_error)}")
+            raise AIServiceException(
+                f"AI 服务错误: {str(last_error)}",
+                details={
+                    "status_code": self._extract_status_code(last_error),
+                    "retryable": not self._is_non_retryable_client_error(last_error),
+                },
+            )
         raise AIServiceException("AI 服务调用失败")
+
+    @staticmethod
+    def _extract_status_code(exc: Exception) -> Optional[int]:
+        status_code = getattr(exc, "status_code", None)
+        if isinstance(status_code, int):
+            return status_code
+        response = getattr(exc, "response", None)
+        response_status = getattr(response, "status_code", None)
+        if isinstance(response_status, int):
+            return response_status
+        return None
+
+    def _is_non_retryable_client_error(self, exc: Exception) -> bool:
+        status_code = self._extract_status_code(exc)
+        if status_code is not None:
+            return 400 <= status_code < 500
+
+        text = str(exc or "").lower()
+        if "error code: 4" in text:
+            return True
+        if "forbidden" in text or "unauthorized" in text:
+            return True
+        if "accountoverdueerror" in text:
+            return True
+        return False
 
     async def _do_generate_response(
         self,
@@ -189,20 +229,32 @@ class AIService:
             logger.warning("Empty response from AI model, will retry")
             raise AIServiceException("AI 模型返回空响应")
 
-        # 记录token使用情况（使用锁保护并发访问）
-        if hasattr(response, 'usage') and response.usage:
-            async with AIService._token_lock:
-                AIService.total_prompt_tokens += response.usage.prompt_tokens
-                AIService.total_completion_tokens += response.usage.completion_tokens
-                AIService.total_tokens += response.usage.total_tokens
-                AIService.call_count += 1
-            logger.info(
-                f"Token使用: 输入={response.usage.prompt_tokens}, "
-                f"输出={response.usage.completion_tokens}, "
-                f"总计={response.usage.total_tokens}"
-            )
+        await self._record_token_usage(response)
 
         return content.strip()
+
+    async def _record_token_usage(self, response: Any) -> None:
+        """从响应中提取并累计 token 使用量。"""
+        usage = getattr(response, "usage", None)
+        if not usage:
+            return
+
+        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+
+        async with AIService._token_lock:
+            AIService.total_prompt_tokens += prompt_tokens
+            AIService.total_completion_tokens += completion_tokens
+            AIService.total_tokens += total_tokens
+            AIService.call_count += 1
+
+        logger.info(
+            "Token使用: 输入=%s, 输出=%s, 总计=%s",
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        )
     async def generate_response_with_messages(
         self,
         messages: list,
@@ -247,6 +299,7 @@ class AIService:
                     logger.warning("Empty response from AI model, will retry")
                     raise AIServiceException("AI 模型返回空响应")
 
+                await self._record_token_usage(response)
                 return content.strip()
 
         except asyncio.TimeoutError:
@@ -298,6 +351,7 @@ class AIService:
                     temperature=0.3,
                     max_tokens=200
                 )
+                await self._record_token_usage(response)
 
                 content = response.choices[0].message.content
                 if not content:
@@ -342,6 +396,7 @@ class AIService:
                     temperature=0.3,
                     max_tokens=200
                 )
+                await self._record_token_usage(response)
 
                 content = response.choices[0].message.content
                 if not content:
@@ -389,6 +444,7 @@ class AIService:
                     temperature=0.3,
                     max_tokens=200
                 )
+                await self._record_token_usage(response)
 
                 content = response.choices[0].message.content
                 if not content:

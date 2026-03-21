@@ -60,6 +60,11 @@ def test_parse_age_handles_post_90s_bucket():
     assert service._parse_age("90后") == 36
 
 
+def test_parse_age_handles_birth_year_with_suffix():
+    service = ExtractionService(_FakeUserService())
+    assert service._parse_age("1998年") == 28
+
+
 @pytest.mark.anyio
 async def test_process_extracted_data_clears_stale_age_label_when_user_provides_exact_age():
     user_service = _FakeUserService()

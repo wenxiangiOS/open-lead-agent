@@ -68,6 +68,7 @@ def test_build_rule_profile_fast_response_asks_next_main_field_naturally():
 
 
 def test_get_main_dialogue_omits_irrelevant_strategy_lines():
+    turn_plan = "\n【本轮计划】\n- 主目标：所在地\n- 顺带目标：无\n- 用户类型：配合型\n- 可进联系方式：否"
     prompt = get_main_dialogue(
         gender_instruction="用户性别未知",
         collected_info="男,90后",
@@ -77,11 +78,13 @@ def test_get_main_dialogue_omits_irrelevant_strategy_lines():
         user_type="配合型",
         can_enter_contact=False,
         is_first_chat=False,
+        turn_plan_instruction=turn_plan,
     )
 
     assert "顺带字段：无" not in prompt
-    assert "用户类型：配合型" not in prompt
     assert "当前不要主动切到电话或微信" in prompt
+    assert "【本轮计划】" in prompt
+    assert "用户类型：配合型" in prompt
 
 
 @pytest.mark.anyio
@@ -597,6 +600,52 @@ def test_apply_dialogue_style_guard_enforces_field_interleaving_with_income_when
     assert "不方便说也没关系" in guarded
 
 
+def test_apply_dialogue_style_guard_avoids_repeating_partner_requirement_prompt_consecutively():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_partner_repeat_guard")
+    profile.recent_asked_fields = ["sex", "age", "location"]
+
+    guarded = chat_service._apply_dialogue_style_guard(
+        "顺带聊聊你的偏好吧，你更看重对方哪几点呀？",
+        "那你现在是单身状态在认真了解吗？",
+        profile,
+    )
+
+    assert "看重对方哪几点" not in guarded
+    assert "我们先不连着问资料" in guarded
+
+
+def test_apply_dialogue_style_guard_preference_turn_does_not_repeat_partner_requirement_question():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_pref_branch_guard")
+
+    guarded = chat_service._apply_dialogue_style_guard(
+        "顺带聊聊你的偏好吧，你更看重对方哪几点呀？",
+        "方便问下你现在是单身状态在认真了解吗？",
+        profile,
+        user_message="身高高挑，不要超过30岁",
+    )
+
+    assert "看重对方哪几点" not in guarded
+    assert "想问" not in guarded
+    assert "方便问" not in guarded
+
+
+def test_apply_dialogue_style_guard_blocks_consecutive_partner_requirement_asks():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_medium_repeat_guard")
+
+    guarded = chat_service._apply_dialogue_style_guard(
+        "顺带聊聊你的偏好吧，你更看重对方哪几点呀？",
+        "这个偏好我先记住啦～你更看重对方哪几点呀？我按你的要求来筛。",
+        profile,
+        user_message="身高高挑，不要超过30岁",
+    )
+
+    assert "看重对方哪几点" not in guarded
+    assert "先记住" in guarded
+
+
 def test_apply_dialogue_style_guard_breaks_repeat_loop_with_clarification_request():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_repeat_break")
@@ -625,6 +674,21 @@ def test_apply_dialogue_style_guard_blocks_confirm_word_contact_misroute():
 
     assert "留个电话" not in guarded
     assert "不急着留联系方式" in guarded
+
+
+def test_apply_dialogue_style_guard_avoids_repeating_contact_ask_after_affirmative():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_contact_repeat_guard")
+
+    guarded = chat_service._apply_dialogue_style_guard(
+        "电话只是留作登记和后面联系，不会拿去做别的。你要是方便的话，发我一个号码就行～",
+        "电话只是留作登记和后面联系，不会拿去做别的。你要是方便的话，发我一个号码就行～",
+        profile,
+        user_message="好",
+    )
+
+    assert "发我一个号码" not in guarded
+    assert "不重复催联系方式" in guarded
 
 
 def test_apply_dialogue_style_guard_avoids_preference_hard_ending():
@@ -721,6 +785,34 @@ def test_select_model_for_turn_falls_back_when_fast_model_missing(monkeypatch):
 
     model = chat_service._select_model_for_turn("怎么收费", "简短提示")
     assert model == settings.model_name
+
+
+def test_select_max_tokens_for_turn_uses_low_complexity_cap(monkeypatch):
+    monkeypatch.setenv("CHAT_AI_MAX_TOKENS", "420")
+    monkeypatch.setenv("CHAT_AI_LOW_COMPLEXITY_MAX_TOKENS", "260")
+    chat_service = _build_chat_service()
+
+    tokens = chat_service._select_max_tokens_for_turn("怎么收费", "简短提示")
+    assert tokens == 260
+
+
+def test_select_max_tokens_for_turn_uses_long_prompt_cap(monkeypatch):
+    monkeypatch.setenv("CHAT_AI_MAX_TOKENS", "420")
+    monkeypatch.setenv("CHAT_AI_LONG_PROMPT_CHAR_THRESHOLD", "6500")
+    monkeypatch.setenv("CHAT_AI_LONG_PROMPT_MAX_TOKENS", "210")
+    chat_service = _build_chat_service()
+
+    tokens = chat_service._select_max_tokens_for_turn("我在深圳做运营，想认真了解", "x" * 7000)
+    assert tokens == 210
+
+
+def test_select_max_tokens_for_turn_uses_high_risk_cap(monkeypatch):
+    monkeypatch.setenv("CHAT_AI_MAX_TOKENS", "420")
+    monkeypatch.setenv("CHAT_AI_HIGH_RISK_MAX_TOKENS", "180")
+    chat_service = _build_chat_service()
+
+    tokens = chat_service._select_max_tokens_for_turn("电话不方便，留微信吧", "普通提示词")
+    assert tokens == 180
 
 
 @pytest.mark.anyio

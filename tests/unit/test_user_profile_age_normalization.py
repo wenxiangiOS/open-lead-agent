@@ -12,6 +12,11 @@ def test_normalize_age_does_not_treat_post_90_bucket_as_90_years_old():
     assert normalized != 90
 
 
+def test_normalize_age_supports_birth_year_with_suffix():
+    normalized = UserProfile.normalize_age("1998年")
+    assert normalized == 28
+
+
 def test_user_profile_to_dict_keeps_age_label_and_extraction_evidence():
     profile = UserProfile(account_id="u1")
     profile.age = 36

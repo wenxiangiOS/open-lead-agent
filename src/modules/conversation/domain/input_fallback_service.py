@@ -295,9 +295,9 @@ class InputFallbackService:
             ]
         else:
             responses = [
-                f"{call_name}要不我们重新聊聊？你方便告诉我怎么称呼你吗？比如叫什么名字呀～",
+                f"{call_name}要不我们重新聊聊？你现在主要在哪个城市工作生活呀～",
                 f"好啦好啦～{call_name}是不是不太想聊这些呀？那我们先简单点，你是在哪个城市呢？",
-                f"嗯呢，{call_name}我们可以先认识一下嘛～你叫什么名字呀，方便告诉我吗？",
+                f"嗯呢，{call_name}我们先从轻松点的开始，你是在哪个城市呀？",
             ]
         return random.choice(responses)
 

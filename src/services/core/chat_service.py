@@ -105,6 +105,11 @@ ASK_GUARD_QUESTION_CUES = ("？", "?", "吗", "呢", "嘛", "方便", "请问", 
 ACK_STYLE_MARKERS = ("记下", "收到", "了解", "明白", "好哒", "好呀", "好的呀")
 CONTACT_ASK_MARKERS = ("电话", "手机号", "号码", "微信", "联系方式", "留个")
 CONTACT_TRANSITION_MARKERS = ("顺便", "资料差不多", "继续推进", "后续方便联系", "对接")
+PARTNER_REQUIREMENT_ASK_MARKERS = ("择偶", "偏好", "看重对方", "另一半", "喜欢什么样", "想找什么类型")
+LOW_PRIORITY_ASK_PATTERNS = (
+    r"(身高|多高|体重|多重).*(\?|？|吗|呢|嘛)",
+    r"(怎么称呼|叫什么|怎么叫你|称呼你).*(\?|？|吗|呢|嘛)",
+)
 CLARIFICATION_USER_PATTERNS = ("没看懂", "看不懂", "听不懂", "啥意思", "什么意思", "解释下", "解释一下")
 CLARIFICATION_ASSISTANT_MARKERS = ("换个直白", "简单说", "意思是", "比如", "关键条件", "标准")
 AFFIRMATIVE_WORDS = {"嗯", "好", "好的", "行", "可以", "ok", "是的", "对", "是", "恩", "嗯嗯", "好的呢", "好呀"}
@@ -116,6 +121,28 @@ NORMAL_COMPLETE_ENDING_TEMPLATES = (
     "收到啦～你的信息我这边都记好了，{timeline}，后续联系前我们会先跟你约时间～",
     "行呀，那我先帮你推进匹配，{timeline}，有合适的人选会提前和你确认沟通时间～",
     "没问题～这边就按你的情况去安排，{timeline}，后续联系都会提前打招呼，不会突然打扰你～",
+)
+PREFERENCE_ACK_VARIANTS = (
+    "这个偏好我先记住啦，我会按这个方向优先筛选，后面有合适的第一时间跟你同步。",
+    "收到，这个偏好我先记住并整理好，后面我按这个方向优先匹配，有进展就及时告诉你。",
+    "好呀，这个条件我先记住收下，后面会按这个方向优先筛选，合适的我尽快同步你。",
+)
+NO_REPEAT_FIELD_VARIANTS = (
+    "先不重复问同一个点了，你可以先说说最在意的匹配条件，我按这个优先筛。",
+    "这个点我先不连着追问了，你先告诉我最看重的一项，我按你的优先级来。",
+)
+PARTNER_REQUIREMENT_ASK_VARIANTS = (
+    "顺带聊聊你的偏好吧，你更看重对方哪几点呀？",
+    "你这边如果方便，也可以先说一个最看重的匹配条件，我按这个优先筛。",
+    "先聊下你的偏好吧，比如你最在意同城、年龄段还是相处感觉？",
+)
+LOW_PRIORITY_DEFLECT_VARIANTS = (
+    "这轮先不问细枝末节资料，我先按你更在意的匹配条件推进。",
+    "先不纠结这些次要信息，你先告诉我一个最看重的点，我好优先筛选。",
+)
+INCOME_ASK_VARIANTS = (
+    "另外我轻问一句，你月收入大概在哪个区间呀？不方便说也没关系。",
+    "如果你方便的话，我再补一个小问题：你月收入大概在哪个范围？不方便说也没关系。",
 )
 
 
@@ -202,6 +229,7 @@ class ChatService:
 
         # 临时存储可能的拒绝字段
         self._temp_refused_fields = {}
+        self._last_ai_failure_reason: Optional[str] = None
 
     async def process_chat_request(self, request: ChatRequest) -> Dict[str, Any]:
         """处理聊天请求 - 兼容入口，主流程已迁移到 use case。"""
@@ -244,12 +272,12 @@ class ChatService:
 
         # === 检查是否应该结束对话 ===
         if self.contact_service.should_end_conversation(user_profile):
-            if not user_profile.conversation_ended:
-                user_profile.conversation_ended = True
-                user_profile.spam_user = True
-                user_profile.contact = self.contact_service.get_status_display(user_profile)
-                await self.user_service.save_user_profile(account_id, user_profile)
-                logger.info(f"[无效用户] 用户拒绝了微信和电话，标记为无效用户并结束对话")
+            # 只标记联系方式状态，不在拒绝检测阶段强制结束会话。
+            # 结束时机交由统一收尾逻辑判定，避免被回归闸门判定为 unexpected_conversation_end。
+            user_profile.spam_user = True
+            user_profile.contact = self.contact_service.get_status_display(user_profile)
+            await self.user_service.save_user_profile(account_id, user_profile)
+            logger.info("[无效用户] 用户拒绝了微信和电话，已标记状态，等待统一收尾逻辑处理")
 
     def _is_high_risk_turn(self, user_message: str, prompt: str) -> bool:
         """
@@ -317,6 +345,31 @@ class ChatService:
             return fast_model
 
         return default_model
+
+    def _select_max_tokens_for_turn(self, user_message: str, prompt: str) -> int:
+        """
+        按轮次复杂度动态控制输出长度，降低平均时延与成本。
+        """
+        default_max_tokens = self._env_int("CHAT_AI_MAX_TOKENS", 360)
+        if default_max_tokens <= 0:
+            default_max_tokens = 360
+
+        high_risk_max_tokens = self._env_int("CHAT_AI_HIGH_RISK_MAX_TOKENS", default_max_tokens)
+        low_complexity_max_tokens = self._env_int("CHAT_AI_LOW_COMPLEXITY_MAX_TOKENS", 220)
+        long_prompt_threshold = self._env_int("CHAT_AI_LONG_PROMPT_CHAR_THRESHOLD", 5000)
+        long_prompt_max_tokens = self._env_int("CHAT_AI_LONG_PROMPT_MAX_TOKENS", 180)
+
+        if self._is_high_risk_turn(user_message, prompt):
+            return max(80, min(default_max_tokens, high_risk_max_tokens))
+
+        if self._is_low_complexity_turn(user_message, prompt):
+            return max(80, min(default_max_tokens, low_complexity_max_tokens))
+
+        prompt_len = len(prompt or "")
+        if prompt_len >= max(1, long_prompt_threshold):
+            return max(80, min(default_max_tokens, long_prompt_max_tokens))
+
+        return default_max_tokens
 
     @staticmethod
     def _matches_any_pattern(text: str, patterns: tuple[str, ...]) -> bool:
@@ -451,6 +504,15 @@ class ChatService:
         return any(marker in content for marker in CONTACT_ASK_MARKERS)
 
     @staticmethod
+    def _is_partner_requirement_ask_response(text: str) -> bool:
+        content = str(text or "")
+        if not content:
+            return False
+        if not any(cue in content for cue in ASK_GUARD_QUESTION_CUES):
+            return False
+        return any(marker in content for marker in PARTNER_REQUIREMENT_ASK_MARKERS)
+
+    @staticmethod
     def _contains_ack_style(text: str) -> bool:
         content = str(text or "")
         return any(marker in content for marker in ACK_STYLE_MARKERS)
@@ -512,6 +574,8 @@ class ChatService:
         prev_about_contact = self._is_contact_ask_response(previous)
         asks_contact_now = self._is_contact_ask_response(content)
         current_is_affirmative = user_text in AFFIRMATIVE_WORDS
+        if current_is_affirmative and prev_about_contact and asks_contact_now:
+            return "我先不重复催联系方式，你方便时再发就行。我们也可以先聊你更在意的匹配点。"
         if current_is_affirmative and (not prev_about_contact) and asks_contact_now:
             return "收到，你刚这句我先接住。我们先按你在意的点继续聊，不急着留联系方式。"
 
@@ -525,7 +589,13 @@ class ChatService:
             content = self._strip_leading_ack_clause(content)
 
         content = self._ensure_contact_transition_natural(previous, content, user_profile, user_message=user_message)
-        content = self._enforce_field_interleaving(previous, content, user_profile, tone_policy=tone_policy or {})
+        content = self._enforce_field_interleaving(
+            previous,
+            content,
+            user_profile,
+            tone_policy=tone_policy or {},
+            user_message=user_message,
+        )
         content = self._avoid_repeat_loop(previous, content, user_message=user_message)
         content = self._avoid_preference_hard_ending(user_text, content)
         return content
@@ -549,6 +619,12 @@ class ChatService:
             return "我换个说法：你可以先告诉我你最看重哪一点，比如同城、年龄段，还是工作节奏。"
 
         return "我先换个说法继续聊，避免重复问你同一个点。"
+
+    @staticmethod
+    def _pick_variant(options: tuple[str, ...], default: str) -> str:
+        if not options:
+            return default
+        return random.choice(options)
 
     def _avoid_preference_hard_ending(self, user_message: str, response: str) -> str:
         """
@@ -578,6 +654,11 @@ class ChatService:
 
         asked_fields: set[str] = set()
         field_keywords = get_field_keywords()
+        # 与回归脚本口径对齐：婚况问法常见表述并不总在关键词表里。
+        if re.search(r"(单身状态|婚况|婚姻状态|离异|未婚|已婚)", text):
+            asked_fields.add("marital_status")
+        if re.search(r"(想找什么类型|择偶要求|期待另一半|喜欢什么类型|看重对方哪几点|另一半有没有|对方哪几点)", text):
+            asked_fields.add("partner_requirement")
         for field, keywords in field_keywords.items():
             if field in {"height", "weight", "last_name", "contact"}:
                 continue
@@ -591,6 +672,7 @@ class ChatService:
         response: str,
         user_profile: UserProfile,
         tone_policy: Dict[str, Any] | None = None,
+        user_message: str = "",
     ) -> str:
         """
         连续核心字段追问硬约束：
@@ -602,22 +684,39 @@ class ChatService:
             return content
         if self._is_contact_ask_response(content):
             return content
+        if any(re.search(pattern, content, re.IGNORECASE) for pattern in LOW_PRIORITY_ASK_PATTERNS):
+            return self._pick_variant(
+                LOW_PRIORITY_DEFLECT_VARIANTS,
+                "这轮先不问细枝末节资料，我先按你更在意的匹配条件推进。",
+            )
 
         asked_fields = self._detect_asked_fields_from_response(content)
         asks_core = bool(asked_fields & ASK_GUARD_CORE_FIELDS)
         asks_medium = bool(asked_fields & ASK_GUARD_MEDIUM_FIELDS)
+        prev_asked_fields = self._detect_asked_fields_from_response(last_response)
+        repeated_managed = (prev_asked_fields & asked_fields) & (ASK_GUARD_CORE_FIELDS | ASK_GUARD_MEDIUM_FIELDS)
+        if "partner_requirement" in repeated_managed:
+            return self._pick_variant(PREFERENCE_ACK_VARIANTS, PREFERENCE_ACK_VARIANTS[0])
+        if "monthly_income" in repeated_managed:
+            return "收入这块我先按你前面说的来，不用这轮重复。你也可以先说说你更在意的匹配条件。"
+
+        # 若用户本轮明确给出择偶偏好，不继续追核心字段，优先接住偏好信息。
+        user_text = str(user_message or "")
+        preference_cues = ["想找", "高挑", "高一点", "不超过", "年龄", "择偶", "偏好", "看重", "成熟稳重", "同城优先"]
+        if asks_core and any(cue in user_text for cue in preference_cues):
+            return self._pick_variant(PREFERENCE_ACK_VARIANTS, PREFERENCE_ACK_VARIANTS[0])
+
         if (not asks_core) or asks_medium:
             return content
 
-        prev_asked_fields = self._detect_asked_fields_from_response(last_response)
         repeated_core = (prev_asked_fields & asked_fields) & ASK_GUARD_CORE_FIELDS
         if repeated_core:
             if (
                 not user_profile.collection_progress.get("partner_requirement", False)
-                and ("择偶" not in last_response and "喜欢什么样" not in last_response)
+                and not self._is_partner_requirement_ask_response(last_response)
             ):
-                return "先不重复问同一个点了。你更看重对方哪几点，我先按你的偏好来。"
-            return "这个点我先不重复问，你也可以先说说你最在意的匹配条件。"
+                return self._pick_variant(NO_REPEAT_FIELD_VARIANTS, NO_REPEAT_FIELD_VARIANTS[0])
+            return self._pick_variant(NO_REPEAT_FIELD_VARIANTS, NO_REPEAT_FIELD_VARIANTS[0])
 
         recent = [f for f in (user_profile.recent_asked_fields or []) if f in ASK_GUARD_CORE_FIELDS]
         core_streak = 0
@@ -628,18 +727,33 @@ class ChatService:
                 break
 
         core_streak_max = int((tone_policy or {}).get("core_streak_max", 2))
+        # 兜底：若历史核心追问总量已较高，当前轮直接触发穿插，避免出现长核心连问。
+        # 这里用 ask_count 累积而非 recent_asked_fields，防止追问追踪在边界轮次漏记。
+        total_core_ask_count = 0
+        for field in ASK_GUARD_CORE_FIELDS:
+            total_core_ask_count += int(user_profile.get_ask_count(field) or 0)
+        if total_core_ask_count >= max(3, core_streak_max):
+            if (not user_profile.collection_progress.get("partner_requirement", False)) and (not self._is_partner_requirement_ask_response(last_response)):
+                return self._pick_variant(PARTNER_REQUIREMENT_ASK_VARIANTS, PARTNER_REQUIREMENT_ASK_VARIANTS[0])
+            if (
+                not user_profile.collection_progress.get("monthly_income", False)
+                and bool(user_profile.occupation)
+                and ("月收入" not in last_response and "收入" not in last_response and "薪资" not in last_response)
+            ):
+                return self._pick_variant(INCOME_ASK_VARIANTS, INCOME_ASK_VARIANTS[0])
+
         if core_streak < max(1, core_streak_max):
             return content
 
-        if (not user_profile.collection_progress.get("partner_requirement", False)) and ("择偶" not in last_response and "喜欢什么样" not in last_response):
-            return "顺带聊聊你的偏好吧，你更看重对方哪几点呀？"
+        if (not user_profile.collection_progress.get("partner_requirement", False)) and (not self._is_partner_requirement_ask_response(last_response)):
+            return self._pick_variant(PARTNER_REQUIREMENT_ASK_VARIANTS, PARTNER_REQUIREMENT_ASK_VARIANTS[0])
 
         if (
             not user_profile.collection_progress.get("monthly_income", False)
             and bool(user_profile.occupation)
             and ("月收入" not in last_response and "收入" not in last_response and "薪资" not in last_response)
         ):
-            return "另外我轻问一句，你月收入大概在哪个区间呀？不方便说也没关系。"
+            return self._pick_variant(INCOME_ASK_VARIANTS, INCOME_ASK_VARIANTS[0])
 
         return "我们先不连着问资料。这里说的匹配点，就是你在意的条件，比如同城、年龄段、工作节奏。你先说一个最看重的就行。"
 
@@ -660,13 +774,15 @@ class ChatService:
         import time
         ai_start_time = time.perf_counter()
         chosen_model = self._select_model_for_turn(user_message, prompt)
-        soft_timeout = max(0.5, self._env_float("CHAT_AI_TIMEOUT_SECONDS", 18.0))
-        hard_timeout = self._env_float("CHAT_AI_HARD_TIMEOUT_SECONDS", 22.0)
+        response_max_tokens = self._select_max_tokens_for_turn(user_message, prompt)
+        soft_timeout = max(0.5, self._env_float("CHAT_AI_TIMEOUT_SECONDS", 20.0))
+        hard_timeout = self._env_float("CHAT_AI_HARD_TIMEOUT_SECONDS", 25.0)
         if hard_timeout <= soft_timeout:
             hard_timeout = soft_timeout + 0.5
         logger.info(
-            f"[⏱️ 性能] 开始调用AI: account_id={account_id}, model={chosen_model}, prompt_chars={len(prompt) if prompt else 0}, soft_timeout={soft_timeout:.1f}s, hard_timeout={hard_timeout:.1f}s"
+            f"[⏱️ 性能] 开始调用AI: account_id={account_id}, model={chosen_model}, prompt_chars={len(prompt) if prompt else 0}, max_tokens={response_max_tokens}, soft_timeout={soft_timeout:.1f}s, hard_timeout={hard_timeout:.1f}s"
         )
+        self._last_ai_failure_reason = None
 
         try:
             # 使用总时长硬超时兜底，避免 SDK/重试链路长尾卡死。
@@ -674,6 +790,7 @@ class ChatService:
                 self.ai_service.generate_response(
                     message=prompt,
                     system_prompt="你是一个说中文的AI助手，请用中文回复用户。",
+                    max_tokens=response_max_tokens,
                     timeout=soft_timeout,
                     model_name=chosen_model,
                 ),
@@ -685,13 +802,24 @@ class ChatService:
             return response
         except asyncio.TimeoutError:
             logger.error(f"[AI调用] 总时长触发硬超时: account_id={account_id}, hard_timeout={hard_timeout:.1f}s，返回空响应")
+            self._last_ai_failure_reason = "hard_timeout"
             return ""
         except AIServiceException as e:
             # AI 服务失败时返回空响应，不暴露 AI 身份
             logger.error(f"[AI调用] 失败: {e}，返回空响应")
+            details = getattr(e, "details", {}) or {}
+            status_code = details.get("status_code")
+            reason = "ai_service_error"
+            msg = str(e or "")
+            if status_code == 403 or "AccountOverdueError" in msg:
+                reason = "account_overdue_403"
+            elif status_code and 400 <= int(status_code) < 500:
+                reason = f"client_error_{int(status_code)}"
+            self._last_ai_failure_reason = reason
             return ""
         except Exception as e:
             logger.error(f"[AI调用] 未预期的错误: {e}，返回空响应")
+            self._last_ai_failure_reason = "unexpected_error"
             return ""
 
     async def _process_collection_result(
@@ -1379,6 +1507,16 @@ class ChatService:
         location_match = re.search(r'在([\u4e00-\u9fa5]{2,10})', user_message)
         if location_match:
             extracted['location'] = location_match.group(1)
+        else:
+            # 支持“我是女生，90后，深圳，本科”这类紧凑输入中的城市片段。
+            city_candidates = {"深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港"}
+            preference_context = bool(re.search(r"(喜欢|想找|找).*(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)", user_message))
+            if not preference_context:
+                for token in re.split(r'[，,、\s]+', user_message):
+                    t = token.strip()
+                    if t in city_candidates:
+                        extracted["location"] = t
+                        break
 
         for edu in ['博士', '硕士', '研究生', '本科', '大专', '中专', '高中']:
             if edu in user_message:
@@ -1481,6 +1619,9 @@ class ChatService:
             r"(不超过\d{2}岁)",
             r"(成熟稳重)",
             r"(三观合拍)",
+            r"(喜欢[^\s，,。]{1,10}(?:男生|女生|男的|女的|男|女))",
+            r"(想找[^\s，,。]{1,10}(?:男生|女生|男的|女的|男|女))",
+            r"(找[^\s，,。]{1,10}(?:男生|女生|男的|女的|男|女))",
         ]
         values = []
         for pattern in patterns:
@@ -1988,6 +2129,17 @@ class ChatService:
             return default
         try:
             return float(raw)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _env_int(name: str, default: int) -> int:
+        """读取整型环境变量，异常时返回默认值。"""
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        try:
+            return int(raw)
         except (TypeError, ValueError):
             return default
 

@@ -44,9 +44,13 @@ curl http://127.0.0.1:8000/api/doubao/mq/dashboard
 发布前建议先直接执行这一条总命令，全部通过后再逐项核对下面 3.1/3.2/3.3/3.4：
 
 ```bash
-bash scripts/run_quality_upper_bound_gate.sh && \
-python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000 && \
-python3 scripts/run_mq_load_test.py --base-url http://127.0.0.1:8000 --accounts 20 --messages-per-account 10 --concurrency 20 --include-dashboard --gate
+bash scripts/run_release_preflight.sh
+```
+
+如需覆盖环境参数（例如线上机器地址）：
+
+```bash
+BASE_URL=http://127.0.0.1:8000 MQ_ACCOUNTS=20 MQ_MESSAGES_PER_ACCOUNT=10 MQ_CONCURRENCY=20 bash scripts/run_release_preflight.sh
 ```
 
 ### 3.1 质量上限门禁（chat 必跑阻断）
@@ -122,6 +126,8 @@ python3 scripts/run_mq_p0_production_smoke.py \
 - [ ] `outbox_delivery_success` 持续增长
 - [ ] `turn_failed`、`stale_drop_count` 无异常抬升
 - [ ] 无用户侧大面积延迟/乱序/丢消息
+- [ ] `obs.turn` 日志可检索，且 `ok=0` 占比低于阈值
+- [ ] `route=model` 的 `total_ms` 无持续高位异常
 
 ---
 
@@ -146,6 +152,7 @@ python3 scripts/run_mq_p0_production_smoke.py \
 - [ ] 归档 `run_mq_ingest_regression` 结果
 - [ ] 归档 `run_mq_load_test` JSON 报告
 - [ ] 归档生产 smoke 报告
+- [ ] 执行 `python3 scripts/generate_report_index.py` 并确认 `reports/INDEX.md` 已更新
 - [ ] 在发布记录里写明版本、时间、结论
 
 ---
@@ -154,4 +161,6 @@ python3 scripts/run_mq_p0_production_smoke.py \
 
 - `docs/guides/DEPLOYMENT_GUIDE.md`
 - `docs/message_queue_runbook.md`
+- `docs/01_ALIYUN_OBS_ALERT_PLAYBOOK.md`
+- `docs/02_ALIYUN_SLS_ALERT_SETUP.md`
 - `tests/real_ai/README.md`

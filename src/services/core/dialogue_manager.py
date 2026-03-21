@@ -210,6 +210,13 @@ class DialogueManager:
                 gender_instruction=gender_instruction,
             )
         else:
+            turn_plan_instruction = (
+                "\n【本轮计划】\n"
+                f"- 主目标：{field_name_map.get(policy_decision.main_target, policy_decision.main_target or '无')}\n"
+                f"- 顺带目标：{field_name_map.get(policy_decision.side_target, policy_decision.side_target or '无')}\n"
+                f"- 用户类型：{policy_decision.user_type or '未知'}\n"
+                f"- 可进联系方式：{'是' if policy_decision.can_enter_contact else '否'}"
+            )
             main_prompt = get_main_dialogue(
                 collected_info=collected_info,
                 gender_instruction=gender_instruction,
@@ -223,6 +230,7 @@ class DialogueManager:
                 current_side_target=field_name_map.get(policy_decision.side_target, policy_decision.side_target or "无"),
                 user_type=policy_decision.user_type,
                 can_enter_contact=policy_decision.can_enter_contact,
+                turn_plan_instruction=turn_plan_instruction,
             )
 
         # 获取上一轮 AI 回复（用于上下文感知提取）
@@ -257,7 +265,7 @@ class DialogueManager:
         Returns:
             str: 提取提示词
         """
-        return get_extraction(ai_response, user_message)
+        return get_extraction(user_message=user_message, last_question=ai_response)
 
     async def add_to_history(
         self,

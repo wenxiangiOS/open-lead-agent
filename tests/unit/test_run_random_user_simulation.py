@@ -291,6 +291,16 @@ def test_policy_rules_capture_ack_overuse_and_field_interleaving_quality():
     assert failures
 
 
+def test_policy_rules_no_consecutive_same_field_ask_ignores_contact_followup():
+    turns = [
+        TurnRecord(index=1, user="嗯", assistant="方便留个电话吗？", latency_s=1.0, perf={}),
+        TurnRecord(index=2, user="好", assistant="方便留个电话吗？", latency_s=1.0, perf={}),
+    ]
+    checks, _ = _check_policy_rules(turns)
+    result = {c["name"]: c for c in checks}
+    assert result["no_consecutive_same_field_ask"]["passed"] is True
+
+
 def test_check_turn_flags_clarification_not_answered_when_user_requests_explanation():
     failures = _check_turn(
         user="匹配点是啥意思",

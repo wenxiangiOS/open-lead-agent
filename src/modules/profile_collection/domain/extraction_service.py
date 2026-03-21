@@ -41,6 +41,14 @@ class ExtractionService:
         'n/a',
         'na',
     }
+    _STABLE_PROFILE_FIELDS = {
+        "sex",
+        "age",
+        "location",
+        "education",
+        "occupation",
+        "marital_status",
+    }
     """
     信息提取服务
 
@@ -259,6 +267,35 @@ class ExtractionService:
 
         return value_str
 
+    @staticmethod
+    def _is_effectively_same_value(current_value: Any, new_value: Any) -> bool:
+        """宽松等价比较，避免仅因格式差异触发重写。"""
+        current = "" if current_value is None else str(current_value).strip()
+        new = "" if new_value is None else str(new_value).strip()
+        if not current and not new:
+            return True
+        return current == new
+
+    @classmethod
+    def _has_explicit_self_update_signal(cls, field: str, user_message: str) -> bool:
+        """
+        仅在用户明确自述更新时，允许覆盖已收集的稳定字段，降低字段抖动。
+        """
+        text = str(user_message or "").strip()
+        if not text:
+            return False
+
+        explicit_patterns = {
+            "sex": r"(我是|本人|我)\s*(男生|女生|男的|女的|男|女)",
+            "age": r"(我\s*\d{1,3}\s*岁|我是一?个?\d{1,3}岁|出生于|我是\d{2}后|我是\d{4}年)",
+            "location": r"(我在|我住在|我现在在|我在.*(工作|生活)|我是.*的)",
+            "education": r"(我是|学历|读到|本科|大专|硕士|博士|研究生)",
+            "occupation": r"(我是|我做|从事|职业是|工作是|做.*工作)",
+            "marital_status": r"(我是|目前|现在).*(单身|未婚|离异|已婚|分居)",
+        }
+        pattern = explicit_patterns.get(field)
+        return bool(pattern and re.search(pattern, text))
+
     def _parse_age(self, value) -> Optional[int]:
         """
         从值中解析年龄
@@ -299,8 +336,8 @@ class ExtractionService:
             birth_year = 2000 + year_suffix if year_suffix <= current_year_suffix else 1900 + year_suffix
             return current_year - birth_year
 
-        # 3. 尝试匹配 4 位数字（可能是出生年份）
-        match = re.search(r'^(19\d{2}|20\d{2})$', value_str)
+        # 3. 尝试匹配出生年份（支持“1998”或“1998年”）
+        match = re.search(r'^(19\d{2}|20\d{2})年?$', value_str)
         if match:
             birth_year = int(match.group(1))
             from datetime import datetime
@@ -628,7 +665,19 @@ class ExtractionService:
                         logger.debug(f"[择偶要求] 累积: +{value}")
                         value = new_value
 
-                needs_update = not is_collected or (current_value != value)
+                if (
+                    mapped_field in self._STABLE_PROFILE_FIELDS
+                    and is_collected
+                    and current_value
+                    and not self._is_effectively_same_value(current_value, value)
+                    and not self._has_explicit_self_update_signal(mapped_field, user_message)
+                ):
+                    logger.info(
+                        f"[字段稳定保护] 跳过 {mapped_field} 改写: current={current_value}, new={value}"
+                    )
+                    continue
+
+                needs_update = not is_collected or (not self._is_effectively_same_value(current_value, value))
 
                 if needs_update:
                     success = await self.user_service.update_user_profile_field(

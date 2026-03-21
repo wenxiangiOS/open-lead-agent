@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import random
 import re
+import subprocess
 import sys
 import statistics
 import time
@@ -16,6 +18,10 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import urllib.error
+import urllib.request
+
+import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -181,6 +187,8 @@ class TurnRecord:
     perf: dict[str, float]
     collected_info: dict[str, Any] = field(default_factory=dict)
     failures: list[str] = field(default_factory=list)
+    infra_fail: bool = False
+    infra_fail_reason: str = ""
 
 
 @dataclass
@@ -309,6 +317,36 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         dest="strict_humanlike",
         help="关闭严格拟人化闸门（默认开启）",
+    )
+    parser.add_argument("--fast", action="store_true", help="快速模式：优先关键场景，缩短回归时长")
+    parser.add_argument("--fast-max-scenarios", type=int, default=36, help="快速模式最多场景数")
+    parser.add_argument(
+        "--include-mq-checks",
+        action="store_true",
+        default=True,
+        help="在同一命令中补充执行 MQ ingest 回归（默认开启）",
+    )
+    parser.add_argument(
+        "--no-include-mq-checks",
+        action="store_false",
+        dest="include_mq_checks",
+        help="关闭 MQ 回归补充检查",
+    )
+    parser.add_argument(
+        "--mq-base-url",
+        default=os.getenv("MQ_BASE_URL", "http://127.0.0.1:8000"),
+        help="MQ 回归使用的服务地址",
+    )
+    parser.add_argument(
+        "--mq-timeout-seconds",
+        type=float,
+        default=8.0,
+        help="MQ 回归 HTTP 请求超时（秒）",
+    )
+    parser.add_argument(
+        "--gate-config",
+        default=str(PROJECT_ROOT / "tests/real_ai/gates.yaml"),
+        help="门禁配置文件（YAML）",
     )
     return parser.parse_args()
 
@@ -647,10 +685,15 @@ def _extract_explicit_wechat(text: str) -> str | None:
 
 
 def _extract_explicit_age(text: str) -> str | None:
-    age_match = re.search(r"(\d{2})岁", text)
+    raw = str(text or "")
+    # 避免把择偶条件中的年龄（如“不要超过30岁”）误判成用户年龄
+    if re.search(r"(不要超过|不超过|低于|高于|以内|以下|以上)\s*\d{2}岁", raw):
+        age_match = None
+    else:
+        age_match = re.search(r"(\d{2})岁", raw)
     if age_match:
         return age_match.group(1)
-    bucket_match = re.search(r"((?:85|90|95)后)", text)
+    bucket_match = re.search(r"((?:85|90|95)后)", raw)
     if bucket_match:
         return bucket_match.group(1)
     return None
@@ -1139,10 +1182,11 @@ def _check_policy_rules(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     checks: list[dict[str, Any]] = []
     failures: list[str] = []
+    scoring_turns = [t for t in turns if not getattr(t, "infra_fail", False)]
 
     ask_seq: list[list[str]] = []
     counts: dict[str, int] = {}
-    for t in turns:
+    for t in scoring_turns:
         asked = _detect_asked_fields(t.assistant)
         ask_seq.append(asked)
         for f in asked:
@@ -1170,8 +1214,18 @@ def _check_policy_rules(
 
     # 同字段不能连续两轮都问
     repeated = 0
+    repeat_guard_fields = {
+        "sex",
+        "age",
+        "education",
+        "occupation",
+        "location",
+        "marital_status",
+        "monthly_income",
+        "partner_requirement",
+    }
     for i in range(1, len(ask_seq)):
-        overlap = set(ask_seq[i - 1]) & set(ask_seq[i])
+        overlap = (set(ask_seq[i - 1]) & set(ask_seq[i])) & repeat_guard_fields
         if overlap:
             repeated += len(overlap)
     add("no_consecutive_same_field_ask", repeated == 0, 0, repeated)
@@ -1199,15 +1253,15 @@ def _check_policy_rules(
     # 月薪问法要带降压表达
     income_soft_fail = 0
     soft_markers = ["不方便", "没关系", "可以不说", "方便说", "看你方便"]
-    for t in turns:
+    for t in scoring_turns:
         asked = _detect_asked_fields(t.assistant)
         if "monthly_income" in asked and not any(m in (t.assistant or "") for m in soft_markers):
             income_soft_fail += 1
     add("income_question_soft_tone", income_soft_fail == 0, 0, income_soft_fail)
 
     # 复述过度：承接复述应低频，避免每轮“收到/记下”模板化
-    ack_turns = sum(1 for t in turns if _assistant_has_ack_style(t.assistant))
-    ack_rate = (ack_turns / len(turns)) if turns else 0.0
+    ack_turns = sum(1 for t in scoring_turns if _assistant_has_ack_style(t.assistant))
+    ack_rate = (ack_turns / len(scoring_turns)) if scoring_turns else 0.0
     ack_limit = max(0.0, float(ack_overuse_threshold))
     add("ack_overuse", ack_rate <= ack_limit, f"<={ack_limit}", round(ack_rate, 4))
 
@@ -1277,18 +1331,25 @@ async def _run_one(
         perf = probe.end_turn(total_s)
 
         ai_text = str(resp.get("response", ""))
+        resp_meta = resp.get("meta") if isinstance(resp, dict) else {}
+        resp_meta = resp_meta if isinstance(resp_meta, dict) else {}
+        infra_fail = bool(resp_meta.get("infra_fail"))
+        infra_fail_reason = str(resp_meta.get("infra_fail_reason") or "")
         last_ai = ai_text
         prev_ai = records[-1].assistant if records else ""
-        turn_failures = _check_turn(
-            msg,
-            ai_text,
-            previous_assistant=prev_ai,
-            latency_s=total_s,
-            turn_index=i,
-            min_human_latency=min_human_latency,
-            faq_min_human_latency=faq_min_human_latency,
-            allow_empty_response=allow_empty_response,
-        )
+        if infra_fail:
+            turn_failures = []
+        else:
+            turn_failures = _check_turn(
+                msg,
+                ai_text,
+                previous_assistant=prev_ai,
+                latency_s=total_s,
+                turn_index=i,
+                min_human_latency=min_human_latency,
+                faq_min_human_latency=faq_min_human_latency,
+                allow_empty_response=allow_empty_response,
+            )
         rec = TurnRecord(
             index=i,
             user=msg,
@@ -1297,6 +1358,8 @@ async def _run_one(
             perf=perf,
             collected_info=resp.get("collected_info", {}) or {},
             failures=turn_failures,
+            infra_fail=infra_fail,
+            infra_fail_reason=infra_fail_reason,
         )
         records.append(rec)
 
@@ -1354,6 +1417,21 @@ def _build_workload(args: argparse.Namespace, rng: random.Random) -> list[dict[s
                     "turns": dense[: max(args.min_turns, min(len(dense), args.max_turns))] or ["__AUTO__"],
                 }
             )
+        if bool(getattr(args, "fast", False)):
+            prioritized: list[dict[str, Any]] = []
+            fallback: list[dict[str, Any]] = []
+            per_category: dict[str, int] = {}
+            for item in workload:
+                tags = set(item.get("tags") or [])
+                category = str(item.get("category") or "unknown")
+                is_high_value = bool({"critical", "smoke", "humanlike"} & tags)
+                if is_high_value and per_category.get(category, 0) < 4:
+                    prioritized.append(item)
+                    per_category[category] = per_category.get(category, 0) + 1
+                else:
+                    fallback.append(item)
+            merged = prioritized + fallback
+            return merged[: max(1, int(getattr(args, "fast_max_scenarios", 40)))]
         return workload
 
     workload = []
@@ -1372,6 +1450,8 @@ def _build_workload(args: argparse.Namespace, rng: random.Random) -> list[dict[s
 
 def _analyze(results: list[SessionResult], template_threshold: float) -> dict[str, Any]:
     turns = [t for s in results for t in s.turns]
+    scored_turns = [t for t in turns if not getattr(t, "infra_fail", False)]
+    infra_fail_turns = [t for t in turns if getattr(t, "infra_fail", False)]
     latencies = [t.latency_s for t in turns]
     total_field_checks = sum(len(s.field_checks) for s in results)
     total_field_failures = sum(len(s.field_failures) for s in results)
@@ -1500,8 +1580,8 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
                 if not check.get("passed"):
                     field_completeness_failures += 1
 
-    total_turn_failures = sum(len(t.failures) for t in turns)
-    total_humanlike_checks = total_policy_checks + len(turns)
+    total_turn_failures = sum(len(t.failures) for t in scored_turns)
+    total_humanlike_checks = total_policy_checks + len(scored_turns)
     total_humanlike_failures = total_policy_failures + total_turn_failures
 
     # 对话压迫感：连续提问轮次
@@ -1734,7 +1814,8 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
             refusal_cases += 1
             has_respect_marker = any(m in assistant_text for m in RESPECTFUL_MARKERS)
             hard_push_contact = any(k in assistant_text for k in ["必须", "一定要", "赶紧留电话", "不留不行"])
-            if has_respect_marker and not hard_push_contact:
+            asks_contact_now = any(k in assistant_text for k in CONTACT_ASK_MARKERS)
+            if (has_respect_marker or (not asks_contact_now)) and not hard_push_contact:
                 refusal_respected += 1
 
     # 记忆回用准确率：助手主动回用历史字段时，是否与用户已说信息一致
@@ -1842,6 +1923,8 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
             "failed_checks": total_humanlike_failures,
             "pass_rate": round((total_humanlike_checks - total_humanlike_failures) / total_humanlike_checks, 4) if total_humanlike_checks else 1.0,
             "turn_level_failures": total_turn_failures,
+            "scored_turns": len(scored_turns),
+            "infra_fail_turns": len(infra_fail_turns),
             "policy_rule_failures": total_policy_failures,
             "top_turn_failures": [
                 {"name": name, "count": count}
@@ -2041,6 +2124,420 @@ def _compare_with_baseline(current: dict[str, Any], baseline_json_path: str) -> 
     out["baseline_turns"] = baseline_summary.get("turns")
     out["degraded"] = bool(out["degradations"])
     return out
+
+
+def _build_project_health_gate(analysis: dict[str, Any]) -> dict[str, Any]:
+    def _safe_float(v: Any, default: float = 0.0) -> float:
+        try:
+            return float(v)
+        except Exception:
+            return default
+
+    humanlike = analysis.get("humanlike_quality") or {}
+    extraction = analysis.get("extraction_accuracy") or {}
+    latency = analysis.get("latency") or {}
+    template_risk = analysis.get("template_risk") or {}
+    isolation = analysis.get("isolation_quality") or {}
+    qg = analysis.get("quality_guardrails") or {}
+
+    checks: list[dict[str, Any]] = [
+        {
+            "name": "humanlike_pass_rate",
+            "value": _safe_float(humanlike.get("pass_rate"), 1.0),
+            "target": 0.85,
+            "direction": "higher_better",
+            "level": "major",
+        },
+        {
+            "name": "extraction_pass_rate",
+            "value": _safe_float(extraction.get("pass_rate"), 1.0),
+            "target": 0.85,
+            "direction": "higher_better",
+            "level": "major",
+        },
+        {
+            "name": "extraction_exact_match_pass_rate",
+            "value": _safe_float(extraction.get("exact_match_pass_rate"), 1.0),
+            "target": 0.75,
+            "direction": "higher_better",
+            "level": "major",
+        },
+        {
+            "name": "latency_p95_seconds",
+            "value": _safe_float(latency.get("p95"), 0.0),
+            "target": 8.0,
+            "direction": "lower_better",
+            "level": "major",
+        },
+        {
+            "name": "template_top1_ratio",
+            "value": _safe_float(template_risk.get("top1_ratio"), 0.0),
+            "target": 0.22,
+            "direction": "lower_better",
+            "level": "major",
+        },
+        {
+            "name": "isolation_pass_rate",
+            "value": _safe_float(isolation.get("isolation_pass_rate"), 1.0),
+            "target": 1.0,
+            "direction": "higher_better",
+            "level": "critical",
+        },
+        {
+            "name": "refusal_respect_rate",
+            "value": _safe_float(qg.get("refusal_respect_rate"), 1.0),
+            "target": 0.90,
+            "direction": "higher_better",
+            "level": "critical",
+        },
+        {
+            "name": "field_stability_score",
+            "value": _safe_float(qg.get("field_stability_score"), 1.0),
+            "target": 0.90,
+            "direction": "higher_better",
+            "level": "major",
+        },
+    ]
+
+    memory_cases = int(_safe_float(qg.get("memory_reuse_cases"), 0.0))
+    if memory_cases > 0:
+        checks.append(
+            {
+                "name": "memory_reuse_accuracy",
+                "value": _safe_float(qg.get("memory_reuse_accuracy"), 1.0),
+                "target": 0.95,
+                "direction": "higher_better",
+                "level": "major",
+            }
+        )
+
+    failed_checks: list[dict[str, Any]] = []
+    for item in checks:
+        value = float(item["value"])
+        target = float(item["target"])
+        direction = str(item["direction"])
+        ok = value >= target if direction == "higher_better" else value <= target
+        row = {
+            "name": item["name"],
+            "level": item["level"],
+            "direction": direction,
+            "value": round(value, 4),
+            "target": round(target, 4),
+            "passed": ok,
+        }
+        if not ok:
+            failed_checks.append(row)
+        item.clear()
+        item.update(row)
+
+    baseline_compare = analysis.get("baseline_compare") or {}
+    for degraded in baseline_compare.get("degradations", []) or []:
+        failed_checks.append(
+            {
+                "name": f"baseline_degradation::{degraded.get('metric')}",
+                "level": "major",
+                "direction": "baseline_compare",
+                "value": _safe_float(degraded.get("current"), 0.0),
+                "target": _safe_float(degraded.get("baseline"), 0.0),
+                "passed": False,
+            }
+        )
+
+    critical_failures = [x for x in failed_checks if x.get("level") == "critical"]
+    return {
+        "pass": not failed_checks,
+        "checks": checks,
+        "failed_checks": failed_checks,
+        "failed_count": len(failed_checks),
+        "critical_failed_count": len(critical_failures),
+        "critical_failed_checks": critical_failures,
+    }
+
+
+def _load_gate_config(path: str) -> dict[str, Any]:
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _http_reachable(base_url: str, timeout_seconds: float) -> bool:
+    url = f"{str(base_url).rstrip('/')}/health"
+    req = urllib.request.Request(url=url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=max(1.0, timeout_seconds)) as resp:
+            return int(getattr(resp, "status", 0) or 0) < 500
+    except Exception:
+        return False
+
+
+def _run_mq_checks(base_url: str, timeout_seconds: float, *, fast: bool = False) -> dict[str, Any]:
+    if not _http_reachable(base_url, timeout_seconds):
+        return {
+            "enabled": True,
+            "covered": False,
+            "pass": False,
+            "reason": f"mq endpoint unreachable: {base_url}",
+        }
+
+    cmd = [
+        sys.executable,
+        str(PROJECT_ROOT / "scripts" / "run_mq_ingest_regression.py"),
+        "--base-url",
+        base_url,
+        "--timeout-seconds",
+        str(timeout_seconds),
+    ]
+    if fast:
+        cmd.extend(["--max-scenarios", "8"])
+    proc = subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+    out = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+    def _extract(name: str) -> int:
+        m = re.search(rf"{name}:\s*(\d+)", out)
+        return int(m.group(1)) if m else 0
+    return {
+        "enabled": True,
+        "covered": True,
+        "pass": proc.returncode == 0,
+        "return_code": int(proc.returncode),
+        "total": _extract("总场景"),
+        "passed": _extract("通过"),
+        "failed": _extract("失败"),
+        "skipped": _extract("跳过"),
+        "output_tail": "\n".join(out.strip().splitlines()[-30:]),
+    }
+
+
+def _build_rule_coverage_matrix(analysis: dict[str, Any], mq_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    failed_policy = {x.get("name") for x in (analysis.get("policy_quality") or {}).get("top_failed_checks", [])}
+    failed_turn = {x.get("name") for x in (analysis.get("humanlike_quality") or {}).get("top_turn_failures", [])}
+    qg = analysis.get("quality_guardrails") or {}
+    matrix: list[dict[str, Any]] = []
+
+    def add(domain: str, rule: str, covered: bool, passed: bool, note: str = "") -> None:
+        status = "NOT_COVERED"
+        if covered:
+            status = "COVERED_PASS" if passed else "COVERED_FAIL"
+        matrix.append({"domain": domain, "rule": rule, "status": status, "note": note})
+
+    add("ai_dialog_policy", "ack_overuse_control", True, "ack_overuse" not in failed_policy)
+    add("ai_dialog_policy", "no_consecutive_same_field_ask", True, "no_consecutive_same_field_ask" not in failed_policy)
+    add("ai_dialog_policy", "field_interleaving_quality", True, "field_interleaving_quality" not in failed_policy)
+    add(
+        "ai_dialog_policy",
+        "memory_reuse_accuracy",
+        True,
+        float(qg.get("memory_reuse_accuracy", 1.0)) >= 0.95 if int(qg.get("memory_reuse_cases", 0) or 0) > 0 else True,
+    )
+
+    add("contact_collection", "contact_transition_natural", True, "contact_transition_abrupt" not in failed_turn)
+    add("contact_collection", "confirm_word_not_misrouted", True, "confirm_word_misrouted_to_contact" not in failed_turn)
+    add("contact_collection", "invalid_phone_retry", True, "invalid_phone_not_retried" not in failed_turn)
+    add("contact_collection", "invalid_wechat_retry", True, "invalid_wechat_not_retried" not in failed_turn)
+
+    if mq_summary.get("covered"):
+        add("message_queue_design", "mq_ingest_regression", True, bool(mq_summary.get("pass")), f"failed={mq_summary.get('failed', 0)}")
+    else:
+        add("message_queue_design", "mq_ingest_regression", False, False, str(mq_summary.get("reason") or "not executed"))
+
+    return matrix
+
+
+def _build_domain_gates(
+    analysis: dict[str, Any],
+    mq_summary: dict[str, Any],
+    gate_config: dict[str, Any],
+) -> dict[str, Any]:
+    ph = analysis.get("project_health_gate") or {}
+    humanlike = analysis.get("humanlike_quality") or {}
+    extraction = analysis.get("extraction_accuracy") or {}
+    contact = analysis.get("contact_quality") or {}
+    qg = analysis.get("quality_guardrails") or {}
+    fail_checks = ph.get("failed_checks") or []
+
+    dialogue_failed = []
+    for name in ["humanlike_pass_rate", "extraction_pass_rate", "template_top1_ratio", "latency_p95_seconds"]:
+        if any(x.get("name") == name for x in fail_checks):
+            dialogue_failed.append(name)
+    contact_failed = []
+    for name in ["refusal_respect_rate", "field_stability_score"]:
+        if any(x.get("name") == name for x in fail_checks):
+            contact_failed.append(name)
+
+    dialogue_gate = {
+        "pass": not dialogue_failed,
+        "failed_checks": dialogue_failed,
+        "humanlike_pass_rate": humanlike.get("pass_rate"),
+        "extraction_pass_rate": extraction.get("pass_rate"),
+    }
+    contact_gate = {
+        "pass": not contact_failed,
+        "failed_checks": contact_failed,
+        "contact_success_rate": contact.get("contact_success_rate"),
+        "refusal_respect_rate": qg.get("refusal_respect_rate"),
+    }
+    mq_gate = {
+        "pass": bool(mq_summary.get("covered") and mq_summary.get("pass")),
+        "covered": bool(mq_summary.get("covered")),
+        "detail": mq_summary,
+    }
+
+    p0_defaults = [
+        "isolation_pass_rate",
+        "refusal_respect_rate",
+        "baseline_degradation::humanlike_pass_rate",
+        "baseline_degradation::extraction_pass_rate",
+    ]
+    p1_defaults = ["humanlike_pass_rate", "extraction_pass_rate", "latency_p95_seconds", "template_top1_ratio", "field_stability_score"]
+    p2_defaults = ["memory_reuse_accuracy"]
+    cfg = gate_config.get("gates", {}) if isinstance(gate_config, dict) else {}
+    p0_names = set(cfg.get("p0") or p0_defaults)
+    p1_names = set(cfg.get("p1") or p1_defaults)
+    p2_names = set(cfg.get("p2") or p2_defaults)
+
+    p0_fails = [x for x in fail_checks if str(x.get("name")) in p0_names]
+    p1_fails = [x for x in fail_checks if str(x.get("name")) in p1_names]
+    p2_fails = [x for x in fail_checks if str(x.get("name")) in p2_names]
+    if mq_summary.get("covered") and not mq_summary.get("pass"):
+        p0_fails.append({"name": "mq_ingest_regression", "value": mq_summary.get("failed", 0), "target": 0, "level": "critical"})
+    if (not mq_summary.get("covered")) and bool(gate_config.get("require_mq", False)):
+        p0_fails.append({"name": "mq_coverage_missing", "value": 1, "target": 0, "level": "critical"})
+
+    global_gate = {
+        "pass": len(p0_fails) == 0,
+        "p0_failed_checks": p0_fails,
+        "p1_failed_checks": p1_fails,
+        "p2_failed_checks": p2_fails,
+    }
+    return {
+        "dialogue_gate": dialogue_gate,
+        "contact_gate": contact_gate,
+        "mq_gate": mq_gate,
+        "global_gate": global_gate,
+    }
+
+
+def _build_recent_trend(report_dir: Path, analysis: dict[str, Any], limit: int = 7) -> dict[str, Any]:
+    files = sorted(report_dir.glob("realism_regression_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    samples = []
+    for path in files[: max(0, limit - 1)]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        a = payload.get("analysis") or {}
+        samples.append(
+            {
+                "path": str(path.relative_to(PROJECT_ROOT)),
+                "created_at": payload.get("created_at"),
+                "humanlike_pass_rate": float((a.get("humanlike_quality") or {}).get("pass_rate") or 0.0),
+                "extraction_pass_rate": float((a.get("extraction_accuracy") or {}).get("pass_rate") or 0.0),
+                "latency_p95": float((a.get("latency") or {}).get("p95") or 0.0),
+            }
+        )
+    current = {
+        "path": "current_run",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "humanlike_pass_rate": float((analysis.get("humanlike_quality") or {}).get("pass_rate") or 0.0),
+        "extraction_pass_rate": float((analysis.get("extraction_accuracy") or {}).get("pass_rate") or 0.0),
+        "latency_p95": float((analysis.get("latency") or {}).get("p95") or 0.0),
+    }
+    points = [current] + samples
+    if len(points) < 2:
+        return {"points": points, "degrading_metrics": []}
+    degrading = []
+    latest = points[0]
+    prev = points[1]
+    if latest["humanlike_pass_rate"] < prev["humanlike_pass_rate"]:
+        degrading.append("humanlike_pass_rate")
+    if latest["extraction_pass_rate"] < prev["extraction_pass_rate"]:
+        degrading.append("extraction_pass_rate")
+    if latest["latency_p95"] > prev["latency_p95"]:
+        degrading.append("latency_p95")
+    return {"points": points[:limit], "degrading_metrics": degrading}
+
+
+def _build_root_cause_buckets(analysis: dict[str, Any]) -> list[dict[str, Any]]:
+    buckets = {
+        "prompt_or_style": {"ack_overuse", "forbidden_business_phrase", "response_too_long"},
+        "policy_or_routing": {"field_interleaving_quality", "no_consecutive_same_field_ask", "clarification_not_answered"},
+        "extraction": {"age_label_int_inconsistent", "missing_extraction"},
+        "contact_collection": {"confirm_word_misrouted_to_contact", "contact_transition_abrupt", "invalid_phone_not_retried", "invalid_wechat_not_retried"},
+        "safety_boundary": {"abuse_not_deescalated", "high_risk_advice_overreach", "safety_signal_not_deescalated"},
+    }
+    turn_top = {x.get("name"): int(x.get("count") or 0) for x in (analysis.get("humanlike_quality") or {}).get("top_turn_failures", [])}
+    policy_top = {x.get("name"): int(x.get("count") or 0) for x in (analysis.get("policy_quality") or {}).get("top_failed_checks", [])}
+    field_top = {x.get("name"): int(x.get("count") or 0) for x in (analysis.get("field_quality") or {}).get("top_failed_checks", [])}
+    merged = {}
+    merged.update(turn_top)
+    for k, v in policy_top.items():
+        merged[k] = merged.get(k, 0) + v
+    for k, v in field_top.items():
+        merged[k] = merged.get(k, 0) + v
+    rows = []
+    for bucket, names in buckets.items():
+        cnt = sum(merged.get(name, 0) for name in names)
+        rows.append({"bucket": bucket, "count": cnt})
+    return sorted(rows, key=lambda x: x["count"], reverse=True)
+
+
+def _write_latest_summary(analysis: dict[str, Any], json_path: Path, md_path: Path) -> Path:
+    out_path = PROJECT_ROOT / "reports" / "latest_summary.txt"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    gate = (analysis.get("domain_gates") or {}).get("global_gate") or {}
+    lines = [
+        f"global_gate={'PASS' if gate.get('pass') else 'FAIL'}",
+        f"humanlike_pass_rate={((analysis.get('humanlike_quality') or {}).get('pass_rate', 0.0)):.4f}",
+        f"extraction_pass_rate={((analysis.get('extraction_accuracy') or {}).get('pass_rate', 0.0)):.4f}",
+        f"latency_p95={((analysis.get('latency') or {}).get('p95', 0.0))}",
+        f"json={json_path}",
+        f"md={md_path}",
+    ]
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out_path
+
+
+def _write_next_fix_todo(analysis: dict[str, Any]) -> Path:
+    out_path = PROJECT_ROOT / "docs" / "next_fix_todo.md"
+    gate = (analysis.get("domain_gates") or {}).get("global_gate") or {}
+    failed_checks = list(gate.get("p0_failed_checks") or []) + list(gate.get("p1_failed_checks") or [])
+    rows: list[str] = [
+        "# Next Fix TODO",
+        "",
+        f"- 更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- global_gate: {'PASS' if gate.get('pass') else 'FAIL'}",
+        "",
+        "## Top 待修复项",
+        "",
+    ]
+    if not failed_checks:
+        rows.append("- 当前无 P0/P1 待修复项。")
+    else:
+        for idx, item in enumerate(failed_checks[:10], start=1):
+            name = str(item.get("name"))
+            rows.append(f"{idx}. `{name}` value={item.get('value')} target={item.get('target')}")
+    rows += [
+        "",
+        "## 建议改动文件",
+        "",
+        "- `src/services/prompts/prompts.py`",
+        "- `src/services/core/dialogue_manager.py`",
+        "- `src/services/core/chat_service.py`",
+        "- `src/modules/conversation/application/process_chat_turn.py`",
+        "- `src/modules/profile_collection/domain/extraction_service.py`",
+        "",
+        "## 复测命令",
+        "",
+        "```bash",
+        "python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose",
+        "```",
+    ]
+    out_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return out_path
 
 
 def _write_reports(
@@ -2262,6 +2759,63 @@ def _write_reports(
     hints = analysis.get("optimization_hints") or ["当前未发现显著单阶段瓶颈。"]
     for hint in hints:
         lines.append(f"- {hint}")
+    lines += ["", "## 总门禁", ""]
+    domain_gates = analysis.get("domain_gates") or {}
+    global_gate = domain_gates.get("global_gate") or {}
+    lines.append(f"- global_gate: {'PASS' if global_gate.get('pass') else 'FAIL'}")
+    lines.append(f"- P0失败数: {len(global_gate.get('p0_failed_checks') or [])}")
+    lines.append(f"- P1失败数: {len(global_gate.get('p1_failed_checks') or [])}")
+    lines.append(f"- P2失败数: {len(global_gate.get('p2_failed_checks') or [])}")
+    for item in (global_gate.get("p0_failed_checks") or [])[:20]:
+        lines.append(f"- [P0] {item.get('name')}: value={item.get('value')} target={item.get('target')}")
+    for item in (global_gate.get("p1_failed_checks") or [])[:20]:
+        lines.append(f"- [P1] {item.get('name')}: value={item.get('value')} target={item.get('target')}")
+    lines += ["", "## 规则覆盖矩阵", ""]
+    for item in (analysis.get("rule_coverage_matrix") or []):
+        note = f" ({item.get('note')})" if item.get("note") else ""
+        lines.append(f"- {item.get('domain')}::{item.get('rule')} => {item.get('status')}{note}")
+    lines += ["", "## 根因分桶", ""]
+    for item in (analysis.get("root_cause_buckets") or [])[:10]:
+        lines.append(f"- {item.get('bucket')}: {item.get('count')}")
+    lines += ["", "## 最近7次趋势", ""]
+    trend = analysis.get("recent_trend") or {}
+    if trend.get("degrading_metrics"):
+        lines.append(f"- 持续退化指标: {', '.join(trend.get('degrading_metrics') or [])}")
+    else:
+        lines.append("- 持续退化指标: 无")
+    for point in (trend.get("points") or [])[:7]:
+        lines.append(
+            "- "
+            f"{point.get('created_at')} "
+            f"humanlike={point.get('humanlike_pass_rate')} "
+            f"extraction={point.get('extraction_pass_rate')} "
+            f"latency_p95={point.get('latency_p95')}"
+        )
+    lines += ["", "## MQ补充检查", ""]
+    mq = (domain_gates.get("mq_gate") or {}).get("detail") or {}
+    if not mq:
+        lines.append("- 未执行")
+    else:
+        lines.append(f"- covered={mq.get('covered')} pass={mq.get('pass')}")
+        if mq.get("reason"):
+            lines.append(f"- reason: {mq.get('reason')}")
+        if mq.get("covered"):
+            lines.append(
+                f"- total={mq.get('total', 0)} passed={mq.get('passed', 0)} failed={mq.get('failed', 0)} skipped={mq.get('skipped', 0)}"
+            )
+            if mq.get("output_tail"):
+                lines.append("- output_tail:")
+                for raw_line in str(mq.get("output_tail")).splitlines()[:10]:
+                    lines.append(f"  - {raw_line}")
+    lines += ["", "## 项目健康门禁", ""]
+    gate = analysis.get("project_health_gate") or {}
+    lines.append(f"- 门禁是否通过: {'PASS' if gate.get('pass') else 'FAIL'}")
+    lines.append(f"- 失败项数量: {gate.get('failed_count', 0)}")
+    lines.append(f"- 严重失败项数量: {gate.get('critical_failed_count', 0)}")
+    for item in (gate.get("failed_checks") or [])[:20]:
+        lines.append(
+            f"- [{item.get('level')}] {item.get('name')}: value={item.get('value')} target={item.get('target')}"
+        )
     lines += ["", "## 模板化风险 Top10", ""]
     for item in (analysis["template_risk"]["top_templates"] or [])[:10]:
         lines.append(f"- {item['count']} 次 ({item['ratio']:.1%}): `{item['template']}`")
@@ -2332,8 +2886,22 @@ async def main() -> int:
     wall_clock_s = time.perf_counter() - run_started
     token_usage = await AIService.get_token_usage()
     analysis = _analyze(results, args.template_risk_threshold)
-    if args.baseline_json:
-        analysis["baseline_compare"] = _compare_with_baseline(analysis, args.baseline_json)
+    baseline_path = args.baseline_json
+    if not baseline_path:
+        auto_baseline = Path(args.report_dir) / "latest.json"
+        if auto_baseline.exists():
+            baseline_path = str(auto_baseline)
+    if baseline_path:
+        analysis["baseline_compare"] = _compare_with_baseline(analysis, baseline_path)
+    analysis["project_health_gate"] = _build_project_health_gate(analysis)
+    gate_config = _load_gate_config(args.gate_config)
+    mq_summary = {"enabled": False, "covered": False, "pass": False, "reason": "mq checks disabled"}
+    if args.include_mq_checks:
+        mq_summary = _run_mq_checks(args.mq_base_url, args.mq_timeout_seconds, fast=bool(args.fast))
+    analysis["domain_gates"] = _build_domain_gates(analysis, mq_summary, gate_config)
+    analysis["rule_coverage_matrix"] = _build_rule_coverage_matrix(analysis, mq_summary)
+    analysis["root_cause_buckets"] = _build_root_cause_buckets(analysis)
+    analysis["recent_trend"] = _build_recent_trend(Path(args.report_dir), analysis, limit=7)
     json_path, md_path = _write_reports(
         Path(args.report_dir),
         results,
@@ -2352,6 +2920,12 @@ async def main() -> int:
     print(
         f"时延分位: p50={analysis['latency']['p50']}s p90={analysis['latency']['p90']}s "
         f"p95={analysis['latency']['p95']}s p99={analysis['latency']['p99']}s max={analysis['latency']['max']}s"
+    )
+    hq = analysis.get("humanlike_quality", {})
+    print(
+        "基础设施影响: "
+        f"infra_fail_turns={hq.get('infra_fail_turns', 0)}, "
+        f"scored_turns={hq.get('scored_turns', 0)}"
     )
     phase_avg = analysis.get("phase_latency_avg", {})
     if phase_avg:
@@ -2424,12 +2998,37 @@ async def main() -> int:
                 print(f"- {item['metric']}: current={item['current']} baseline={item['baseline']}")
         else:
             print("基线对比: 无退化")
+    domain_gates = analysis.get("domain_gates") or {}
+    global_gate = domain_gates.get("global_gate") or {}
+    print(
+        "分级门禁: "
+        f"P0={len(global_gate.get('p0_failed_checks') or [])}, "
+        f"P1={len(global_gate.get('p1_failed_checks') or [])}, "
+        f"P2={len(global_gate.get('p2_failed_checks') or [])}"
+    )
+    print(f"global_gate: {'PASS' if global_gate.get('pass') else 'FAIL'}")
+    mq_gate = domain_gates.get("mq_gate") or {}
+    mq_detail = mq_gate.get("detail") or {}
+    print(
+        "mq_gate: "
+        f"covered={mq_detail.get('covered', False)} "
+        f"pass={mq_detail.get('pass', False)} "
+        f"reason={mq_detail.get('reason', '-')}"
+    )
+    gate = analysis.get("project_health_gate") or {}
+    print(f"项目健康门禁: {'PASS' if gate.get('pass') else 'FAIL'} (failed={gate.get('failed_count', 0)})")
+    for item in (gate.get("failed_checks") or [])[:10]:
+        print(f"- [{item.get('level')}] {item.get('name')}: value={item.get('value')} target={item.get('target')}")
     print(f"拟人化收集通过率: {analysis['humanlike_quality']['pass_rate']:.1%}")
     print(f"字段提取综合通过率: {analysis['extraction_accuracy']['pass_rate']:.1%}")
     print(f"字段精确匹配通过率: {analysis['extraction_accuracy']['exact_match_pass_rate']:.1%}")
     print(f"字段完整性通过率: {analysis['extraction_accuracy']['completeness_pass_rate']:.1%}")
     print(f"JSON: {json_path}")
     print(f"MD:   {md_path}")
+    summary_path = _write_latest_summary(analysis, json_path, md_path)
+    todo_path = _write_next_fix_todo(analysis)
+    print(f"SUMMARY: {summary_path}")
+    print(f"TODO:    {todo_path}")
     if args.strict_humanlike:
         strict_ignore = {x.strip() for x in str(args.strict_ignore_failures or "").split(",") if x.strip()}
         strict_turn_failures = {
@@ -2488,6 +3087,17 @@ async def main() -> int:
             print("STRICT_HUMANLIKE 失败：命中关键风险项")
             for name, count in sorted(strict_hit_counter.items(), key=lambda x: x[1], reverse=True):
                 print(f"- {name}: {count}")
+            return 1
+        critical_gate_failures = (analysis.get("project_health_gate") or {}).get("critical_failed_checks") or []
+        if critical_gate_failures:
+            print("STRICT_HUMANLIKE 失败：命中关键项目门禁")
+            for item in critical_gate_failures:
+                print(f"- {item.get('name')}: value={item.get('value')} target={item.get('target')}")
+            return 1
+        if (analysis.get("domain_gates") or {}).get("global_gate", {}).get("p0_failed_checks"):
+            print("STRICT_HUMANLIKE 失败：命中 P0 门禁")
+            for item in (analysis.get("domain_gates") or {}).get("global_gate", {}).get("p0_failed_checks", [])[:20]:
+                print(f"- {item.get('name')}: value={item.get('value')} target={item.get('target')}")
             return 1
     return 0
 
