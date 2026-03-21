@@ -45,6 +45,13 @@ class UserQuestionService:
         r'为什么要留微信',
         r'留微信干嘛',
         r'微信用途',
+        r'没看懂',
+        r'看不懂',
+        r'听不懂',
+        r'啥意思',
+        r'什么意思',
+        r'解释下',
+        r'解释一下',
     )
 
     FAQ_RESPONSE_RULES = (
@@ -58,6 +65,15 @@ class UserQuestionService:
                 "主要是为了后续有合适人选时能及时联系到你，不会拿去做营销骚扰，你可以放心。",
                 "这个联系方式只用于匹配进展通知和约时间沟通，不会随便打扰你。",
                 "留联系方式是为了后续对接更顺畅，只有匹配到合适对象时才会联系你。",
+            ),
+        ),
+        (
+            "clarification",
+            (r'没看懂', r'看不懂', r'听不懂', r'啥意思', r'什么意思', r'解释下', r'解释一下'),
+            (
+                "我换个直白说法：我说的“匹配点”就是你在意的几个条件，比如年龄范围、城市、工作节奏、是否单身和相处感觉。",
+                "简单说，“匹配点”就是我们用来筛人的关键条件，比如同城、年龄段、工作和你更看重的性格点。",
+                "你这个问题很好理解：所谓“匹配点”，就是你觉得重要的标准，比如城市、年龄、工作状态和相处舒适度。",
             ),
         ),
         (
@@ -173,6 +189,7 @@ class UserQuestionService:
         "how_match": ("匹配", "流程", "牵线", "怎么安排", "怎么找", "怎么做"),
         "contact_exchange": ("加微信", "直接联系", "直接加", "互换联系方式", "能加"),
         "contact_why": ("为什么留电话", "为啥留电话", "留电话干嘛", "电话用途", "为什么留微信", "留微信干嘛", "微信用途"),
+        "clarification": ("没看懂", "看不懂", "听不懂", "啥意思", "什么意思", "解释下", "解释一下"),
         "photo": ("照片", "相片", "头像", "先看图", "先看照片"),
         "success_rate": ("成功率", "脱单率", "成功案例", "成了多少"),
         "service_area": ("服务范围", "覆盖", "地区", "哪些城市", "服务哪些"),
@@ -239,6 +256,10 @@ class UserQuestionService:
                 candidates = list(responses)
 
             if repeat_count >= 3:
+                # 澄清类问题即使重复提问，也必须继续给“解释型”答案，不能退化成泛分流追问。
+                if intent == "clarification":
+                    idx = (repeat_count - 1) % len(candidates)
+                    return candidates[idx]
                 # 第三次及以上使用“承接+分流顾虑”轮转，并尽量避开最近重复。
                 followup_candidates = [r for r in self.FAQ_REPEAT_FOLLOWUPS if r not in recent]
                 if not followup_candidates:

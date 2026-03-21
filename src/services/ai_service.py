@@ -39,40 +39,53 @@ class AIService:
 
     def __init__(self, client: Optional[AsyncOpenAI] = None):
         """Initialize AI service"""
-        # 注意：代理配置已在 main.py 中统一设置，此处不再重复
+        self._owns_client = client is None
+        self.client = client or self._create_async_openai_client()
+        self.model_name = settings.model_name
 
-        # 创建带合理超时配置的异步 OpenAI 客户端
-        # 使用异步客户端 AsyncOpenAI 而非同步客户端，避免资源泄漏
-        # 添加连接池配置支持高并发
+    def _create_async_openai_client(self) -> AsyncOpenAI:
+        """创建新的异步 OpenAI 客户端，用于初始化和超时后重建。"""
         import httpx
 
-        # 配置连接池
         limits = httpx.Limits(
             max_connections=settings.http_connections,
-            max_keepalive_connections=settings.http_max_keepalive
+            max_keepalive_connections=settings.http_max_keepalive,
+            keepalive_expiry=float(os.getenv("AI_HTTP_KEEPALIVE_EXPIRY_SECONDS", "15")),
         )
-
-        # 配置超时 - 增加读取超时时间
         timeout = httpx.Timeout(
-            connect=self.CONNECT_TIMEOUT,
-            read=60.0,  # 增加到60秒
-            write=10.0,
-            pool=5.0
+            connect=float(os.getenv("AI_HTTP_CONNECT_TIMEOUT_SECONDS", str(self.CONNECT_TIMEOUT))),
+            read=float(os.getenv("AI_HTTP_READ_TIMEOUT_SECONDS", "25")),
+            write=float(os.getenv("AI_HTTP_WRITE_TIMEOUT_SECONDS", "10")),
+            pool=float(os.getenv("AI_HTTP_POOL_TIMEOUT_SECONDS", "5")),
         )
 
-        self.client = client or AsyncOpenAI(
+        return AsyncOpenAI(
             base_url=settings.base_url,
             api_key=settings.api_key,
             timeout=timeout,
-            max_retries=0,  # 禁用重试，加快失败响应
+            max_retries=0,
             http_client=httpx.AsyncClient(
                 limits=limits,
                 timeout=timeout,
-                verify=True,  # 启用SSL验证
-                proxy=None    # 禁用代理，直连豆包API
-            )
+                verify=True,
+                proxy=None,
+            ),
         )
-        self.model_name = settings.model_name
+
+    async def _reset_client(self, reason: str) -> None:
+        """
+        超时/连接异常后重建底层客户端，避免复用坏掉的 keep-alive 连接。
+        仅对本服务自行创建的客户端生效。
+        """
+        if not self._owns_client:
+            return
+        old_client = self.client
+        self.client = self._create_async_openai_client()
+        try:
+            await old_client.close()
+        except Exception as exc:
+            logger.warning(f"关闭旧 AI 客户端失败({reason}): {exc}")
+        logger.warning(f"AI 客户端已重建，原因: {reason}")
 
     async def generate_response(
         self,
@@ -116,6 +129,7 @@ class AIService:
                     )
             except asyncio.TimeoutError as e:
                 last_error = e
+                await self._reset_client("generate_response_timeout")
                 if attempt < max_retries - 1:
                     logger.warning(f"AI 调用超时（{timeout}秒），第 {attempt + 1} 次重试...")
                     await asyncio.sleep(retry_delay)
@@ -124,6 +138,7 @@ class AIService:
                     logger.error(f"AI 调用超时（{timeout}秒），已重试 {max_retries} 次")
             except Exception as e:
                 last_error = e
+                await self._reset_client(f"generate_response_error:{type(e).__name__}")
                 if attempt < max_retries - 1:
                     logger.warning(f"AI 调用失败: {e}，第 {attempt + 1} 次重试...")
                     await asyncio.sleep(retry_delay)

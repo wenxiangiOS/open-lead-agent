@@ -1,0 +1,871 @@
+{
+  "created_at": "2026-03-20T20:02:33",
+  "summary": {
+    "sessions": 1,
+    "turns": 6,
+    "wall_clock_s": 6.318,
+    "sum_session_duration_s": 3.306,
+    "failed_checks": 9,
+    "failed_check_breakdown": {
+      "turn": 5,
+      "field": 4,
+      "policy": 0
+    },
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "call_count": 0
+    },
+    "latency": {
+      "p50": 0.011,
+      "p90": 0.75,
+      "p95": 1.024,
+      "p99": 1.243,
+      "max": 1.298,
+      "avg": 0.257
+    }
+  },
+  "analysis": {
+    "humanlike_quality": {
+      "total_checks": 21,
+      "failed_checks": 5,
+      "pass_rate": 0.7619,
+      "turn_level_failures": 5,
+      "policy_rule_failures": 0,
+      "top_turn_failures": [
+        {
+          "name": "reply_too_fast_nonhuman",
+          "count": 5
+        }
+      ],
+      "top_policy_failures": [],
+      "template_top1_ratio": 0.3333,
+      "latency_p95": 1.024,
+      "latency_p99": 1.243
+    },
+    "conversation_naturalness": {
+      "emotion_ack_cases": 0,
+      "emotion_ack_hits": 0,
+      "emotion_ack_rate": 1.0,
+      "faq_non_repeat_cases": 0,
+      "faq_non_repeat_hits": 0,
+      "faq_non_repeat_rate": 1.0,
+      "faq_transition_cases": 0,
+      "faq_transition_hits": 0,
+      "faq_transition_rate": 1.0,
+      "ack_turns": 1,
+      "ack_overuse_rate": 0.1667,
+      "contact_transition_abrupt_cases": 0,
+      "intent_diversity": []
+    },
+    "quality_guardrails": {
+      "field_stability_score": 0.0,
+      "field_rewrites": 2,
+      "field_transitions": 2,
+      "refusal_respect_cases": 0,
+      "refusal_respect_hits": 0,
+      "refusal_respect_rate": 1.0,
+      "memory_reuse_cases": 0,
+      "memory_reuse_correct": 0,
+      "memory_reuse_accuracy": 1.0,
+      "ending_cases": 0,
+      "ending_natural_hits": 0,
+      "ending_natural_rate": 1.0,
+      "anomaly_cases": 0,
+      "anomaly_recovered": 0,
+      "anomaly_recovery_rate": 1.0,
+      "persona_consistency_score": 0.0,
+      "action_consistency_score": 1.0
+    },
+    "isolation_quality": {
+      "sessions": 1,
+      "profile_account_id_mismatch": 0,
+      "isolation_pass_rate": 1.0
+    },
+    "question_pressure": {
+      "avg_streak": 1,
+      "p95_streak": 1.0,
+      "max_streak": 1,
+      "sessions_with_streak_ge_3": 0,
+      "sessions_with_streak_ge_3_ratio": 0.0
+    },
+    "extraction_accuracy": {
+      "total_checks": 11,
+      "failed_checks": 4,
+      "pass_rate": 0.6364,
+      "exact_match_checks": 4,
+      "exact_match_failures": 2,
+      "exact_match_pass_rate": 0.5,
+      "completeness_checks": 7,
+      "completeness_failures": 2,
+      "completeness_pass_rate": 0.7143,
+      "top_failed_checks": [
+        {
+          "name": "location_truthy",
+          "count": 1
+        },
+        {
+          "name": "location_matches_user_stated",
+          "count": 1
+        },
+        {
+          "name": "partner_requirement_when_mentioned",
+          "count": 1
+        },
+        {
+          "name": "partner_requirement_matches_user_stated",
+          "count": 1
+        }
+      ]
+    },
+    "extraction_diagnostics": {
+      "error_buckets": [
+        {
+          "name": "missed_stated_field",
+          "count": 2
+        },
+        {
+          "name": "missing_extraction",
+          "count": 1
+        },
+        {
+          "name": "other",
+          "count": 1
+        }
+      ],
+      "conflict_total": 2,
+      "conflict_resolved": 1,
+      "conflict_resolved_rate": 0.5,
+      "evidence_total": 2,
+      "evidence_found": 2,
+      "evidence_coverage_rate": 1.0,
+      "evidence_missing_samples": []
+    },
+    "contact_quality": {
+      "contact_sessions": 0,
+      "contact_success_sessions": 0,
+      "contact_success_rate": 1.0,
+      "invalid_phone_not_retried": 0,
+      "invalid_wechat_not_retried": 0
+    },
+    "field_quality": {
+      "total_checks": 11,
+      "failed_checks": 4,
+      "pass_rate": 0.6364,
+      "top_failed_checks": [
+        {
+          "name": "location_truthy",
+          "count": 1
+        },
+        {
+          "name": "location_matches_user_stated",
+          "count": 1
+        },
+        {
+          "name": "partner_requirement_when_mentioned",
+          "count": 1
+        },
+        {
+          "name": "partner_requirement_matches_user_stated",
+          "count": 1
+        }
+      ],
+      "failed_sessions": [
+        {
+          "scenario_id": "field_partner_requirement_height_and_age_preference_should_not_end",
+          "session_id": "realism_1_03edb5ae",
+          "failures": [
+            "location_truthy: expected='non-empty', actual=None",
+            "location_matches_user_stated: expected='深圳', actual=None",
+            "partner_requirement_when_mentioned: expected='non-empty', actual=None (user mentioned preference in turns)",
+            "partner_requirement_matches_user_stated: expected='高挑，不要超过30岁', actual=None"
+          ]
+        }
+      ]
+    },
+    "policy_quality": {
+      "total_checks": 15,
+      "failed_checks": 0,
+      "pass_rate": 1.0,
+      "top_failed_checks": [],
+      "failed_sessions": []
+    },
+    "latency": {
+      "p50": 0.011,
+      "p90": 0.75,
+      "p95": 1.024,
+      "p99": 1.243,
+      "max": 1.298,
+      "avg": 0.257
+    },
+    "phase_latency_avg": {
+      "profile_load": 0.0002,
+      "context_load": 0.003,
+      "profile_save": 0.0004,
+      "response_build": 0.0004,
+      "rule_check": 0.2168,
+      "other": 0.0025,
+      "total": 0.2568,
+      "ai_call": 0.0395,
+      "extract_collect": 0.001
+    },
+    "intent_latency": [
+      {
+        "intent": "general",
+        "count": 6,
+        "avg": 0.257,
+        "p95": 1.024,
+        "max": 1.298
+      }
+    ],
+    "latency_experience": {
+      "instant_reply_rate_lt_1s": 0.8333,
+      "faq_instant_reply_rate_lt_1s": 0.0,
+      "slow_reply_rate_gt_20s": 0.0
+    },
+    "slow_turns_top20": [],
+    "template_risk": {
+      "top_templates": [
+        {
+          "template": "方便留个电话吗后续有合适的人选时联系你",
+          "count": 2,
+          "ratio": 0.3333
+        },
+        {
+          "template": "我先不重复追问电话啦你也可以先说说你更在意的匹配条件",
+          "count": 2,
+          "ratio": 0.3333
+        },
+        {
+          "template": "你好呀在的我可以先快速了解你两三点也可以先听你说想找什么类型你更想先聊哪边",
+          "count": 1,
+          "ratio": 0.1667
+        },
+        {
+          "template": "我先不急着推进联系方式先按你刚说的继续聊会更自然",
+          "count": 1,
+          "ratio": 0.1667
+        }
+      ],
+      "top1_ratio": 0.3333,
+      "threshold": 0.18,
+      "at_risk": true
+    },
+    "optimization_hints": [
+      "规则阶段占比偏高：建议规则短路、热点正则预编译。",
+      "模板化风险偏高：Top1 模板占比 33.3% > 阈值 18.0%，建议扩写多样化话术。"
+    ],
+    "failure_samples": {
+      "turn": {
+        "reply_too_fast_nonhuman": [
+          {
+            "turn": 2,
+            "user": "我是男的",
+            "assistant": "我先不急着推进联系方式，先按你刚说的继续聊会更自然。",
+            "latency_s": 0.201,
+            "perf": {
+              "profile_load": 0.0,
+              "profile_save": 0.0006,
+              "context_load": 0.0019,
+              "rule_check": 0.0007,
+              "ai_call": 0.1889,
+              "extract_collect": 0.0002,
+              "response_build": 0.0001,
+              "other": 0.0082,
+              "total": 0.2006
+            }
+          },
+          {
+            "turn": 3,
+            "user": "90后",
+            "assistant": "方便留个电话吗？后续有合适的人选时联系你～",
+            "latency_s": 0.01,
+            "perf": {
+              "profile_load": 0.0,
+              "context_load": 0.002,
+              "rule_check": 0.0015,
+              "profile_save": 0.0004,
+              "ai_call": 0.0016,
+              "extract_collect": 0.0029,
+              "response_build": 0.0002,
+              "other": 0.0015,
+              "total": 0.0102
+            }
+          },
+          {
+            "turn": 4,
+            "user": "深圳",
+            "assistant": "我先不重复追问电话啦，你也可以先说说你更在意的匹配条件。",
+            "latency_s": 0.011,
+            "perf": {
+              "profile_load": 0.0,
+              "context_load": 0.0039,
+              "rule_check": 0.0014,
+              "profile_save": 0.0004,
+              "ai_call": 0.0025,
+              "extract_collect": 0.0004,
+              "response_build": 0.0004,
+              "other": 0.0015,
+              "total": 0.0106
+            }
+          }
+        ]
+      },
+      "field": {
+        "location_truthy": [
+          {
+            "scenario_id": "field_partner_requirement_height_and_age_preference_should_not_end",
+            "session_id": "realism_1_03edb5ae",
+            "expected": "non-empty",
+            "actual": null,
+            "note": ""
+          }
+        ],
+        "location_matches_user_stated": [
+          {
+            "scenario_id": "field_partner_requirement_height_and_age_preference_should_not_end",
+            "session_id": "realism_1_03edb5ae",
+            "expected": "深圳",
+            "actual": null,
+            "note": ""
+          }
+        ],
+        "partner_requirement_when_mentioned": [
+          {
+            "scenario_id": "field_partner_requirement_height_and_age_preference_should_not_end",
+            "session_id": "realism_1_03edb5ae",
+            "expected": "non-empty",
+            "actual": null,
+            "note": "user mentioned preference in turns"
+          }
+        ],
+        "partner_requirement_matches_user_stated": [
+          {
+            "scenario_id": "field_partner_requirement_height_and_age_preference_should_not_end",
+            "session_id": "realism_1_03edb5ae",
+            "expected": "高挑，不要超过30岁",
+            "actual": null,
+            "note": ""
+          }
+        ]
+      },
+      "policy": {}
+    }
+  },
+  "results": [
+    {
+      "session_id": "realism_1_03edb5ae",
+      "scenario_id": "field_partner_requirement_height_and_age_preference_should_not_end",
+      "category": "field_collection",
+      "tags": [
+        "critical",
+        "extract_guard",
+        "partner_requirement"
+      ],
+      "persona": {
+        "sex": "男",
+        "age_bucket": "85后",
+        "location": "北京",
+        "education": "大专",
+        "occupation": "教师",
+        "preference": "上进",
+        "faq_prob": 0.27884722782428334,
+        "joking_prob": 0.1853398974845823,
+        "defensive_prob": 0.2284359135409691,
+        "contact_willingness": "phone"
+      },
+      "turns": [
+        {
+          "index": 1,
+          "user": "你好",
+          "assistant": "你好呀～在的，我可以先快速了解你两三点，也可以先听你说想找什么类型，你更想先聊哪边？",
+          "latency_s": 1.298,
+          "perf": {
+            "profile_load": 0.0012,
+            "context_load": 0.0027,
+            "profile_save": 0.0002,
+            "response_build": 0.0011,
+            "rule_check": 1.2948,
+            "other": 0.0,
+            "total": 1.2976
+          },
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": []
+        },
+        {
+          "index": 2,
+          "user": "我是男的",
+          "assistant": "我先不急着推进联系方式，先按你刚说的继续聊会更自然。",
+          "latency_s": 0.201,
+          "perf": {
+            "profile_load": 0.0,
+            "profile_save": 0.0006,
+            "context_load": 0.0019,
+            "rule_check": 0.0007,
+            "ai_call": 0.1889,
+            "extract_collect": 0.0002,
+            "response_build": 0.0001,
+            "other": 0.0082,
+            "total": 0.2006
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": [
+            "reply_too_fast_nonhuman"
+          ]
+        },
+        {
+          "index": 3,
+          "user": "90后",
+          "assistant": "方便留个电话吗？后续有合适的人选时联系你～",
+          "latency_s": 0.01,
+          "perf": {
+            "profile_load": 0.0,
+            "context_load": 0.002,
+            "rule_check": 0.0015,
+            "profile_save": 0.0004,
+            "ai_call": 0.0016,
+            "extract_collect": 0.0029,
+            "response_build": 0.0002,
+            "other": 0.0015,
+            "total": 0.0102
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "90后(36岁)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": [
+            "reply_too_fast_nonhuman"
+          ]
+        },
+        {
+          "index": 4,
+          "user": "深圳",
+          "assistant": "我先不重复追问电话啦，你也可以先说说你更在意的匹配条件。",
+          "latency_s": 0.011,
+          "perf": {
+            "profile_load": 0.0,
+            "context_load": 0.0039,
+            "rule_check": 0.0014,
+            "profile_save": 0.0004,
+            "ai_call": 0.0025,
+            "extract_collect": 0.0004,
+            "response_build": 0.0004,
+            "other": 0.0015,
+            "total": 0.0106
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "90后(36岁)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": [
+            "reply_too_fast_nonhuman"
+          ]
+        },
+        {
+          "index": 5,
+          "user": "身高高挑",
+          "assistant": "方便留个电话吗？后续有合适的人选时联系你～",
+          "latency_s": 0.011,
+          "perf": {
+            "profile_load": 0.0,
+            "context_load": 0.0041,
+            "rule_check": 0.0014,
+            "profile_save": 0.0003,
+            "ai_call": 0.0028,
+            "extract_collect": 0.0003,
+            "response_build": 0.0004,
+            "other": 0.0022,
+            "total": 0.0115
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "90后(36岁)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": [
+            "reply_too_fast_nonhuman"
+          ]
+        },
+        {
+          "index": 6,
+          "user": "不要超过30岁",
+          "assistant": "我先不重复追问电话啦，你也可以先说说你更在意的匹配条件。",
+          "latency_s": 0.01,
+          "perf": {
+            "profile_load": 0.0,
+            "context_load": 0.0032,
+            "profile_save": 0.0007,
+            "rule_check": 0.0013,
+            "ai_call": 0.0019,
+            "extract_collect": 0.0012,
+            "response_build": 0.0003,
+            "other": 0.0017,
+            "total": 0.0105
+          },
+          "collected_info": {
+            "sex": "男",
+            "last_name": "未留称呼",
+            "age": "30",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "未留",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "未留",
+            "contact": "未留",
+            "partner_requirement": "未留"
+          },
+          "failures": [
+            "reply_too_fast_nonhuman"
+          ]
+        }
+      ],
+      "final_profile": {
+        "account_id": "realism_1_03edb5ae",
+        "created_at": "2026-03-20T20:02:29.726960",
+        "updated_at": "2026-03-20T20:02:32.643821",
+        "sex": "男",
+        "last_name": null,
+        "age": 30,
+        "age_label": null,
+        "height": null,
+        "weight": null,
+        "location": null,
+        "education": null,
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": null,
+        "contact": null,
+        "phone": null,
+        "wechat": null,
+        "partner_requirement": null,
+        "extraction_evidence": {
+          "age": {
+            "value": "30",
+            "source_text": "不要超过30岁",
+            "turn_id": 6,
+            "confidence": 0.88,
+            "source": "rule",
+            "updated_at": "2026-03-20T20:02:32.643618"
+          },
+          "age_label": {
+            "value": "90后",
+            "source_text": "90后",
+            "turn_id": 3,
+            "confidence": 0.88,
+            "source": "rule",
+            "updated_at": "2026-03-20T20:02:31.785770"
+          }
+        },
+        "collection_progress": {
+          "sex": true,
+          "last_name": false,
+          "age": true,
+          "age_label": false,
+          "height": false,
+          "weight": false,
+          "location": false,
+          "education": false,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": false,
+          "contact": false,
+          "partner_requirement": false
+        },
+        "progress_percentage": 15.38,
+        "missing_fields": [
+          "last_name",
+          "age_label",
+          "height",
+          "weight",
+          "location",
+          "education",
+          "marital_status",
+          "monthly_income",
+          "occupation",
+          "contact",
+          "partner_requirement"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {
+          "contact": 1,
+          "conversation_end_intent": 1
+        },
+        "recent_asked_fields": [],
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": false,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "is_hongkong_user": null,
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "field_checks": [
+        {
+          "name": "sex_matches_user_stated",
+          "passed": true,
+          "expected": "男",
+          "actual": "男",
+          "note": ""
+        },
+        {
+          "name": "sex_self_declare_missed",
+          "passed": true,
+          "expected": "男",
+          "actual": "男",
+          "note": ""
+        },
+        {
+          "name": "location_truthy",
+          "passed": false,
+          "expected": "non-empty",
+          "actual": null,
+          "note": ""
+        },
+        {
+          "name": "occupation_not_placeholder",
+          "passed": true,
+          "expected": "not in ['None', 'null', '值', '未知']",
+          "actual": null,
+          "note": ""
+        },
+        {
+          "name": "age_reasonable_if_present",
+          "passed": true,
+          "expected": "18-60 or empty",
+          "actual": 30,
+          "note": ""
+        },
+        {
+          "name": "location_matches_user_stated",
+          "passed": false,
+          "expected": "深圳",
+          "actual": null,
+          "note": ""
+        },
+        {
+          "name": "age_matches_user_stated",
+          "passed": true,
+          "expected": "30",
+          "actual": 30,
+          "note": ""
+        },
+        {
+          "name": "age_label_int_inconsistent",
+          "passed": true,
+          "expected": "label consistent with age",
+          "actual": {
+            "age": 30,
+            "age_label": ""
+          },
+          "note": ""
+        },
+        {
+          "name": "contact_consistency",
+          "passed": true,
+          "expected": "if contact shows collected then phone/wechat exists",
+          "actual": {
+            "contact": "",
+            "phone": null,
+            "wechat": null
+          },
+          "note": ""
+        },
+        {
+          "name": "partner_requirement_when_mentioned",
+          "passed": false,
+          "expected": "non-empty",
+          "actual": null,
+          "note": "user mentioned preference in turns"
+        },
+        {
+          "name": "partner_requirement_matches_user_stated",
+          "passed": false,
+          "expected": "高挑，不要超过30岁",
+          "actual": null,
+          "note": ""
+        }
+      ],
+      "field_failures": [
+        "location_truthy: expected='non-empty', actual=None",
+        "location_matches_user_stated: expected='深圳', actual=None",
+        "partner_requirement_when_mentioned: expected='non-empty', actual=None (user mentioned preference in turns)",
+        "partner_requirement_matches_user_stated: expected='高挑，不要超过30岁', actual=None"
+      ],
+      "policy_checks": [
+        {
+          "name": "core_ask_limit_sex",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_age",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_education",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_occupation",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "core_ask_limit_location",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "quasi_core_ask_limit_marital_status",
+          "passed": true,
+          "expected": "<=2",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "medium_ask_limit_monthly_income",
+          "passed": true,
+          "expected": "<=1",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "medium_ask_limit_partner_requirement",
+          "passed": true,
+          "expected": "<=1",
+          "actual": 1,
+          "note": ""
+        },
+        {
+          "name": "low_priority_never_ask_height",
+          "passed": true,
+          "expected": "0",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "low_priority_never_ask_weight",
+          "passed": true,
+          "expected": "0",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "low_priority_never_ask_last_name",
+          "passed": true,
+          "expected": "0",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "no_consecutive_same_field_ask",
+          "passed": true,
+          "expected": 0,
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "field_interleaving_quality",
+          "passed": true,
+          "expected": "<=3 core asks streak",
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "income_question_soft_tone",
+          "passed": true,
+          "expected": 0,
+          "actual": 0,
+          "note": ""
+        },
+        {
+          "name": "ack_overuse",
+          "passed": true,
+          "expected": "<=0.35",
+          "actual": 0.1667,
+          "note": ""
+        }
+      ],
+      "policy_failures": [],
+      "duration_s": 3.306
+    }
+  ]
+}

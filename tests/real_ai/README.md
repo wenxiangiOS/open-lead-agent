@@ -23,6 +23,17 @@
 python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose
 ```
 
+质量上限门禁（一键，先跑金标长链再跑全覆盖 strict gate）：
+
+```bash
+bash scripts/run_quality_upper_bound_gate.sh
+```
+
+失败时会自动：
+
+1. 归档 `reports/real_ai_realism/latest.json|latest.md` 到 `reports/real_ai_realism/gate_failures/`
+2. 在终端打印 Top 失败项摘要（turn/policy/field）
+
 说明（默认已开启，不需要额外加参数）：
 
 1. 严格拟人化闸门默认开启（命中关键风险项会返回退出码 1）。

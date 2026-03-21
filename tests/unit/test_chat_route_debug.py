@@ -17,6 +17,10 @@ class _StubChatService:
             "success": True,
             "response": "ok",
             "dialogId": "d1",
+            "collected_info": {"sex": "女"},
+            "collected": True,
+            "field": "sex",
+            "value": "女",
         }
 
     async def get_user_profile(self, _account_id):
@@ -151,6 +155,28 @@ async def _test_process_chat_turn_use_case_execute_command_wraps_payload():
     assert result.success is True
     assert result.response == "ok"
     assert result.dialog_id == "d_cmd_chat"
+
+
+def test_chat_route_keeps_collected_info_fields_in_response_model():
+    asyncio.run(_test_chat_route_keeps_collected_info_fields_in_response_model())
+
+
+async def _test_chat_route_keeps_collected_info_fields_in_response_model():
+    stub = _StubChatService()
+    original_service = chat_routes.chat_service
+    try:
+        chat_routes.chat_service = stub
+        resp = await chat_routes.chat({
+            "question": "你好",
+            "accountId": "u_collected_1",
+            "sex": "女",
+        })
+        assert resp.collected_info == {"sex": "女"}
+        assert resp.collected is True
+        assert resp.field == "sex"
+        assert resp.value == "女"
+    finally:
+        chat_routes.chat_service = original_service
 
 
 def test_conversation_rule_service_uses_first_matching_rule():

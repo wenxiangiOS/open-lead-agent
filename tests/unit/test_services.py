@@ -312,6 +312,43 @@ class TestUserProfile:
         missing = profile.get_missing_fields()
         assert "sex" in missing
         assert "contact" in missing
+        assert "age_label" not in missing
+        assert "height" not in missing
+        assert "weight" not in missing
+        assert "last_name" not in missing
+
+    def test_get_progress_ignores_age_label_and_low_priority_fields(self):
+        """测试公共进度只统计业务关键字段"""
+        profile = UserProfile(account_id="test")
+        for field in ["sex", "age", "location", "education", "occupation", "marital_status", "contact"]:
+            profile.collection_progress[field] = True
+
+        assert profile.get_progress() == 1.0
+        assert profile.is_collection_complete() is True
+
+    def test_get_missing_fields_for_serviceable_profile_stays_empty(self):
+        """测试达到业务服务阈值后，不再把派生/低优字段显示为缺口"""
+        profile = UserProfile(account_id="test")
+        profile.collection_progress.update({
+            "sex": True,
+            "age": True,
+            "location": True,
+            "education": True,
+            "occupation": True,
+            "marital_status": True,
+            "contact": True,
+        })
+        profile.sex = "男"
+        profile.age = 30
+        profile.location = "深圳"
+        profile.education = "本科"
+        profile.occupation = "IT"
+        profile.marital_status = "单身"
+        profile.contact = "电话:13800138000"
+
+        assert profile.get_missing_fields() == []
+        assert profile.get_progress() == 1.0
+        assert profile.is_collection_complete() is True
 
     def test_update_field(self):
         """测试更新字段"""

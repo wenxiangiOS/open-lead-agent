@@ -21,7 +21,22 @@
 - [ ] 环境与配置检查通过
 - [ ] 健康检查通过
 
-### 2.1 Chat 回归
+### 2.1 质量上限门禁（必填）
+
+命令：
+
+```bash
+bash scripts/run_quality_upper_bound_gate.sh
+```
+
+结果：
+
+- 金标长链通过（Y/N）：
+- strict gate 通过（Y/N）：
+- 输出包含 `[quality-gate] PASS`（Y/N）：
+- 报告路径：
+
+### 2.2 Chat 回归（抽检，可选）
 
 命令：
 
@@ -35,7 +50,7 @@ python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verb
 - 失败：
 - 报告路径：
 
-### 2.2 MQ ingest 回归
+### 2.3 MQ ingest 回归
 
 命令：
 
@@ -49,7 +64,7 @@ python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000
 - 通过：
 - 失败：
 
-### 2.3 MQ 门禁压测
+### 2.4 MQ 门禁压测
 
 命令：
 
@@ -70,7 +85,7 @@ python3 scripts/run_mq_load_test.py \
 - rps：
 - 报告路径：
 
-### 2.4 生产联调 smoke（如适用）
+### 2.5 生产联调 smoke（如适用）
 
 命令：
 

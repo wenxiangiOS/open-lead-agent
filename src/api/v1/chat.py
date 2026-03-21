@@ -193,5 +193,3 @@ async def reset_conversation_v1(user_id: str) -> Dict[str, Any]:
         )
 
         return await chat_service.reset_user_conversation(user_id)
-    if chat_service is None:
-        raise AppException("服务未初始化", status_code=500)

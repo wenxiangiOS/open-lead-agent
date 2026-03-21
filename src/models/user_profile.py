@@ -1,6 +1,6 @@
 """User profile model for collecting personal information"""
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, ClassVar
 from datetime import datetime
 import re
 from pydantic import BaseModel, Field, field_validator
@@ -26,6 +26,11 @@ class UserProfile(BaseModel):
     sex: Optional[str] = Field(None, description="性别（男/女）- 核心字段")
     last_name: Optional[str] = Field(None, description="用户主动提供的称呼/昵称（低优字段）")
     age: Optional[int] = Field(None, description="年龄（数字）")
+    age_label: Optional[str] = Field(None, description="年龄原始表达（如90后、95后）")
+    extraction_evidence: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="字段提取证据链：value/source_text/turn_id/confidence/source"
+    )
     height: Optional[str] = Field(None, description="身高（低优字段，例如：165cm）")
     weight: Optional[str] = Field(None, description="体重（低优字段，例如：55kg）")
     location: Optional[str] = Field(None, description="工作地/所在地（城市/地区）")
@@ -44,6 +49,7 @@ class UserProfile(BaseModel):
             "sex": False,
             "last_name": False,
             "age": False,
+            "age_label": False,
             "height": False,
             "weight": False,
             "location": False,
@@ -99,6 +105,17 @@ class UserProfile(BaseModel):
     proxy_user: bool = Field(default=False, description="是否是代相亲（帮别人问）")
     spam_user: bool = Field(default=False, description="是否是骚扰/广告用户")
 
+    # 通用资料概览只统计业务关键字段；低优字段和派生展示字段不计入公共完成度。
+    SUMMARY_PROGRESS_FIELDS: ClassVar[tuple[str, ...]] = (
+        "sex",
+        "age",
+        "location",
+        "education",
+        "occupation",
+        "marital_status",
+        "contact",
+    )
+
     @staticmethod
     def normalize_sex(v):
         """规范化性别字段"""
@@ -128,14 +145,22 @@ class UserProfile(BaseModel):
         """规范化年龄"""
         if v is not None:
             if isinstance(v, str):
-                v = str(v).strip()
-                match = re.search(r'(\d+)', v)
-                if match:
-                    v = int(match.group(1))
+                value_str = str(v).strip()
+                # 优先识别“90后/95后”一类表达，避免被通用数字提取误解析成 90/95 岁。
+                suffix_match = re.search(r'(\d{2})后', value_str)
+                if suffix_match:
+                    year_suffix = int(suffix_match.group(1))
+                    current_year_suffix = datetime.now().year % 100
+                    birth_year = 2000 + year_suffix if year_suffix <= current_year_suffix else 1900 + year_suffix
+                    v = datetime.now().year - birth_year
                 else:
-                    return None
+                    age_match = re.search(r'(\d{1,3})\s*岁?', value_str)
+                    if not age_match:
+                        return None
+                    v = int(age_match.group(1))
             if 18 <= v <= 100:
                 return v
+            return None
         return v
 
     @staticmethod
@@ -217,6 +242,8 @@ class UserProfile(BaseModel):
                 validated = self.normalize_sex(value)
             elif field_name == 'age':
                 validated = self.normalize_age(value)
+            elif field_name == 'age_label':
+                validated = str(value).strip()
             elif field_name == 'height':
                 validated = self.normalize_height(value)
             elif field_name == 'weight':
@@ -312,9 +339,10 @@ class UserProfile(BaseModel):
         Returns:
             float: 收集进度 0.0 - 1.0
         """
-        completed = sum(1 for status in self.collection_progress.values() if status)
-        skipped = len(self.skipped_fields)
-        total = len(self.collection_progress)
+        tracked_fields = self.SUMMARY_PROGRESS_FIELDS
+        completed = sum(1 for field in tracked_fields if self.collection_progress.get(field, False))
+        skipped = sum(1 for field in tracked_fields if self.skipped_fields.get(field, False))
+        total = len(tracked_fields)
         return (completed + skipped) / total if total > 0 else 0.0
 
     def is_collection_complete(self) -> bool:
@@ -324,7 +352,7 @@ class UserProfile(BaseModel):
         Returns:
             bool: 是否已完成收集（进度 >= 90%）
         """
-        return self.get_progress() >= 0.9
+        return self.get_progress() >= 1.0
 
     def is_empty(self) -> bool:
         """
@@ -349,8 +377,8 @@ class UserProfile(BaseModel):
             list: 未收集的字段名列表
         """
         return [
-            field for field, collected in self.collection_progress.items()
-            if not collected and field not in self.skipped_fields
+            field for field in self.SUMMARY_PROGRESS_FIELDS
+            if not self.collection_progress.get(field, False) and field not in self.skipped_fields
         ]
 
     def get_next_field_to_collect(self) -> Optional[str]:
@@ -516,6 +544,7 @@ class UserProfile(BaseModel):
             "sex": self.sex,
             "last_name": self.last_name,
             "age": self.age,
+            "age_label": self.age_label,
             "height": self.height,
             "weight": self.weight,
             "location": self.location,
@@ -527,6 +556,7 @@ class UserProfile(BaseModel):
             "phone": self.phone,
             "wechat": self.wechat,
             "partner_requirement": self.partner_requirement,
+            "extraction_evidence": self.extraction_evidence,
             "collection_progress": self.collection_progress,
             "progress_percentage": round(self.get_progress() * 100, 2),
             "missing_fields": self.get_missing_fields(),
@@ -551,6 +581,27 @@ class UserProfile(BaseModel):
             "rejected_wechat": self.rejected_wechat,
             "rejected_phone": self.rejected_phone,
         }
+
+    def set_extraction_evidence(
+        self,
+        field_name: str,
+        value: Any,
+        source_text: str,
+        turn_id: Optional[int],
+        confidence: float,
+        source: str,
+    ) -> None:
+        """记录字段提取证据，便于回溯与评估融合质量。"""
+        safe_confidence = max(0.0, min(1.0, float(confidence)))
+        self.extraction_evidence[field_name] = {
+            "value": value,
+            "source_text": (source_text or "")[:200],
+            "turn_id": turn_id,
+            "confidence": round(safe_confidence, 3),
+            "source": source or "unknown",
+            "updated_at": datetime.now().isoformat(),
+        }
+        self.updated_at = datetime.now()
 
     def get_collection_summary(self) -> str:
         """

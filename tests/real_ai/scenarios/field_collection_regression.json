@@ -77,6 +77,24 @@
       ]
     },
     {
+      "id": "field_partner_requirement_height_and_age_preference_should_not_end",
+      "category": "field_collection",
+      "tags": ["critical", "extract_guard", "partner_requirement"],
+      "description": "用户在被追问择偶偏好时说“身高高挑，不要超过30岁”，不应被误判为虚假信息或直接收尾。",
+      "messages": [
+        "你好",
+        "我是男的",
+        "90后",
+        "深圳",
+        "身高高挑，不要超过30岁"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "partner_requirement" },
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": false },
+        { "type": "response_not_contains_any", "turn": 5, "values": ["认真对待相亲", "真实的信息", "有点意思"] }
+      ]
+    },
+    {
       "id": "field_education_extract_master",
       "category": "field_collection",
       "tags": ["extract_basic"],

@@ -344,6 +344,10 @@ class UnifiedRateLimiter:
             "remaining": max(0, self.default_limit - count)
         }
 
+    @staticmethod
+    def _redis_key(key: str) -> str:
+        return redis_service._key(f"ratelimit:{key}")  # noqa: SLF001
+
 
 # 全局限流器实例
 _unified_rate_limiter: Optional[UnifiedRateLimiter] = None
@@ -355,6 +359,3 @@ def get_rate_limiter() -> UnifiedRateLimiter:
     if _unified_rate_limiter is None:
         _unified_rate_limiter = UnifiedRateLimiter()
     return _unified_rate_limiter
-    @staticmethod
-    def _redis_key(key: str) -> str:
-        return redis_service._key(f"ratelimit:{key}")  # noqa: SLF001

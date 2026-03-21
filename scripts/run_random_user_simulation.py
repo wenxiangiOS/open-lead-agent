@@ -138,6 +138,24 @@ SELF_HARM_PATTERNS = [
 ]
 SELF_HARM_SAFE_MARKERS = ["先保证安全", "很重要", "立刻联系", "家人", "求助", "热线", "你并不孤单"]
 COLLECTION_ASK_MARKERS = ["电话", "微信", "学历", "年龄", "职业", "城市", "方便留个"]
+PREFERENCE_CUE_PATTERNS = [
+    r"想找",
+    r"喜欢",
+    r"偏好",
+    r"择偶",
+    r"要求",
+    r"高挑",
+    r"高一点",
+    r"同城优先",
+    r"不要超过\d{2}岁",
+    r"不超过\d{2}岁",
+    r"年龄.{0,4}\d{2}岁以下",
+]
+FAKE_INFO_REPLY_PATTERNS = [
+    r"认真对待相亲",
+    r"真实的信息",
+    r"信息有点意思",
+]
 
 
 @dataclass
@@ -226,11 +244,11 @@ class TimingProbe:
         original = getattr(obj, attr)
 
         async def wrapped(*args, **kwargs):
-            started = time.time()
+            started = time.perf_counter()
             try:
                 return await original(*args, **kwargs)
             finally:
-                self._add(phase, time.time() - started)
+                self._add(phase, time.perf_counter() - started)
 
         self._restore.append((obj, attr, original))
         setattr(obj, attr, wrapped)
@@ -267,6 +285,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--min-human-latency", type=float, default=0.9, help="非首轮最小拟人时延阈值（秒）")
     parser.add_argument("--faq-min-human-latency", type=float, default=1.2, help="FAQ轮次最小拟人时延阈值（秒）")
+    parser.add_argument("--ack-overuse-threshold", type=float, default=0.35, help="复述过度阈值（越低越严格）")
+    parser.add_argument("--core-streak-max", type=int, default=3, help="核心字段连续追问最大允许轮次")
     parser.add_argument("--verbose", action="store_true", help="打印逐轮详情")
     parser.add_argument(
         "--baseline-json",
@@ -294,24 +314,40 @@ def parse_args() -> argparse.Namespace:
 
 
 def _load_coverage_scenarios(args: argparse.Namespace) -> list[dict[str, Any]]:
-    merged = []
+    def _iter_scenario_files(path: Path) -> list[Path]:
+        if path.is_dir():
+            return sorted(path.glob("*.json"))
+        return [path]
+
+    def _load_non_mq_cases(path: Path) -> list[dict[str, Any]]:
+        cases: list[dict[str, Any]] = []
+        for file_path in _iter_scenario_files(path):
+            raw = json.loads(file_path.read_text(encoding="utf-8"))
+            for item in raw.get("scenarios", []):
+                if item.get("category") == "mq":
+                    continue
+                if "messages" not in item:
+                    raise KeyError(f"{file_path.name}:{item.get('id')}: missing messages")
+                cases.append(item)
+        return cases
+
+    merged: list[dict[str, Any]] = []
     if not args.scenario_file:
         for p in [PROJECT_ROOT / "tests/real_ai/scenarios", PROJECT_ROOT / "tests/real_ai/scenarios_pending"]:
             if p.exists():
-                merged.extend(ScenarioLoader(p).load())
+                merged.extend(_load_non_mq_cases(p))
     else:
         scenario_path = Path(args.scenario_file)
-        merged = ScenarioLoader(scenario_path).load()
+        merged = _load_non_mq_cases(scenario_path)
 
     scenarios = [
         {
-            "id": s.scenario_id,
-            "category": s.category,
-            "tags": s.tags,
-            "messages": s.messages,
+            "id": s["id"],
+            "category": s["category"],
+            "tags": s.get("tags", []),
+            "messages": s["messages"],
         }
         for s in merged
-        if s.category != "mq"
     ]
     if args.scenario_ids:
         allowed = set(args.scenario_ids)
@@ -450,8 +486,14 @@ def _check_turn(
             fails.append("abuse_not_deescalated")
         elif not any(marker in str(assistant or "") for marker in DEESCALATION_MARKERS):
             fails.append("abuse_not_deescalated")
-    if any(re.search(pattern, str(user or "")) for pattern in NONSENSE_HEAVY_PATTERNS):
-        if not any(marker in str(assistant or "") for marker in ["没太看懂", "再说一遍", "你可以", "方便", "先说说"]):
+    user_raw_text = str(user or "")
+    user_digits_only = re.sub(r"\D", "", user_raw_text)
+    looks_like_valid_phone = bool(
+        re.match(r"^1[3-9]\d{9}$", user_digits_only)
+        or re.match(r"^[5-9]\d{7}$", user_digits_only)
+    )
+    if any(re.search(pattern, user_raw_text) for pattern in NONSENSE_HEAVY_PATTERNS) and not looks_like_valid_phone:
+        if not any(marker in str(assistant or "") for marker in ["没太看懂", "没太明白", "再说一遍", "你可以", "方便", "先说说"]):
             fails.append("nonsense_not_guided")
     # 确认词不应脱离联系方式上下文就跳转到索要联系方式
     affirmative_words = {"嗯", "好", "好的", "行", "可以", "ok", "是的", "对", "是", "恩", "嗯嗯", "好的呢", "好呀"}
@@ -460,6 +502,39 @@ def _check_turn(
     now_asks_contact = any(k in (assistant or "") for k in ["电话", "手机号", "号码", "微信", "留个"])
     if current_is_affirmative and (not prev_is_contact_related) and now_asks_contact:
         fails.append("confirm_word_misrouted_to_contact")
+    user_text = str(user or "")
+    user_mentions_contact = any(k in user_text for k in ["电话", "手机号", "号码", "微信", "联系方式"])
+    # 用户即使没写“电话/微信”字样，只要本轮给了联系方式值，也不应判定为突兀转场。
+    digits_only = re.sub(r"\D", "", user_text)
+    looks_like_contact_value = bool(
+        re.match(r"^1[3-9]\d{9}$", digits_only)                # 大陆手机号
+        or re.match(r"^[5-9]\d{7}$", digits_only)             # 香港手机号
+        or re.match(r"^[A-Za-z][A-Za-z0-9_-]{5,19}$", user_text.strip())  # 微信号
+    )
+    user_mentions_contact = user_mentions_contact or looks_like_contact_value
+    assistant_text = str(assistant or "")
+    has_contact_transition = (
+        any(k in assistant_text for k in CONTACT_TRANSITION_MARKERS)
+        or _assistant_has_transition(assistant)
+        or ("资料" in assistant_text and "差不多" in assistant_text)
+    )
+    if (not prev_is_contact_related) and now_asks_contact and (not user_mentions_contact) and (not has_contact_transition):
+        fails.append("contact_transition_abrupt")
+    if any(re.search(pattern, str(user or "")) for pattern in CLARIFICATION_USER_PATTERNS):
+        if not any(marker in str(assistant or "") for marker in CLARIFICATION_ASSISTANT_MARKERS):
+            fails.append("clarification_not_answered")
+    if (
+        str(assistant or "").strip()
+        and str(assistant or "").strip() == str(previous_assistant or "").strip()
+        and any(marker in str(assistant or "") for marker in REPEAT_LOOP_SENTENCE_MARKERS)
+    ):
+        fails.append("same_fallback_repeat_loop")
+
+    if _looks_like_preference_statement(user):
+        if _looks_like_fake_info_reply(assistant):
+            fails.append("preference_misclassified_as_fake_info")
+        if any(marker in str(assistant or "") for marker in FAREWELL_MARKERS):
+            fails.append("preference_triggered_unexpected_ending")
 
     retry_markers = ["重新", "确认", "格式", "不太对", "再发", "核对", "检查一下"]
     asks_phone_prev = any(k in (previous_assistant or "") for k in ["电话", "手机号", "号码"])
@@ -481,7 +556,16 @@ def _check_turn(
     # 无效微信检测：上一轮在要微信，本轮用户给了看似微信串但格式不合法，助手应提示重试
     if asks_wechat_prev:
         raw = str(user or "").strip()
-        candidate = re.sub(r"^(微信|微信号|weixin)[:：\s]*", "", raw, flags=re.IGNORECASE).strip()
+        candidate = raw
+        inline_match = re.search(
+            r"(?:微信|微信号|weixin|wx|vx)[:：\s]*([A-Za-z][A-Za-z0-9_-]{5,19})",
+            raw,
+            flags=re.IGNORECASE,
+        )
+        if inline_match:
+            candidate = inline_match.group(1).strip()
+        else:
+            candidate = re.sub(r"^(微信|微信号|weixin|wx|vx)[:：\s]*", "", raw, flags=re.IGNORECASE).strip()
         looks_wechat_attempt = bool(re.search(r"[A-Za-z]", candidate))
         valid_wechat = bool(re.match(r"^[A-Za-z][A-Za-z0-9_-]{5,19}$", candidate))
         if looks_wechat_attempt and not valid_wechat and not any(m in assistant for m in retry_markers):
@@ -497,17 +581,30 @@ def _infer_expected_sex_from_turns(turns: list[str]) -> str | None:
     text = " ".join(str(t or "") for t in turns)
     # 仅接受“用户自报性别”证据，避免把“找男生/找女生”这类择偶偏好误判为用户性别。
     female_patterns = [
-        r"(?:我是|本人是?|我)\s*(?:女生|女的|女)\s*(?:呀|呢|哈|哦|啊|的)?(?:$|[，。,.!?？])",
+        r"(?:我是|本人是?|我)\s*(?:女生|女的|女)\s*(?:呀|呢|哈|哦|啊|的)?(?=$|[，。,.!?？\s]|在|做|想|要|希望|目前|现在)",
         r"\b我是\s*f\b",
     ]
     male_patterns = [
-        r"(?:我是|本人是?|我)\s*(?:男生|男的|男)\s*(?:呀|呢|哈|哦|啊|的)?(?:$|[，。,.!?？])",
+        r"(?:我是|本人是?|我)\s*(?:男生|男的|男)\s*(?:呀|呢|哈|哦|啊|的)?(?=$|[，。,.!?？\s]|在|做|想|要|希望|目前|现在)",
         r"\b我是\s*m\b",
+    ]
+    # 兼容简短自述回答（如“男的”“女”），确保不会误判为“未自述性别”。
+    short_female_patterns = [
+        r"^\s*(?:女生|女的|女)\s*(?:呀|呢|哈|哦|啊)?\s*$",
+    ]
+    short_male_patterns = [
+        r"^\s*(?:男生|男的|男)\s*(?:呀|呢|哈|哦|啊)?\s*$",
     ]
     if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in female_patterns):
         return "女"
     if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in male_patterns):
         return "男"
+    for turn in turns:
+        raw = str(turn or "")
+        if any(re.search(pattern, raw, flags=re.IGNORECASE) for pattern in short_female_patterns):
+            return "女"
+        if any(re.search(pattern, raw, flags=re.IGNORECASE) for pattern in short_male_patterns):
+            return "男"
     return None
 
 
@@ -570,7 +667,36 @@ def _extract_explicit_partner_requirement(text: str) -> str | None:
             candidate = match.group(1).strip()
             if candidate and all(token not in candidate for token in ["对象", "男生", "女生"]):
                 return candidate
+    fragments: list[str] = []
+    fragment_patterns = [
+        r"(高挑)",
+        r"(高一点)",
+        r"(同城优先)",
+        r"(不要超过\d{2}岁)",
+        r"(不超过\d{2}岁)",
+        r"(年龄[^，。,.；;]{0,8}\d{2}岁以下)",
+    ]
+    for pattern in fragment_patterns:
+        match = re.search(pattern, text)
+        if match:
+            fragments.append(match.group(1).strip())
+    if fragments:
+        return "，".join(dict.fromkeys(fragments))
     return None
+
+
+def _looks_like_preference_statement(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    return any(re.search(pattern, raw) for pattern in PREFERENCE_CUE_PATTERNS)
+
+
+def _looks_like_fake_info_reply(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    return any(re.search(pattern, raw) for pattern in FAKE_INFO_REPLY_PATTERNS)
 
 
 def _infer_expected_profile_from_turns(turns: list[TurnRecord]) -> dict[str, Any]:
@@ -646,7 +772,9 @@ def _check_profile_fields_with_expected_sex(
 
     # 基础字段：仅在用户明确给过该字段时检查非空，避免随机会话误报
     if expected_profile.get("sex"):
-        add("sex_matches_user_stated", profile.get("sex") == expected_profile["sex"], expected_profile["sex"], profile.get("sex"))
+        sex_match = profile.get("sex") == expected_profile["sex"]
+        add("sex_matches_user_stated", sex_match, expected_profile["sex"], profile.get("sex"))
+        add("sex_self_declare_missed", sex_match, expected_profile["sex"], profile.get("sex"))
     else:
         add(
             "sex_not_inferred_without_self_declare",
@@ -717,13 +845,35 @@ def _check_profile_fields_with_expected_sex(
 
     if expected_profile.get("age"):
         actual_age = str(profile.get("age") or "").strip()
+        actual_age_label = str(profile.get("age_label") or "").strip()
         expected_age = str(expected_profile["age"])
-        age_match = bool(actual_age) and (
+        age_match = (bool(actual_age) or bool(actual_age_label)) and (
             actual_age == expected_age
             or expected_age in actual_age
             or actual_age in expected_age
+            or actual_age_label == expected_age
+            or expected_age in actual_age_label
         )
-        add("age_matches_user_stated", age_match, expected_age, profile.get("age"))
+        actual_age_value = profile.get("age_label") or profile.get("age")
+        add("age_matches_user_stated", age_match, expected_age, actual_age_value)
+
+    # age_label 与 age_int 一致性
+    age_label = str(profile.get("age_label") or "").strip()
+    age_int = profile.get("age")
+    label_consistent = True
+    if age_label and age_int not in (None, "", "未留"):
+        bucket = re.search(r"(\d{2})后", age_label)
+        if bucket:
+            suffix = int(bucket.group(1))
+            current_year = datetime.now().year
+            current_suffix = current_year % 100
+            birth_year = 2000 + suffix if suffix <= current_suffix else 1900 + suffix
+            expected_age = current_year - birth_year
+            try:
+                label_consistent = int(age_int) == int(expected_age)
+            except Exception:
+                label_consistent = False
+    add("age_label_int_inconsistent", label_consistent, "label consistent with age", {"age": age_int, "age_label": age_label})
 
     # 联系方式一致性（放宽判定）
     contact = str(profile.get("contact") or "")
@@ -736,7 +886,9 @@ def _check_profile_fields_with_expected_sex(
 
     # 若用户在对话中明确给过偏好，最终应尽量有 partner_requirement
     user_text = " ".join(t.user for t in turns)
-    mentions_pref = any(k in user_text for k in ["喜欢", "想找", "偏好", "成熟", "稳重", "高一点"])
+    mentions_pref = _looks_like_preference_statement(user_text) or any(
+        k in user_text for k in ["成熟", "稳重", "高一点"]
+    )
     if mentions_pref:
         add(
             "partner_requirement_when_mentioned",
@@ -770,6 +922,24 @@ def _check_profile_fields_with_expected_sex(
             profile.get("wechat"),
         )
 
+    should_continue = bool(
+        expected_profile.get("sex")
+        or expected_profile.get("age")
+        or expected_profile.get("location")
+        or expected_profile.get("education")
+        or expected_profile.get("occupation")
+        or expected_profile.get("marital_status")
+        or expected_profile.get("partner_requirement")
+    )
+    if should_continue:
+        add(
+            "unexpected_conversation_end",
+            not bool(profile.get("conversation_ended")),
+            False,
+            bool(profile.get("conversation_ended")),
+            "profile contains serviceable info and should normally continue collection",
+        )
+
     return checks, failures
 
 
@@ -778,7 +948,7 @@ FIELD_PATTERNS: dict[str, list[str]] = {
     "age": [r"(多大|年龄段|几岁|你今年.*岁|你多大)"],
     "education": [r"(什么学历|学历是|你是.*学历|本科|硕士|博士|大专)"],
     "occupation": [r"(做什么工作|做哪方面工作|什么行业|职业是)"],
-    "location": [r"(在哪个城市|主要在哪|哪边生活|哪里工作|同城)"],
+    "location": [r"(在哪个城市|主要在哪|哪边生活|哪里工作)"],
     "marital_status": [r"(单身状态|婚况|婚姻状态|离异.*办妥|是否单身)"],
     "monthly_income": [r"(月薪|收入|薪资|工资)"],
     "partner_requirement": [r"(想找什么类型|择偶要求|偏好|期待另一半|喜欢什么类型)"],
@@ -822,6 +992,12 @@ TRANSITION_MARKERS = ["对了", "顺便", "另外", "那我", "先回答你", "�
 REFUSAL_PATTERNS = [r"不方便", r"不想说", r"先不说", r"不留", r"不太想", r"算了", r"再说吧"]
 RESPECTFUL_MARKERS = ["没关系", "理解", "不勉强", "可以先", "那我们先", "你放心", "不急"]
 FAREWELL_MARKERS = ["先这样", "随时找我", "有需要再来", "祝你", "拜拜", "下次聊", "好消息"]
+ACK_STYLE_MARKERS = ["记下", "收到", "明白", "了解", "我先记下", "我记下了", "我记住了"]
+CONTACT_ASK_MARKERS = ["电话", "手机号", "号码", "微信", "联系方式", "留个"]
+CONTACT_TRANSITION_MARKERS = ["顺便", "资料差不多", "后续方便联系", "继续推进", "对接"]
+CLARIFICATION_USER_PATTERNS = [r"没看懂", r"看不懂", r"听不懂", r"啥意思", r"什么意思", r"解释下", r"解释一下"]
+CLARIFICATION_ASSISTANT_MARKERS = ["换个直白", "简单说", "意思是", "比如", "关键条件", "标准", "我换个说法"]
+REPEAT_LOOP_SENTENCE_MARKERS = ["我们先不连着问资料", "你也可以先说说你更在意的匹配点"]
 
 
 def _classify_user_faq_intent(user: str) -> str | None:
@@ -850,8 +1026,22 @@ def _assistant_has_transition(assistant: str) -> bool:
     return any(marker in text for marker in TRANSITION_MARKERS)
 
 
+def _assistant_has_ack_style(assistant: str) -> bool:
+    text = str(assistant or "")
+    return bool(
+        re.search(
+            r"^\s*(?:好的?|好呀|好哒|收到(?:啦)?|了解(?:啦)?|明白(?:啦)?)[，,、~～ ]*(?:我)?(?:先)?(?:记下|记住|收到|了解|明白)",
+            text,
+        )
+    )
+
+
 def _extract_user_self_sex(text: str) -> str | None:
     message = str(text or "")
+    if re.search(r"^\s*(女生|女的|女)\s*(呀|呢|哈|哦|啊)?\s*$", message):
+        return "女"
+    if re.search(r"^\s*(男生|男的|男)\s*(呀|呢|哈|哦|啊)?\s*$", message):
+        return "男"
     if re.search(r"(?:我是|本人是?|我)\s*(?:女生|女的|女)\s*(?:呀|呢|哈|哦|啊|的)?(?:$|[，。,.!?？])", message):
         return "女"
     if re.search(r"(?:我是|本人是?|我)\s*(?:男生|男的|男)\s*(?:呀|呢|哈|哦|啊|的)?(?:$|[，。,.!?？])", message):
@@ -941,7 +1131,12 @@ def _assistant_style_fingerprint(assistant: str) -> tuple[str, str, str]:
     return call_name, tone, emoji
 
 
-def _check_policy_rules(turns: list[TurnRecord]) -> tuple[list[dict[str, Any]], list[str]]:
+def _check_policy_rules(
+    turns: list[TurnRecord],
+    *,
+    ack_overuse_threshold: float = 0.35,
+    core_streak_max: int = 3,
+) -> tuple[list[dict[str, Any]], list[str]]:
     checks: list[dict[str, Any]] = []
     failures: list[str] = []
 
@@ -981,6 +1176,26 @@ def _check_policy_rules(turns: list[TurnRecord]) -> tuple[list[dict[str, Any]], 
             repeated += len(overlap)
     add("no_consecutive_same_field_ask", repeated == 0, 0, repeated)
 
+    # 字段穿插质量：核心字段连续追问不超过3轮
+    core_fields = {"sex", "age", "education", "occupation", "location", "marital_status"}
+    core_streak = 0
+    max_core_streak = 0
+    for asked in ask_seq:
+        asks_core = bool(set(asked) & core_fields)
+        asks_medium = bool(set(asked) & {"monthly_income", "partner_requirement"})
+        if asks_core and not asks_medium:
+            core_streak += 1
+            max_core_streak = max(max_core_streak, core_streak)
+        else:
+            core_streak = 0
+    core_limit = max(1, int(core_streak_max))
+    add(
+        "field_interleaving_quality",
+        max_core_streak <= core_limit,
+        f"<={core_limit} core asks streak",
+        max_core_streak,
+    )
+
     # 月薪问法要带降压表达
     income_soft_fail = 0
     soft_markers = ["不方便", "没关系", "可以不说", "方便说", "看你方便"]
@@ -989,6 +1204,12 @@ def _check_policy_rules(turns: list[TurnRecord]) -> tuple[list[dict[str, Any]], 
         if "monthly_income" in asked and not any(m in (t.assistant or "") for m in soft_markers):
             income_soft_fail += 1
     add("income_question_soft_tone", income_soft_fail == 0, 0, income_soft_fail)
+
+    # 复述过度：承接复述应低频，避免每轮“收到/记下”模板化
+    ack_turns = sum(1 for t in turns if _assistant_has_ack_style(t.assistant))
+    ack_rate = (ack_turns / len(turns)) if turns else 0.0
+    ack_limit = max(0.0, float(ack_overuse_threshold))
+    add("ack_overuse", ack_rate <= ack_limit, f"<={ack_limit}", round(ack_rate, 4))
 
     return checks, failures
 
@@ -1007,21 +1228,27 @@ async def _run_one(
     verbose: bool,
     min_human_latency: float,
     faq_min_human_latency: float,
+    ack_overuse_threshold: float,
+    core_streak_max: int,
 ) -> SessionResult:
     session_id = f"realism_{idx}_{uuid.uuid4().hex[:8]}"
     dialog_base = f"realism_dialog_{uuid.uuid4().hex[:8]}"
     records: list[TurnRecord] = []
     await chat_service.reset_user_conversation(session_id)
-    started = time.time()
+    started = time.perf_counter()
     last_ai = ""
     expected_sex = _infer_expected_sex_from_turns(turns)
     observed_user_messages: list[str] = []
     allow_empty_response = category == "ending" and ("spam_user" in tags or "ending_gate" in tags)
 
     for i, seed_msg in enumerate(turns, start=1):
-        msg = _inject_random_behavior(rng, persona) if i > 1 else None
-        if not msg:
-            if seed_msg == "__AUTO__":
+        # 显式场景消息必须原样回放，不允许被随机扰动覆盖；
+        # 随机扰动仅用于 __AUTO__ 轮次，避免“金标脚本失真”。
+        if seed_msg != "__AUTO__":
+            msg = seed_msg
+        else:
+            msg = _inject_random_behavior(rng, persona) if i > 1 else None
+            if not msg:
                 msg = rng.choice(
                     [
                         "你好",
@@ -1035,8 +1262,6 @@ async def _run_one(
                         "微信可以吗",
                     ]
                 )
-            else:
-                msg = seed_msg
         observed_user_messages.append(msg)
         explicit_sex_now = _infer_expected_sex_from_turns(observed_user_messages)
         req = ChatRequest(
@@ -1046,9 +1271,9 @@ async def _run_one(
             sex=explicit_sex_now,
         )
         probe.begin_turn()
-        t0 = time.time()
+        t0 = time.perf_counter()
         resp = await chat_service.process_chat_request(req)
-        total_s = time.time() - t0
+        total_s = time.perf_counter() - t0
         perf = probe.end_turn(total_s)
 
         ai_text = str(resp.get("response", ""))
@@ -1090,7 +1315,11 @@ async def _run_one(
         records,
         expected_sex=expected_sex,
     )
-    policy_checks, policy_failures = _check_policy_rules(records)
+    policy_checks, policy_failures = _check_policy_rules(
+        records,
+        ack_overuse_threshold=ack_overuse_threshold,
+        core_streak_max=core_streak_max,
+    )
 
     return SessionResult(
         session_id=session_id,
@@ -1104,7 +1333,7 @@ async def _run_one(
         field_failures=field_failures,
         policy_checks=policy_checks,
         policy_failures=policy_failures,
-        duration_s=time.time() - started,
+        duration_s=time.perf_counter() - started,
     )
 
 
@@ -1112,9 +1341,9 @@ def _build_workload(args: argparse.Namespace, rng: random.Random) -> list[dict[s
     if args.cover_scenarios:
         workload = []
         for sc in _load_coverage_scenarios(args):
-            dense = []
-            for m in sc["messages"]:
-                dense.extend(_split_dense_message(m))
+            # 覆盖模式必须逐条回放场景原文，不能把显式消息再拆成多轮，
+            # 否则会破坏真实缺陷链路，例如“身高高挑，不要超过30岁”。
+            dense = [str(m).strip() for m in sc["messages"] if str(m).strip()]
             if not dense:
                 dense = ["__AUTO__"] * rng.randint(args.min_turns, args.max_turns)
             workload.append(
@@ -1351,6 +1580,9 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
             }
         )
     intent_diversity.sort(key=lambda x: x["total"], reverse=True)
+    ack_turns = sum(1 for turn in turns if _assistant_has_ack_style(turn.assistant))
+    ack_overuse_rate = (ack_turns / len(turns)) if turns else 0.0
+    contact_transition_abrupt_cases = turn_failure_counter.get("contact_transition_abrupt", 0)
 
     # 字段冲突修复率 + 证据链覆盖
     conflict_total = 0
@@ -1633,6 +1865,9 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
             "faq_transition_cases": faq_transition_cases,
             "faq_transition_hits": faq_transition_hits,
             "faq_transition_rate": round((faq_transition_hits / faq_transition_cases), 4) if faq_transition_cases else 1.0,
+            "ack_turns": ack_turns,
+            "ack_overuse_rate": round(ack_overuse_rate, 4),
+            "contact_transition_abrupt_cases": contact_transition_abrupt_cases,
             "intent_diversity": intent_diversity[:10],
         },
         "quality_guardrails": {
@@ -1815,6 +2050,8 @@ def _write_reports(
     token_usage: dict[str, int],
     *,
     wall_clock_s: float,
+    ack_overuse_threshold: float,
+    core_streak_max: int,
 ) -> tuple[Path, Path]:
     report_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1865,6 +2102,7 @@ def _write_reports(
         f"- 时延 p99: {analysis['latency']['p99']}s",
         f"- 模板化 Top1 占比: {analysis['template_risk']['top1_ratio']:.1%}",
         f"- Token: {token_usage.get('total_tokens', 0)} (调用 {token_usage.get('call_count', 0)} 次)",
+        f"- 阈值配置: ack_overuse<={ack_overuse_threshold}, core_streak<={core_streak_max}",
         "",
         "## 核心结论",
         "",
@@ -1908,6 +2146,8 @@ def _write_reports(
     lines.append(f"- 情绪承接命中率: {cn.get('emotion_ack_rate', 1.0):.1%} ({cn.get('emotion_ack_hits', 0)}/{cn.get('emotion_ack_cases', 0)})")
     lines.append(f"- FAQ 非复读率: {cn.get('faq_non_repeat_rate', 1.0):.1%} ({cn.get('faq_non_repeat_hits', 0)}/{cn.get('faq_non_repeat_cases', 0)})")
     lines.append(f"- FAQ 回主线转场自然率: {cn.get('faq_transition_rate', 1.0):.1%} ({cn.get('faq_transition_hits', 0)}/{cn.get('faq_transition_cases', 0)})")
+    lines.append(f"- 复述过度率: {cn.get('ack_overuse_rate', 0.0):.1%} ({cn.get('ack_turns', 0)}/{total_turns})")
+    lines.append(f"- 联系方式突兀转场次数: {cn.get('contact_transition_abrupt_cases', 0)}")
     for item in (cn.get("intent_diversity") or [])[:8]:
         lines.append(
             f"- 意图 {item['intent']}: 模板多样性={item['template_diversity']:.1%}, Top1={item['top1_ratio']:.1%}, 样本={item['total']}"
@@ -2063,7 +2303,7 @@ async def main() -> int:
     chat_service = ChatService(ai_service, user_service)
     probe = TimingProbe(chat_service)
     await AIService.reset_token_usage()
-    run_started = time.time()
+    run_started = time.perf_counter()
 
     results: list[SessionResult] = []
     for i, item in enumerate(workload, start=1):
@@ -2082,12 +2322,14 @@ async def main() -> int:
             verbose=args.verbose,
             min_human_latency=args.min_human_latency,
             faq_min_human_latency=args.faq_min_human_latency,
+            ack_overuse_threshold=args.ack_overuse_threshold,
+            core_streak_max=args.core_streak_max,
         )
         print(f"[{i}/{len(workload)}] DONE turns={len(result.turns)} duration={result.duration_s:.2f}s")
         results.append(result)
 
     probe.close()
-    wall_clock_s = time.time() - run_started
+    wall_clock_s = time.perf_counter() - run_started
     token_usage = await AIService.get_token_usage()
     analysis = _analyze(results, args.template_risk_threshold)
     if args.baseline_json:
@@ -2098,6 +2340,8 @@ async def main() -> int:
         analysis,
         token_usage,
         wall_clock_s=wall_clock_s,
+        ack_overuse_threshold=args.ack_overuse_threshold,
+        core_streak_max=args.core_streak_max,
     )
     total_turns = sum(len(r.turns) for r in results)
     avg_session_s = (wall_clock_s / len(results)) if results else 0.0
@@ -2120,6 +2364,11 @@ async def main() -> int:
         f"情绪承接={cn.get('emotion_ack_rate', 1.0):.1%}, "
         f"FAQ非复读={cn.get('faq_non_repeat_rate', 1.0):.1%}, "
         f"FAQ转场自然={cn.get('faq_transition_rate', 1.0):.1%}"
+    )
+    print(
+        "策略阈值: "
+        f"ack_overuse<={args.ack_overuse_threshold}, "
+        f"core_streak<={args.core_streak_max}"
     )
     qg = analysis.get("quality_guardrails", {})
     print(
@@ -2193,14 +2442,24 @@ async def main() -> int:
             "high_risk_advice_overreach",
             "safety_signal_not_deescalated",
             "confirm_word_misrouted_to_contact",
+            "contact_transition_abrupt",
+            "clarification_not_answered",
+            "same_fallback_repeat_loop",
+            "fallback_context_break",
             "invalid_phone_not_retried",
             "invalid_wechat_not_retried",
             "reply_too_fast_nonhuman",
             "faq_reply_too_fast",
         }
-        strict_field_failures = {"sex_not_inferred_without_self_declare"}
+        strict_field_failures = {
+            "sex_not_inferred_without_self_declare",
+            "sex_self_declare_missed",
+            "age_label_int_inconsistent",
+        }
+        strict_policy_failures = {"ack_overuse", "field_interleaving_quality", "no_consecutive_same_field_ask"}
         strict_turn_failures = {x for x in strict_turn_failures if x not in strict_ignore}
         strict_field_failures = {x for x in strict_field_failures if x not in strict_ignore}
+        strict_policy_failures = {x for x in strict_policy_failures if x not in strict_ignore}
 
         strict_hit_counter: dict[str, int] = {}
         for session in results:
@@ -2208,10 +2467,22 @@ async def main() -> int:
                 for failure in turn.failures:
                     if failure in strict_turn_failures:
                         strict_hit_counter[failure] = strict_hit_counter.get(failure, 0) + 1
+                    if failure == "same_fallback_repeat_loop":
+                        strict_hit_counter["fallback_context_break"] = strict_hit_counter.get("fallback_context_break", 0) + 1
             for check in session.field_checks:
                 name = str(check.get("name") or "")
                 if name in strict_field_failures and not check.get("passed"):
                     strict_hit_counter[name] = strict_hit_counter.get(name, 0) + 1
+            for check in session.policy_checks:
+                name = str(check.get("name") or "")
+                if name in strict_policy_failures and not check.get("passed"):
+                    strict_hit_counter[name] = strict_hit_counter.get(name, 0) + 1
+
+        qg = analysis.get("quality_guardrails", {})
+        if qg.get("memory_reuse_cases", 0) > 0 and qg.get("memory_reuse_accuracy", 1.0) < 1.0:
+            strict_hit_counter["memory_reuse_incorrect"] = int(
+                qg.get("memory_reuse_cases", 0) - qg.get("memory_reuse_correct", 0)
+            )
 
         if strict_hit_counter:
             print("STRICT_HUMANLIKE 失败：命中关键风险项")

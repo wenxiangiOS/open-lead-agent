@@ -1,5 +1,19 @@
 # Docs 导航（唯一入口）
 
+发布前一键顺序执行命令（最前入口，直接复制）：
+
+```bash
+python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose && python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000 && python3 scripts/run_mq_load_test.py --base-url http://127.0.0.1:8000 --accounts 20 --messages-per-account 10 --concurrency 20 --include-dashboard --gate
+```
+
+质量上限门禁（拟人化/对话质量/提取准确度优先）：
+
+```bash
+bash scripts/run_quality_upper_bound_gate.sh
+```
+
+说明：这是单行链式命令，会按顺序依次执行；前一步失败，后一步不会继续执行。
+
 本目录文档较多。后续你本人或其他模型协作时，先看本文件，再按顺序阅读。
 
 ## 🚨 发布先看（第一入口）
@@ -10,6 +24,8 @@
 2. `docs/00_ALIYUN_RELEASE_RECORD_TEMPLATE.md`（发布执行记录模板）
 
 说明：这是发布前唯一执行版清单，按顺序走，不跳步。
+
+发布前一键回归命令同上，建议优先使用顶部这条单行版本。
 
 ## 0. 当前权威文档
 

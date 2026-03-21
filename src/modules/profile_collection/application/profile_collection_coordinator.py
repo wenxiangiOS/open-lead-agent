@@ -21,12 +21,16 @@ class ProfileCollectionCoordinator:
         user_profile: "UserProfile",
         extracted_data: dict,
         user_message: str,
+        extraction_meta: dict | None = None,
+        turn_id: int | None = None,
     ) -> ProfileCollectionResult:
         collection_result = await self.chat_service._process_collection_result(  # noqa: SLF001
             account_id,
             user_profile,
             extracted_data,
             user_message,
+            extraction_meta=extraction_meta,
+            turn_id=turn_id,
         )
         refreshed_profile = await self.chat_service.user_service.get_user_profile(account_id)
         policy_decision = self.chat_service.collection_policy.decide(refreshed_profile)

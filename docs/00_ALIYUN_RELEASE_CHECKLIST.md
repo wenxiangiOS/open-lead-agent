@@ -41,16 +41,33 @@ curl http://127.0.0.1:8000/api/doubao/mq/dashboard
 
 ## 3. 回归测试（发布前必须全通过）
 
-### 3.1 真人仿真回归（chat 主门禁）
+发布前建议先直接执行这一条总命令，全部通过后再逐项核对下面 3.1/3.2/3.3/3.4：
+
+```bash
+bash scripts/run_quality_upper_bound_gate.sh && \
+python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000 && \
+python3 scripts/run_mq_load_test.py --base-url http://127.0.0.1:8000 --accounts 20 --messages-per-account 10 --concurrency 20 --include-dashboard --gate
+```
+
+### 3.1 质量上限门禁（chat 必跑阻断）
+
+```bash
+bash scripts/run_quality_upper_bound_gate.sh
+```
+
+- [ ] 金标长链回放通过（`tests/real_ai/scenarios_golden/golden_long_chain_quality.json`）
+- [ ] 全覆盖 strict 风险项无阻断
+- [ ] 输出包含 `[quality-gate] PASS`
+
+### 3.2 真人仿真回归（抽检，可选但建议）
 
 ```bash
 python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose
 ```
 
-- [ ] strict 风险项无阻断
-- [ ] 报告无明显拟人化退化/字段退化
+- [ ] 抽检报告无明显拟人化退化/字段退化
 
-### 3.2 MQ ingest 场景回归（20 场景）
+### 3.3 MQ ingest 场景回归（20 场景）
 
 ```bash
 python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000
@@ -58,7 +75,7 @@ python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000
 
 - [ ] `20/20 PASS`（`0 FAIL`，`0 SKIP`）
 
-### 3.3 MQ 小并发门禁（阻断发布）
+### 3.4 MQ 小并发门禁（阻断发布）
 
 ```bash
 python3 scripts/run_mq_load_test.py \

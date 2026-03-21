@@ -1,7 +1,7 @@
 """Request models for the API"""
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 import re
 
@@ -97,6 +97,10 @@ class ChatResponse(BaseModel):
     error: Optional[str] = Field(None, description="错误信息")
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="置信度")
     debug_info: Optional[str] = Field(None, description="调试信息（仅测试页面使用）")
+    collected_info: Optional[dict[str, Any]] = Field(None, description="本轮整理出的已收集信息")
+    collected: Optional[bool] = Field(None, description="本轮是否收集到新字段")
+    field: Optional[str] = Field(None, description="本轮收集到的字段名")
+    value: Optional[Any] = Field(None, description="本轮收集到的字段值")
 
 
 class UserProfileRequest(BaseModel):

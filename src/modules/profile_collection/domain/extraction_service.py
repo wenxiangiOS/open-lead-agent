@@ -79,6 +79,7 @@ class ExtractionService:
         "sex": "sex",
         "location": "location",
         "age": "age",
+        "年龄段": "age_label",
         "height": "height",
         "weight": "weight",
         "education": "education",
@@ -292,10 +293,10 @@ class ExtractionService:
         match = re.search(r'(\d{2})后', value_str)
         if match:
             year_suffix = int(match.group(1))
-            # 假设是 19XX 年代
-            birth_year = 1900 + year_suffix
             from datetime import datetime
             current_year = datetime.now().year
+            current_year_suffix = current_year % 100
+            birth_year = 2000 + year_suffix if year_suffix <= current_year_suffix else 1900 + year_suffix
             return current_year - birth_year
 
         # 3. 尝试匹配 4 位数字（可能是出生年份）
@@ -313,6 +314,22 @@ class ExtractionService:
             # 年龄应该在合理范围内（18-100）
             if 18 <= age <= 100:
                 return age
+
+        return None
+
+    @staticmethod
+    def _extract_age_label(value: Any) -> Optional[str]:
+        """保留用户原始年龄表达，便于展示和回归校验。"""
+        if value is None:
+            return None
+
+        value_str = str(value).strip()
+        if not value_str:
+            return None
+
+        match = re.search(r'(\d{2})后', value_str)
+        if match:
+            return f"{match.group(1)}后"
 
         return None
 
@@ -344,6 +361,8 @@ class ExtractionService:
         user_profile: UserProfile,
         extracted_data: Dict[str, Any],
         user_message: str = "",
+        extraction_meta: Optional[Dict[str, Dict[str, Any]]] = None,
+        turn_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         处理从 AI 回复中提取的数据
@@ -357,7 +376,9 @@ class ExtractionService:
             Dict[str, Any]: 收集结果
         """
         collected_fields = []
+        collected_field_names: List[str] = []
         invalid_contact_attempt = None
+        extraction_meta = extraction_meta or {}
 
         if not extracted_data:
             return {
@@ -441,11 +462,32 @@ class ExtractionService:
                 # 年龄限制检查：用户必须年满24岁
                 if mapped_field == "age":
                     parsed_age = self._parse_age(value)
+                    age_label = self._extract_age_label(value) or self._extract_age_label(user_message)
                     if parsed_age is not None and parsed_age < 24:
                         logger.info(f"[年龄限制] 用户年龄 {parsed_age} 岁低于24岁，不符合服务条件")
                         # 设置年龄限制标志
                         user_profile.age_under_limit = True
                         user_profile.age = parsed_age
+                        if age_label:
+                            user_profile.age_label = age_label
+                        await self.user_service.save_user_profile(account_id, user_profile)
+                        user_profile.set_extraction_evidence(
+                            "age",
+                            parsed_age,
+                            source_text=(extraction_meta.get("age", {}) or {}).get("source_text", user_message),
+                            turn_id=turn_id,
+                            confidence=float((extraction_meta.get("age", {}) or {}).get("confidence", 1.0)),
+                            source=(extraction_meta.get("age", {}) or {}).get("source", "rule"),
+                        )
+                        if age_label:
+                            user_profile.set_extraction_evidence(
+                                "age_label",
+                                age_label,
+                                source_text=(extraction_meta.get("age_label", {}) or {}).get("source_text", user_message),
+                                turn_id=turn_id,
+                                confidence=float((extraction_meta.get("age_label", {}) or {}).get("confidence", 1.0)),
+                                source=(extraction_meta.get("age_label", {}) or {}).get("source", "rule"),
+                            )
                         await self.user_service.save_user_profile(account_id, user_profile)
                         # 返回特殊结果，通知调用方
                         return {
@@ -521,6 +563,9 @@ class ExtractionService:
                     explicit_self_sex = re.search(
                         r"(我是|本人|我)\s*(男生|女生|男的|女的|男|女)",
                         user_message or "",
+                    ) or re.search(
+                        r"^\s*(男生|女生|男的|女的|男|女)\s*(呀|呢|哈|哦|啊)?\s*$",
+                        user_message or "",
                     )
                     if not explicit_self_sex:
                         logger.info("[提取保护] sex 仅允许用户自述写入，本轮跳过 sex 更新")
@@ -591,9 +636,40 @@ class ExtractionService:
                     )
                     if success:
                         collected_fields.append({"field": mapped_field, "value": value})
+                        collected_field_names.append(mapped_field)
+                        if mapped_field == "age":
+                            age_label = self._extract_age_label(value) or self._extract_age_label(user_message)
+                            if age_label:
+                                label_updated = await self.user_service.update_user_profile_field(
+                                    account_id,
+                                    "age_label",
+                                    age_label,
+                                )
+                                if label_updated:
+                                    collected_fields.append({"field": "age_label", "value": age_label})
+                                    collected_field_names.append("age_label")
+                            elif user_profile.age_label:
+                                user_profile.age_label = None
+                                user_profile.collection_progress["age_label"] = False
+                                await self.user_service.save_user_profile(account_id, user_profile)
 
         # 更新 profile
         user_profile = await self.user_service.get_user_profile(account_id)
+        if collected_field_names:
+            for field_info in collected_fields:
+                field_name = field_info.get("field")
+                if not field_name:
+                    continue
+                field_meta = extraction_meta.get(field_name, {})
+                user_profile.set_extraction_evidence(
+                    field_name=field_name,
+                    value=field_info.get("value"),
+                    source_text=str(field_meta.get("source_text") or user_message or field_info.get("value") or ""),
+                    turn_id=turn_id,
+                    confidence=float(field_meta.get("confidence", 0.75)),
+                    source=str(field_meta.get("source") or "ai"),
+                )
+            await self.user_service.save_user_profile(account_id, user_profile)
 
         if collected_fields:
             result = {
@@ -656,7 +732,10 @@ class ExtractionService:
             # 计算出生年份，让AI理解年龄和出生年份是同一信息
             from datetime import datetime
             birth_year = datetime.now().year - user_profile.age
-            parts.append(f"{user_profile.age}岁({birth_year}年)")
+            if user_profile.age_label:
+                parts.append(f"{user_profile.age_label}({user_profile.age}岁/{birth_year}年)")
+            else:
+                parts.append(f"{user_profile.age}岁({birth_year}年)")
         if user_profile.education:
             parts.append(str(user_profile.education))
         if user_profile.occupation:
