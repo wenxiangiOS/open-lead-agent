@@ -1,0 +1,78 @@
+{
+  "scenarios": [
+    {
+      "id": "matchmaker_boundary_not_convenient_field",
+      "category": "matchmaker_boundary",
+      "tags": ["critical", "humanlike", "boundary"],
+      "description": "用户说不方便时，应先接边界，不继续追字段。",
+      "messages": ["这个不太方便说"],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["不方便", "先不追问", "没关系", "不太想展开"] },
+        { "type": "final_response_not_contains_any", "values": ["你多大", "你在哪个城市", "你做什么工作"] }
+      ]
+    },
+    {
+      "id": "matchmaker_boundary_questioned_too_much",
+      "category": "matchmaker_boundary",
+      "tags": ["critical", "humanlike", "boundary", "complaint"],
+      "description": "用户说问得太细时，应先降压，不要继续盘问。",
+      "messages": ["你问得太细了"],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["问细", "慢慢来", "先不追", "没关系"] },
+        { "type": "final_response_not_contains_any", "values": ["那你今年多大", "那你学历呢"] }
+      ]
+    },
+    {
+      "id": "matchmaker_boundary_chahukou_joke",
+      "category": "matchmaker_boundary",
+      "tags": ["humanlike", "boundary", "complaint"],
+      "description": "用户吐槽查户口，应轻接吐槽再缓和。",
+      "messages": ["你查户口呢"],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["查户口", "问细", "慢慢来", "先不追"] }
+      ]
+    },
+    {
+      "id": "matchmaker_boundary_repeated_question_complaint",
+      "category": "matchmaker_boundary",
+      "tags": ["humanlike", "boundary", "complaint"],
+      "description": "用户抱怨怎么又问这个，应先降压，不继续同点顶问。",
+      "messages": ["怎么又问这个"],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["不追那么紧", "换个说法", "先不问这个"] }
+      ]
+    },
+    {
+      "id": "matchmaker_boundary_topic_shift_before_data",
+      "category": "matchmaker_boundary",
+      "tags": ["critical", "humanlike", "topic_shift"],
+      "description": "用户明确先不聊资料，应先顺着用户指定方向。",
+      "messages": ["先不聊资料"],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["先顺着", "先聊", "你更想聊"] },
+        { "type": "final_response_not_contains_any", "values": ["你今年多大", "你在哪个城市", "留个电话"] }
+      ]
+    },
+    {
+      "id": "matchmaker_boundary_end_softly",
+      "category": "matchmaker_boundary",
+      "tags": ["humanlike", "ending_edge"],
+      "description": "用户说先这样吧，应先顺着收口，不再强追资料。",
+      "messages": ["先这样吧"],
+      "assertions": [
+        { "type": "final_response_not_contains_any", "values": ["你多大", "你学历", "留个电话", "那你告诉我"] }
+      ]
+    },
+    {
+      "id": "matchmaker_boundary_after_think_about_it",
+      "category": "matchmaker_boundary",
+      "tags": ["humanlike", "ending_edge"],
+      "description": "用户说我再想想，应先接住犹豫，不强拉回主线。",
+      "messages": ["我再想想"],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["没关系", "再想想", "有需要", "慢慢来"] },
+        { "type": "final_response_not_contains_any", "values": ["先说下年龄", "先留微信"] }
+      ]
+    }
+  ]
+}

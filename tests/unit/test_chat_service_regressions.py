@@ -45,11 +45,19 @@ def test_extract_deterministic_profile_fields_handles_short_profile_answers():
     assert extracted["age_label"] == "90后"
     assert extracted["age"] >= 30
 
+    extracted = chat_service._extract_deterministic_profile_fields("我深圳的")
+    assert extracted["location"] == "深圳"
+
+    extracted = chat_service._extract_deterministic_profile_fields("it")
+    assert extracted["occupation"] == "IT"
+
 
 def test_rule_profile_fast_path_stays_narrow_for_safe_short_answers():
     chat_service = _build_chat_service()
 
     assert chat_service._should_use_rule_profile_fast_path("深圳", {"location": "深圳"}, "model") is True
+    assert chat_service._should_use_rule_profile_fast_path("我深圳的", {"location": "深圳"}, "model") is True
+    assert chat_service._should_use_rule_profile_fast_path("it", {"occupation": "IT"}, "model") is True
     assert chat_service._should_use_rule_profile_fast_path("为什么要电话", {"location": "深圳"}, "model") is False
     assert chat_service._should_use_rule_profile_fast_path("留微信可以吗", {"location": "深圳"}, "quick_faq") is False
 
@@ -65,6 +73,62 @@ def test_build_rule_profile_fast_response_asks_next_main_field_naturally():
     response = chat_service._build_rule_profile_fast_response(profile, user_message="90后")
 
     assert "哪个城市" in response or "工作生活" in response
+
+
+def test_build_rule_profile_fast_response_acknowledges_preference_before_next_question():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_fast_pref")
+
+    response = chat_service._build_rule_profile_fast_response(profile, user_message="我喜欢深圳的女生")
+
+    assert "深圳" in response
+    assert "女生" in response
+    assert "男生还是女生" in response
+
+
+def test_build_rule_profile_fast_response_confirms_short_answer_before_advancing():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_fast_short")
+    profile.sex = "男"
+    profile.collection_progress["sex"] = True
+
+    response = chat_service._build_rule_profile_fast_response(profile, user_message="90后")
+
+    assert "90后" in response
+    assert "多大" in response or "年龄" in response
+
+
+def test_build_rule_profile_fast_response_makes_preference_ack_more_natural():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_fast_pref_natural")
+
+    response = chat_service._build_rule_profile_fast_response(profile, user_message="我喜欢深圳的女生")
+
+    assert "深圳女生" in response
+    assert "喜欢深圳的女生" not in response
+
+
+def test_build_rule_profile_fast_response_trims_occupation_suffix_for_ack():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_fast_occ")
+
+    response = chat_service._build_rule_profile_fast_response(profile, user_message="做产品的")
+
+    assert "产品的" not in response
+    assert "产品" in response
+
+
+def test_build_rule_profile_fast_response_builds_single_natural_contact_transition():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_fast_contact")
+    chat_service.collection_policy.decide = lambda *_args, **_kwargs: SimpleNamespace(main_target="contact")
+
+    response = chat_service._build_rule_profile_fast_response(profile, user_message="单身")
+
+    assert "婚况这块我先按单身记着" in response
+    assert "基础情况我已经大概了解到了" in response
+    assert "方便留个电话吗" in response
+    assert "资料我先整理好了" not in response
 
 
 def test_get_main_dialogue_omits_irrelevant_strategy_lines():
@@ -85,6 +149,26 @@ def test_get_main_dialogue_omits_irrelevant_strategy_lines():
     assert "当前不要主动切到电话或微信" in prompt
     assert "【本轮计划】" in prompt
     assert "用户类型：配合型" in prompt
+    assert "先让用户感觉“你听见了”" in prompt
+    assert "禁止空泛承接" in prompt
+
+
+def test_get_main_dialogue_includes_listener_first_examples():
+    prompt = get_main_dialogue(
+        gender_instruction="用户性别未知",
+        collected_info="男,90后",
+        missing_fields="所在地、学历",
+        current_main_target="所在地",
+        current_side_target="无",
+        user_type="配合型",
+        can_enter_contact=False,
+        is_first_chat=False,
+        turn_plan_instruction="",
+    )
+
+    assert "【表达示例】" in prompt
+    assert "先不聊资料，先说收费" in prompt
+    assert "好，那我们先顺着你现在更想聊的这个说" in prompt
 
 
 @pytest.mark.anyio
@@ -508,6 +592,196 @@ def test_get_boundary_pause_response_handles_privacy_concern():
     assert response is not None
     assert "先不追问" in response
     assert "隐私" in response or "流程" in response
+    assert "不太想展开" in response or "不方便" in response
+
+
+def test_get_boundary_pause_response_softens_phone_refusal_and_mentions_wechat_option():
+    chat_service = _build_chat_service()
+
+    response = chat_service._get_boundary_pause_response("不方便接电话呢")
+
+    assert response is not None
+    assert "电话这块" in response
+    assert "不方便也没事" in response
+    assert "微信" in response
+    assert "按你方便的方式" in response
+
+
+def test_build_user_feeling_ack_handles_phone_unavailable_more_naturally():
+    chat_service = _build_chat_service()
+
+    response = chat_service._build_user_feeling_ack("不方便接电话呢")
+
+    assert response == "行，电话这块你现在不方便也没事。"
+
+
+def test_get_risk_guard_response_acknowledges_user_feeling_on_ai_identity_probe():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_ai_probe")
+
+    response = chat_service._get_risk_guard_response("你是AI吗，我有点担心隐私", profile)
+
+    assert response is not None
+    assert "隐私" in response
+    assert "明白" in response or "正常" in response
+
+
+def test_ensure_conservative_empathy_prefixes_boundary_feeling_before_answer():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_conservative_empathy("这个我不太方便说", "这轮我先不追问资料。")
+
+    assert "不太想展开" in response or "不方便" in response
+    assert response.endswith("这轮我先不追问资料。")
+
+
+def test_ensure_listener_first_ack_prefixes_joking_complaint():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_listener_first_ack("你查户口呢问这么细", "我先解释下为什么会问这些。")
+
+    assert "问细" in response or "查户口" in response
+    assert response.endswith("我先解释下为什么会问这些。")
+
+
+def test_ensure_listener_first_ack_prefixes_reliability_concern():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_listener_first_ack("你们靠谱吗，我有点担心", "我们这边会先做基础了解和筛选。")
+
+    assert "靠谱" in response or "正常" in response
+    assert response.endswith("我们这边会先做基础了解和筛选。")
+
+
+def test_ensure_listener_first_ack_keeps_field_ack_for_mixed_location_and_concern():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_listener_first_ack("我在深圳，不过这个先不太方便说", "这轮我先不追问资料。")
+
+    assert "深圳" in response
+    assert "不太想展开" in response or "不太方便" in response
+    assert response.endswith("这轮我先不追问资料。")
+
+
+def test_ensure_listener_first_ack_keeps_field_ack_for_mixed_short_answer_and_reliability_concern():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_listener_first_ack("男的，你们靠谱吗", "我们这边会先做基础了解和筛选。")
+
+    assert "男生" in response
+    assert "靠谱" in response or "正常" in response
+    assert response.endswith("我们这边会先做基础了解和筛选。")
+
+
+def test_ensure_listener_first_ack_handles_topic_shift_request_before_answer():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_listener_first_ack("先聊这个，你们门店在哪", "深圳这边有门店，到了合适阶段会发你具体定位。")
+
+    assert "先顺着你现在更想聊的这个说" in response
+    assert response.endswith("深圳这边有门店，到了合适阶段会发你具体定位。")
+
+
+def test_ensure_listener_first_ack_handles_repeated_question_complaint():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_listener_first_ack("你怎么又问这个", "我换个更直接的问法。")
+
+    assert "不追那么紧" in response
+    assert response.endswith("我换个更直接的问法。")
+
+
+def test_ensure_listener_first_ack_does_not_duplicate_existing_boundary_prefix():
+    chat_service = _build_chat_service()
+
+    content = "行，电话这块你现在不方便也没事。电话这块我先不往下追。你要是后面微信更方便，也可以直接跟我说，我按你方便的方式来。"
+    response = chat_service._ensure_listener_first_ack("不方便接电话呢", content)
+
+    assert response.count("行，电话这块你现在不方便也没事。") == 1
+
+
+def test_ensure_faq_humanlike_ack_prefixes_fee_question():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_faq_humanlike_ack("怎么收费", "基础牵线这块不收费，定制服务是你自愿选。")
+
+    assert "收费这块" in response
+    assert response.endswith("基础牵线这块不收费，定制服务是你自愿选。")
+
+
+def test_ensure_faq_humanlike_ack_keeps_field_ack_for_mixed_location_and_fee_question():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_faq_humanlike_ack("我在深圳，怎么收费", "基础牵线这块不收费，定制服务是你自愿选。")
+
+    assert "深圳" in response
+    assert "收费这块" in response
+    assert response.endswith("基础牵线这块不收费，定制服务是你自愿选。")
+
+
+def test_ensure_faq_humanlike_ack_keeps_field_ack_for_mixed_short_answer_and_fee_question():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_faq_humanlike_ack("男的，怎么收费", "基础牵线这块不收费，定制服务是你自愿选。")
+
+    assert "男生" in response
+    assert "收费这块" in response
+    assert response.endswith("基础牵线这块不收费，定制服务是你自愿选。")
+
+
+def test_ensure_faq_humanlike_ack_prefixes_clarification_question():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_faq_humanlike_ack("什么意思", "我换个直白说法：匹配点就是你在意的几个条件。")
+
+    assert response.count("换个直白") <= 1
+    assert "更直白" in response or "换个直白" in response
+    assert "匹配点就是你在意的几个条件" in response
+
+
+def test_build_contextual_clarification_reply_explains_previous_vague_line_instead_of_match_point():
+    chat_service = _build_chat_service()
+
+    response = chat_service._build_contextual_clarification_reply(
+        "这个点我先不连着追问了，我们先按你刚说的继续聊。",
+        "啥意思",
+    )
+
+    assert "已经先记下" in response
+    assert "同一个点" in response
+    assert "匹配点" not in response
+
+
+def test_build_contextual_clarification_reply_handles_partner_requirement_confirmation_from_previous_match_point():
+    chat_service = _build_chat_service()
+
+    response = chat_service._build_contextual_clarification_reply(
+        "我换个直白说法：我说的“匹配点”就是你在意的几个条件。",
+        "你的意思是我对另一半的择偶要求吧？",
+    )
+
+    assert "另一半" in response
+    assert "比较看重的条件" in response
+
+
+def test_ensure_faq_humanlike_ack_respects_topic_shift_before_fee_answer():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_faq_humanlike_ack("先不聊资料，先说收费", "基础牵线这块不收费，定制服务是你自愿选。")
+
+    assert "先顺着你现在更想聊的这个说" in response
+    assert "收费这块" in response
+    assert response.endswith("基础牵线这块不收费，定制服务是你自愿选。")
+
+
+def test_ensure_conservative_empathy_keeps_field_ack_for_mixed_answer_and_boundary():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_conservative_empathy("本科，这个先不太方便说", "这轮我先不追问资料。")
+
+    assert "本科" in response
+    assert "不太想展开" in response or "不太方便" in response
+    assert response.endswith("这轮我先不追问资料。")
 
 
 def test_apply_field_ask_guard_blocks_cooldown_field_question():
@@ -612,7 +886,7 @@ def test_apply_dialogue_style_guard_avoids_repeating_partner_requirement_prompt_
     )
 
     assert "看重对方哪几点" not in guarded
-    assert "我们先不连着问资料" in guarded
+    assert any(marker in guarded for marker in ["我们先不连着问资料", "我先不连着追问同一类资料"])
 
 
 def test_apply_dialogue_style_guard_preference_turn_does_not_repeat_partner_requirement_question():
@@ -659,6 +933,21 @@ def test_apply_dialogue_style_guard_breaks_repeat_loop_with_clarification_reques
 
     assert guarded != "我们先不连着问资料，你也可以先说说你更在意的匹配点。"
     assert any(marker in guarded for marker in ["换个直白", "匹配点", "比如"])
+
+
+def test_apply_dialogue_style_guard_does_not_return_vague_repeat_guard_after_field_answer():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_repeat_occ")
+
+    guarded = chat_service._apply_dialogue_style_guard(
+        "我再确认下，你目前做哪类工作？",
+        "那你现在是做什么工作的呀？",
+        profile,
+        user_message="it",
+    )
+
+    assert "这个点我先不连着追问了" not in guarded
+    assert "继续聊" not in guarded
 
 
 def test_apply_dialogue_style_guard_blocks_confirm_word_contact_misroute():
@@ -864,6 +1153,80 @@ async def test_build_no_ai_response_adds_transition_before_contact_ask_when_prof
 
     assert "方便留个电话" in response
     assert any(marker in response for marker in ["资料我先整理好了", "后续为了方便联系推进"])
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_keeps_clarification_topic_instead_of_asking_contact():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_no_ai_clarify")
+    profile.sex = "男"
+    profile.age = 36
+    profile.age_label = "90后"
+    profile.education = "本科"
+    profile.occupation = "IT"
+    profile.location = "深圳"
+    chat_service.dialogue_manager.get_last_response = AsyncMock(
+        return_value="这个点我先不连着追问了，我们先按你刚说的继续聊。"
+    )
+    chat_service.contact_service.get_next_action = lambda _profile, _message="": SimpleNamespace(value="ask_phone")
+    chat_service.collection_policy.has_serviceable_profile = lambda _profile: True
+
+    response = await chat_service._build_no_ai_response(
+        "user_no_ai_clarify",
+        profile,
+        "你的意思是我对另一半的择偶要求吧？",
+    )
+
+    assert any(marker in response for marker in ["另一半", "择偶要求", "条件"])
+    assert "留个电话" not in response
+
+
+@pytest.mark.anyio
+async def test_build_chat_response_softens_contact_display_after_phone_refusal():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_contact_display")
+    profile.phone_ask_count = 1
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=3)
+
+    result = await chat_service._build_chat_response(
+        "user_contact_display",
+        profile,
+        "这轮我先不追问资料。",
+        {"all_fields": []},
+        "dlg_contact_display",
+    )
+
+    assert result["collected_info"]["contact"] == "电话待确认"
+
+
+def test_contact_service_prefers_wechat_after_first_phone_refusal_for_non_hk_user():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_contact_strategy")
+    profile.location = "深圳"
+    profile.phone_ask_count = 1
+
+    next_action = chat_service.contact_service.get_next_action(profile, "不方便接电话呢")
+
+    assert next_action.value == "ask_wechat"
+
+
+@pytest.mark.anyio
+async def test_build_chat_response_marks_phone_as_paused_when_wechat_turn_starts():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_contact_paused")
+    profile.phone_ask_count = 1
+    profile.wechat_ask_count = 1
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=3)
+
+    result = await chat_service._build_chat_response(
+        "user_contact_paused",
+        profile,
+        "如果你微信更方便，也可以直接发我微信号。",
+        {"all_fields": []},
+        "dlg_contact_paused",
+    )
+
+    assert result["collected_info"]["contact"] == "微信待确认, 电话暂缓"
 
 
 @pytest.mark.anyio

@@ -127,10 +127,16 @@ PREFERENCE_ACK_VARIANTS = (
     "收到，这个偏好我先记住并整理好，后面我按这个方向优先匹配，有进展就及时告诉你。",
     "好呀，这个条件我先记住收下，后面会按这个方向优先筛选，合适的我尽快同步你。",
 )
+LOCATION_MEMORY_ACK_VARIANTS = (
+    "{location}那边的资源我们一直在筛选更新，我会优先按同城给你匹配。",
+    "你提到{location}，我先按同城方向优先帮你看更匹配的人选。",
+    "{location}这块我先记住，后续会优先按本地匹配给你推进。",
+)
 NO_REPEAT_FIELD_VARIANTS = (
     "先不重复问同一个点了，你可以先说说最在意的匹配条件，我按这个优先筛。",
     "这个点我先不连着追问了，你先告诉我最看重的一项，我按你的优先级来。",
 )
+NO_REPEAT_PARTNER_REQUIREMENT_STATEMENT = "这个条件我先记住，后续我按这个方向推进，不重复追问。"
 PARTNER_REQUIREMENT_ASK_VARIANTS = (
     "顺带聊聊你的偏好吧，你更看重对方哪几点呀？",
     "你这边如果方便，也可以先说一个最看重的匹配条件，我按这个优先筛。",
@@ -143,6 +149,81 @@ LOW_PRIORITY_DEFLECT_VARIANTS = (
 INCOME_ASK_VARIANTS = (
     "另外我轻问一句，你月收入大概在哪个区间呀？不方便说也没关系。",
     "如果你方便的话，我再补一个小问题：你月收入大概在哪个范围？不方便说也没关系。",
+)
+INTERLEAVING_BUFFER_VARIANTS = (
+    "我们先不连着问资料。你可以先说一个最在意的匹配点，我按这个优先推进。",
+    "我先不连着追问同一类资料。你可以先说一个最在意的匹配点，我按这个优先推进。",
+    "我们先不连着问资料。这轮我先不把资料问得太密，你先告诉我你最看重哪一点，我照这个方向帮你筛。",
+    "我们先不连着问资料。我先把节奏放缓一点，你先说一个你最看重的条件，比如同城、年龄段或相处感觉。",
+)
+RULE_FAST_ASK_VARIANTS = {
+    "sex": (
+        "我顺着确认一下，你这边是男生还是女生？",
+        "那我先确认下你的性别，你这边是男生还是女生？",
+    ),
+    "age": (
+        "那我再顺着问一句，你今年大概多大呢？",
+        "我再了解一下，你今年多大呀？",
+    ),
+    "location": (
+        "那你现在主要在哪个城市工作生活呀？",
+        "你目前主要在哪个城市呢？",
+    ),
+    "education": (
+        "那我再了解一下，学历这块你是哪个阶段呢？",
+        "学历这块我再确认下，你现在是什么学历呀？",
+    ),
+    "occupation": (
+        "那你现在是做什么工作的呀？",
+        "我再确认下，你目前做哪类工作？",
+    ),
+    "marital_status": (
+        "那我再确认下，你现在是单身状态，还是离异呢？",
+        "婚况这块我确认下，现在是单身还是离异？",
+    ),
+    "contact": (
+        "资料我这边先了解得差不多啦，方便留个电话吗？后续有合适的人选时联系你。",
+        "这边资料我先整理好了，你方便留个电话吗？后面有合适人选我会及时联系你。",
+    ),
+    "partner_requirement": (
+        "顺带聊聊你的偏好吧，你更看重对方哪几点呀？",
+        "也可以先说一个你最看重的条件，我按这个方向优先筛选。",
+    ),
+    "monthly_income": (
+        "另外我轻问一句，你月收入大概在哪个区间呀？不方便说也没关系。",
+        "如果你方便的话，我再补一个小问题：你月收入大概在哪个范围？不方便说也没关系。",
+    ),
+}
+FAST_PATH_ACK_VARIANTS = {
+    "sex": (
+        "好，那我先按{value}生记着。",
+        "行，我先记成{value}生。",
+    ),
+    "age": (
+        "好，{value}我先记着。",
+        "行，那年龄这块我先按{value}记着。",
+    ),
+    "location": (
+        "好，那你现在主要在{value}这边。",
+        "{value}这边我先记着，后面我也会优先按同城思路聊。",
+    ),
+    "education": (
+        "好，学历这块我先按{value}记着。",
+        "行，那我先记成{value}这个阶段。",
+    ),
+    "occupation": (
+        "好，你现在做{value}我先记着。",
+        "行，工作这块我先按{value}记着。",
+    ),
+    "marital_status": (
+        "好，那你现在这个状态我先记着。",
+        "行，婚况这块我先按你说的记着。",
+    ),
+}
+FAST_PATH_PREFERENCE_ACK_VARIANTS = (
+    "你这边更偏向{preference}，对吧。",
+    "听起来你会更看重{preference}这一点。",
+    "好，你的偏好我先记着，主要偏向{preference}。",
 )
 
 
@@ -376,6 +457,66 @@ class ChatService:
         content = str(text or "")
         return any(re.search(pattern, content, re.IGNORECASE) for pattern in patterns)
 
+    @staticmethod
+    def _build_user_feeling_ack(user_message: str) -> str:
+        message = str(user_message or "").strip()
+        if not message:
+            return ""
+
+        if any(k in message for k in ["先聊这个", "先说这个", "先说说这个", "先聊聊这个", "先问这个", "换个话题", "先不聊这个", "先不说这个", "先不聊资料", "先说收费", "先聊收费", "先说门店", "先聊门店"]):
+            return "好，那我们先顺着你现在更想聊的这个说。"
+        if any(k in message for k in ["别老问", "怎么又问", "又问", "老问这个", "一直问这个"]):
+            return "行，这个点我先不追那么紧。"
+        if any(k in message for k in ["查户口", "问这么细", "盘问", "审我"]):
+            return "是有点一下子问细了。"
+        if any(k in message for k in ["靠谱吗", "真实", "真的假的", "会不会骗"]):
+            return "你先担心靠不靠谱，这很正常。"
+        if any(k in message for k in ["隐私", "安全", "泄露", "记录了我什么"]):
+            return "你先在意隐私和安全，这我明白。"
+        if any(k in message for k in ["电话不方便", "不方便接电话", "不方便留电话", "电话不好留"]):
+            return "行，电话这块你现在不方便也没事。"
+        if any(k in message for k in ["不方便", "不太方便", "先不说", "不太想说", "先不留", "不想留"]):
+            return "好，这块你现在不太想展开也正常。"
+        if any(k in message for k in ["烦", "闭嘴", "滚", "有病"]):
+            return "行，我知道你现在有点烦。"
+        return ""
+
+    @staticmethod
+    def _looks_like_user_answering_field(user_message: str) -> bool:
+        message = str(user_message or "").strip()
+        if not message:
+            return False
+        if len(message) <= 12:
+            return True
+        if any(token in message for token in ["深圳", "广州", "本科", "大专", "硕士", "单身", "离异", "90后", "95后", "男", "女", "it", "IT"]):
+            return True
+        return False
+
+    def _build_contextual_clarification_reply(self, last_response: str, user_message: str) -> str:
+        previous = str(last_response or "").strip()
+        message = str(user_message or "").strip()
+        if not message:
+            return ""
+
+        if any(token in message for token in ["另一半", "择偶要求", "对另一半", "是说我对对方"]):
+            if "匹配点" in previous:
+                return "对，这里面最核心的一块就是你对另一半比较看重的条件。像同城、年龄差不多、聊得来这些，都算在里面。"
+            return "对，你可以先理解成你对另一半比较看重的条件。像同城、年龄差不多、聊得来这些，都算在里面。"
+
+        if "这个点我先不连着追问" in previous or "先按你刚说的继续聊" in previous:
+            return "我的意思是，这个信息我已经先记下了，不想一直盯着同一个点问你。我们接着往下聊别的就行。"
+
+        if "匹配点" in previous:
+            return "对，主要就是你找对象时比较看重的条件。比如同城、年龄范围、相处感觉，这些都算。"
+
+        if any(token in previous for token in ["留个电话", "联系方式", "联系你"]):
+            return "我的意思是，后面如果有更合适的人选，留个联系方式会方便及时联系你。不过你现在不方便的话，也可以先不急。"
+
+        if any(token in previous for token in ["单身状态", "婚况", "离异", "未婚"]):
+            return "我的意思是想先确认你现在的感情状态，这样我这边后面匹配会更准确一点。"
+
+        return ""
+
     def _get_risk_guard_response(self, user_message: str, user_profile: UserProfile) -> Optional[str]:
         """高风险输入走固定护栏，不再继续字段收集。"""
         message = (user_message or "").strip()
@@ -402,14 +543,18 @@ class ChatService:
             return "这个不方便直接给你，涉及隐私和合规，我们这边都要按流程保护双方信息。"
 
         if self._matches_any_pattern(message, AI_IDENTITY_GUARD_PATTERNS):
-            return "我这边就是负责跟你对接了解情况的小缘呀，你要是担心流程、隐私或真实性，我可以直接跟你说清楚。"
+            prefix = self._build_user_feeling_ack(message)
+            body = "我这边就是负责跟你对接了解情况的小缘呀，你要是担心流程、隐私或真实性，我可以直接跟你说清楚。"
+            return f"{prefix}{body}" if prefix else body
 
         if self._matches_any_pattern(message, ABUSE_GUARD_PATTERNS):
-            return "我理解你现在有点烦，没关系，我先不追问。你要是愿意聊，我们可以慢慢说。"
+            prefix = self._build_user_feeling_ack(message)
+            body = "没关系，我先不追问。你要是愿意聊，我们可以慢慢说。"
+            return f"{prefix}{body}" if prefix else body
 
         return None
 
-    def _get_boundary_pause_response(self, user_message: str) -> Optional[str]:
+    def _get_boundary_pause_response(self, user_message: str, user_profile: Optional[UserProfile] = None) -> Optional[str]:
         """
         用户在边界/顾虑场景时，本轮只降温承接，不推进字段收集。
         """
@@ -422,9 +567,27 @@ class ChatService:
             return None
         if self.contact_service.prefers_wechat_over_phone(message, UserProfile(account_id="boundary_probe")):
             return None
+        # 联系方式阶段中的拒绝，不走 boundary pause，避免吞掉“电话拒绝 -> 微信兜底”的自然转接。
+        if user_profile is not None:
+            contact_refusal_markers = ["不留电话", "不想留电话", "电话不方便", "不留微信", "不想留微信", "微信不方便"]
+            in_contact_stage = any(
+                [
+                    bool(user_profile.phone_ask_count > 0),
+                    bool(user_profile.wechat_ask_count > 0),
+                    bool(user_profile.rejected_phone),
+                    bool(user_profile.rejected_wechat),
+                ]
+            )
+            if in_contact_stage and any(marker in message for marker in contact_refusal_markers):
+                return None
         if not self._matches_any_pattern(message, BOUNDARY_PAUSE_PATTERNS):
             return None
-        return "理解你的顾虑，这轮我先不追问资料。你要是想先确认流程、隐私或真实性，我可以先跟你讲清楚。"
+        prefix = self._build_user_feeling_ack(message)
+        if any(marker in message for marker in ["电话不方便", "不方便接电话", "不方便留电话", "电话不好留"]):
+            body = "电话这块我先不往下追。你要是后面微信更方便，也可以直接跟我说，我按你方便的方式来。"
+        else:
+            body = "这轮我先不追问资料。你要是想先确认流程、隐私或真实性，我可以先跟你讲清楚。"
+        return f"{prefix}{body}" if prefix else body
 
     def _build_turn_decision(
         self,
@@ -449,7 +612,7 @@ class ChatService:
             risk = "high_risk"
             next_action = "risk_guard"
             response_channel = "fixed_template"
-        elif self._get_boundary_pause_response(message):
+        elif self._get_boundary_pause_response(message, user_profile):
             risk = "boundary"
             next_action = "boundary_pause"
             response_channel = "fixed_template"
@@ -468,7 +631,7 @@ class ChatService:
             "ack_budget_per_n_turns": 3,
             "max_question_per_turn": 1,
             "enforce_contact_transition": True,
-            "core_streak_max": 2,
+            "core_streak_max": 3,
         }
         return TurnDecision(
             intent=intent,
@@ -497,6 +660,18 @@ class ChatService:
             for template in NORMAL_COMPLETE_ENDING_TEMPLATES
         )
         return self._pick_non_repeating_template(rendered, last_response)
+
+    @staticmethod
+    def _ensure_natural_ending_closure(response: str) -> str:
+        content = str(response or "").strip()
+        if not content:
+            return "这边我先不继续追问啦，有需要再来找我。"
+        if any(marker in content for marker in FAREWELL_MARKERS):
+            return content
+        suffix = "有需要再来找我。"
+        if content.endswith(("。", "！", "!", "？", "?")):
+            return f"{content}{suffix}"
+        return f"{content}。{suffix}"
 
     @staticmethod
     def _is_contact_ask_response(text: str) -> bool:
@@ -552,6 +727,36 @@ class ChatService:
             return f"你这边资料我先整理好了，后续方便联系推进，{content}"
         return f"我先不急着推进联系方式，先按你刚说的继续聊会更自然。"
 
+    def _build_contact_transition_response(self, user_message: str) -> str:
+        """
+        将“最后一个字段确认 + 联系方式推进”统一生成，避免承接句和电话模板硬拼。
+        """
+        extracted = self._extract_deterministic_profile_fields(user_message)
+        extracted = self._apply_extraction_guards(extracted, user_message)
+
+        field_summary = ""
+        if extracted.get("marital_status"):
+            field_summary = f"好，婚况这块我先按{extracted['marital_status']}记着。"
+        elif extracted.get("occupation"):
+            field_summary = f"好，工作这块我先按{extracted['occupation']}记着。"
+        elif extracted.get("education"):
+            field_summary = f"好，学历这块我先按{extracted['education']}记着。"
+        elif extracted.get("location"):
+            field_summary = f"好，你现在在{extracted['location']}这边我先记着。"
+        elif extracted.get("age_label"):
+            field_summary = f"好，年龄这块我先按{extracted['age_label']}记着。"
+        elif extracted.get("age"):
+            field_summary = f"好，年龄这块我先按{self._render_age_value(str(extracted['age']))}记着。"
+        elif extracted.get("sex"):
+            field_summary = f"好，你这边我先按{extracted['sex']}生记着。"
+        elif extracted.get("partner_requirement"):
+            field_summary = "好，你在意的条件我先记着。"
+
+        contact_prompt = "你这边基础情况我已经大概了解到了，后面如果有合适的人选，方便留个电话吗？"
+        if field_summary:
+            return f"{field_summary} {contact_prompt}".strip()
+        return contact_prompt
+
     def _apply_dialogue_style_guard(
         self,
         last_response: str,
@@ -579,14 +784,33 @@ class ChatService:
         if current_is_affirmative and (not prev_about_contact) and asks_contact_now:
             return "收到，你刚这句我先接住。我们先按你在意的点继续聊，不急着留联系方式。"
 
+        prev_asked_fields = self._detect_asked_fields_from_response(previous)
+        current_asked_fields = self._detect_asked_fields_from_response(content)
+        if "partner_requirement" in prev_asked_fields and "partner_requirement" in current_asked_fields:
+            return NO_REPEAT_PARTNER_REQUIREMENT_STATEMENT
+        repeated_managed = (prev_asked_fields & current_asked_fields) & (
+            ASK_GUARD_CORE_FIELDS | ASK_GUARD_MEDIUM_FIELDS
+        )
+        if repeated_managed:
+            if self._looks_like_user_answering_field(user_text):
+                ack = self._build_lightweight_field_ack_from_message(user_text)
+                if ack:
+                    return f"{ack} 我这边继续往下了解就行。"
+                return "好，你刚说的这个信息我先记着，我们接着往下聊。"
+            return "这个点我先不连着追问了，我们先按你刚说的继续聊。"
+
         if self._contains_ack_style(previous) and self._contains_ack_style(content):
-            content = self._strip_leading_ack_clause(content)
+            if not self._leading_ack_clause_carries_user_point(user_text, content, user_profile):
+                content = self._strip_leading_ack_clause(content)
         # 追问句前优先去掉“收到/了解/好哒”类前置复述，降低模板化复读率。
+        carries_user_point = self._leading_ack_clause_carries_user_point(user_text, content, user_profile)
         if any(cue in content for cue in ASK_GUARD_QUESTION_CUES) and self._contains_ack_style(content):
-            content = self._strip_leading_ack_clause(content)
+            if not carries_user_point:
+                content = self._strip_leading_ack_clause(content)
         # 即使上一轮不是复述，也尽量去掉当前轮前置“收到/记下”从句，降低 ack_overuse。
         if self._contains_ack_style(content):
-            content = self._strip_leading_ack_clause(content)
+            if not carries_user_point:
+                content = self._strip_leading_ack_clause(content)
 
         content = self._ensure_contact_transition_natural(previous, content, user_profile, user_message=user_message)
         content = self._enforce_field_interleaving(
@@ -599,6 +823,42 @@ class ChatService:
         content = self._avoid_repeat_loop(previous, content, user_message=user_message)
         content = self._avoid_preference_hard_ending(user_text, content)
         return content
+
+    def _leading_ack_clause_carries_user_point(
+        self,
+        user_message: str,
+        response: str,
+        user_profile: UserProfile,
+    ) -> bool:
+        """
+        当前导承接句已经明确带上用户刚说的重点时，不再把它当模板头删掉。
+        """
+        content = str(response or "").strip()
+        if not content:
+            return False
+
+        first_clause = re.split(r"[。！？!?]", content, maxsplit=1)[0].strip()
+        if not first_clause:
+            return False
+
+        extracted = self._extract_deterministic_profile_fields(user_message)
+        extracted = self._apply_extraction_guards(extracted, user_message)
+
+        preference = str(extracted.get("partner_requirement") or "").strip()
+        if not preference:
+            preference = str(user_profile.partner_requirement or "").strip() if any(k in str(user_message or "") for k in ["喜欢", "想找", "找"]) else ""
+        if preference and any(token in first_clause for token in re.split(r"[，,、\s]+", preference) if token):
+            return True
+
+        for field in ("sex", "age_label", "age", "location", "education", "occupation", "marital_status"):
+            value = extracted.get(field)
+            if not value:
+                continue
+            rendered = self._render_age_value(str(value)) if field in {"age", "age_label"} else str(value)
+            if rendered and rendered in first_clause:
+                return True
+
+        return False
 
     def _avoid_repeat_loop(self, last_response: str, response: str, user_message: str = "") -> str:
         """避免同一句兜底回复连续出现，用户要解释时优先给解释。"""
@@ -613,6 +873,9 @@ class ChatService:
         message = str(user_message or "")
         wants_clarification = any(pattern in message for pattern in CLARIFICATION_USER_PATTERNS)
         if wants_clarification:
+            contextual = self._build_contextual_clarification_reply(previous, message)
+            if contextual:
+                return contextual
             return "我换个直白说法：我说的匹配点，就是你在意的几个条件，比如年龄范围、城市、工作节奏和相处感觉。"
 
         if "匹配点" in content:
@@ -651,18 +914,32 @@ class ChatService:
             return set()
         if not any(cue in text for cue in ASK_GUARD_QUESTION_CUES):
             return set()
+        segments = [seg.strip() for seg in re.findall(r"[^。！？!?\n~]+[。！？!?]?", text) if seg.strip()]
+        question_segments = [
+            seg for seg in segments
+            if seg.endswith(("？", "?")) or any(cue in seg for cue in ASK_GUARD_QUESTION_CUES)
+        ]
+        if not question_segments:
+            return set()
+        question_text = " ".join(question_segments)
 
         asked_fields: set[str] = set()
         field_keywords = get_field_keywords()
         # 与回归脚本口径对齐：婚况问法常见表述并不总在关键词表里。
-        if re.search(r"(单身状态|婚况|婚姻状态|离异|未婚|已婚)", text):
+        if re.search(r"(单身状态|婚况|婚姻状态|离异|未婚|已婚)", question_text):
             asked_fields.add("marital_status")
-        if re.search(r"(想找什么类型|择偶要求|期待另一半|喜欢什么类型|看重对方哪几点|另一半有没有|对方哪几点)", text):
+        if re.search(r"(想找什么类型|择偶要求|期待另一半|喜欢什么类型|看重对方哪几点|另一半有没有|对方哪几点)", question_text):
             asked_fields.add("partner_requirement")
         for field, keywords in field_keywords.items():
             if field in {"height", "weight", "last_name", "contact"}:
                 continue
-            if any(keyword and keyword in text for keyword in keywords):
+            if any(keyword and keyword in question_text for keyword in keywords):
+                # 避免把“学历我先记下了”这类确认句误判为“又在问学历”。
+                if field == "education":
+                    has_edu_ack = re.search(r"(学历|本科|硕士|大专).{0,8}(记着|记下|记成|先按|先记)", question_text)
+                    has_edu_question = re.search(r"(学历|本科|硕士|大专).{0,10}(吗|呢|哪个|哪一|是)", question_text)
+                    if has_edu_ack and not has_edu_question:
+                        continue
                 asked_fields.add(field)
         return asked_fields
 
@@ -696,14 +973,14 @@ class ChatService:
         prev_asked_fields = self._detect_asked_fields_from_response(last_response)
         repeated_managed = (prev_asked_fields & asked_fields) & (ASK_GUARD_CORE_FIELDS | ASK_GUARD_MEDIUM_FIELDS)
         if "partner_requirement" in repeated_managed:
-            return self._pick_variant(PREFERENCE_ACK_VARIANTS, PREFERENCE_ACK_VARIANTS[0])
+            return NO_REPEAT_PARTNER_REQUIREMENT_STATEMENT
         if "monthly_income" in repeated_managed:
             return "收入这块我先按你前面说的来，不用这轮重复。你也可以先说说你更在意的匹配条件。"
 
         # 若用户本轮明确给出择偶偏好，不继续追核心字段，优先接住偏好信息。
         user_text = str(user_message or "")
-        preference_cues = ["想找", "高挑", "高一点", "不超过", "年龄", "择偶", "偏好", "看重", "成熟稳重", "同城优先"]
-        if asks_core and any(cue in user_text for cue in preference_cues):
+        preference_cues = ["想找", "喜欢", "高挑", "高一点", "高高瘦瘦", "瘦瘦", "不超过", "年龄", "择偶", "偏好", "看重", "成熟稳重", "同城优先"]
+        if asks_core and (not self._is_partner_requirement_ask_response(content)) and any(cue in user_text for cue in preference_cues):
             return self._pick_variant(PREFERENCE_ACK_VARIANTS, PREFERENCE_ACK_VARIANTS[0])
 
         if (not asks_core) or asks_medium:
@@ -718,6 +995,15 @@ class ChatService:
                 return self._pick_variant(NO_REPEAT_FIELD_VARIANTS, NO_REPEAT_FIELD_VARIANTS[0])
             return self._pick_variant(NO_REPEAT_FIELD_VARIANTS, NO_REPEAT_FIELD_VARIANTS[0])
 
+        # 用户在正常配合回答资料（例如“男的”“90后”“深圳”）时，
+        # 优先保持自然主线追问，不提前硬切到解释/穿插模板。
+        user_text = str(user_message or "")
+        resistance_markers = ["不方便", "不想说", "先不说", "算了", "再说吧", "有点烦", "别问了", "为什么问这么多"]
+        if user_text and not any(marker in user_text for marker in resistance_markers):
+            deterministic = self._extract_deterministic_profile_fields(user_text)
+            if deterministic:
+                return content
+
         recent = [f for f in (user_profile.recent_asked_fields or []) if f in ASK_GUARD_CORE_FIELDS]
         core_streak = 0
         for field in reversed(recent):
@@ -727,20 +1013,6 @@ class ChatService:
                 break
 
         core_streak_max = int((tone_policy or {}).get("core_streak_max", 2))
-        # 兜底：若历史核心追问总量已较高，当前轮直接触发穿插，避免出现长核心连问。
-        # 这里用 ask_count 累积而非 recent_asked_fields，防止追问追踪在边界轮次漏记。
-        total_core_ask_count = 0
-        for field in ASK_GUARD_CORE_FIELDS:
-            total_core_ask_count += int(user_profile.get_ask_count(field) or 0)
-        if total_core_ask_count >= max(3, core_streak_max):
-            if (not user_profile.collection_progress.get("partner_requirement", False)) and (not self._is_partner_requirement_ask_response(last_response)):
-                return self._pick_variant(PARTNER_REQUIREMENT_ASK_VARIANTS, PARTNER_REQUIREMENT_ASK_VARIANTS[0])
-            if (
-                not user_profile.collection_progress.get("monthly_income", False)
-                and bool(user_profile.occupation)
-                and ("月收入" not in last_response and "收入" not in last_response and "薪资" not in last_response)
-            ):
-                return self._pick_variant(INCOME_ASK_VARIANTS, INCOME_ASK_VARIANTS[0])
 
         if core_streak < max(1, core_streak_max):
             return content
@@ -755,7 +1027,10 @@ class ChatService:
         ):
             return self._pick_variant(INCOME_ASK_VARIANTS, INCOME_ASK_VARIANTS[0])
 
-        return "我们先不连着问资料。这里说的匹配点，就是你在意的条件，比如同城、年龄段、工作节奏。你先说一个最看重的就行。"
+        return self._pick_variant(
+            INTERLEAVING_BUFFER_VARIANTS,
+            "我们先不连着问资料。你可以先说一个最在意的匹配点，我按这个优先推进。",
+        )
 
     async def _call_ai(self, prompt: str, account_id: str, user_message: str = "") -> str:
         """
@@ -1129,7 +1404,13 @@ class ChatService:
                 # 询问次数在用户明确拒绝时由拒绝检测统一递增，这里只发起询问，不提前计数。
 
                 call_name = user_profile.get_greeting()
-                wechat_ask_response = f"好的呀～{call_name}的电话我记下啦😊 要是你微信方便的话，也可以留一个，后面沟通会更顺手一点～"
+                last_response = await self.dialogue_manager.get_last_response(account_id) or ""
+                wechat_ask_templates = (
+                    f"{call_name}的电话我先记下啦。你如果微信方便，也可以留一个，后面沟通会更顺一点。",
+                    f"电话我这边记好了。要是你方便，也可以给我一个微信号，后续联系会更顺手。",
+                    f"收到你的电话了。你要是愿意的话，也可以补个微信，后面沟通会更方便。",
+                )
+                wechat_ask_response = self._pick_non_repeating_template(wechat_ask_templates, last_response)
 
                 # === 重要：将微信询问回复添加到 recent_responses ===
                 # 这样后续拒绝检测时 get_last_response 才能正确获取到这条微信询问
@@ -1245,7 +1526,7 @@ class ChatService:
         if not response:
             return response
 
-        conservative_markers = ["不方便", "先不说", "不太想说", "这个也要", "不想聊", "算了"]
+        conservative_markers = ["不方便", "不太方便", "先不说", "不太想说", "这个也要", "不想聊", "算了"]
         if not any(marker in (user_message or "") for marker in conservative_markers):
             return response
 
@@ -1253,9 +1534,96 @@ class ChatService:
         if any(kw in response for kw in empathy_keywords):
             return response
 
+        field_ack = self._build_lightweight_field_ack_from_message(user_message)
+        prefix = self._build_user_feeling_ack(user_message)
+        if prefix and field_ack and prefix not in response and field_ack not in response:
+            return f"{field_ack} {prefix}{response}".strip()
+        if prefix and prefix not in response:
+            return f"{prefix}{response}"
         if "没事" in response:
             return response.replace("没事", "没关系", 1)
         return f"理解你的感受，{response}"
+
+    def _ensure_listener_first_ack(self, user_message: str, response: str) -> str:
+        """
+        通用“先接住再往下说”保护。
+        仅在用户明显表达顾虑、吐槽、质疑时补一句短承接，避免回复像直接甩答案。
+        """
+        content = str(response or "").strip()
+        message = str(user_message or "").strip()
+        if not content or not message:
+            return content
+
+        prefix = self._build_user_feeling_ack(message)
+        if not prefix:
+            return content
+        if content.startswith(prefix):
+            return content
+
+        field_ack = self._build_lightweight_field_ack_from_message(message)
+        first_clause = re.split(r"[。！？!?]", content, maxsplit=1)[0].strip()
+        if first_clause and any(token in first_clause for token in ["顾虑", "担心", "正常", "理解", "知道你", "在意"]):
+            if field_ack and field_ack not in content:
+                return f"{field_ack} {content}".strip()
+            return content
+
+        if field_ack and field_ack not in content:
+            return f"{field_ack} {prefix}{content}".strip()
+        return f"{prefix}{content}"
+
+    def _ensure_faq_humanlike_ack(self, user_message: str, response: str) -> str:
+        """
+        FAQ 快答前补一层轻承接，让标准答案更像在顺着用户的话说。
+        """
+        content = str(response or "").strip()
+        message = str(user_message or "").strip()
+        if not content or not message:
+            return content
+
+        intent = self.user_question_service.detect_quick_faq_intent(message)
+        if not intent:
+            return content
+
+        first_clause = re.split(r"[。！？!?]", content, maxsplit=1)[0].strip()
+        faq_existing_markers = {
+            "fee": ("收费这块", "费用这块", "价格这块"),
+            "store_location": ("门店", "位置这块", "线下这边"),
+            "how_match": ("怎么匹配", "匹配这件事", "匹配流程"),
+            "contact_exchange": ("怎么互换", "互换联系方式", "直接联系"),
+            "contact_why": ("为什么要留联系方式", "为什么要留电话", "为什么要留微信"),
+            "photo": ("照片", "什么时候能看"),
+            "timeline": ("节奏和周期", "时间这块", "周期"),
+            "service_area": ("服务范围",),
+            "success_rate": ("成功情况", "效果这块", "成功率"),
+            "clarification": ("没太听明白", "没听明白", "换个直白说法", "更直白的说法"),
+        }
+        if first_clause and any(token in first_clause for token in faq_existing_markers.get(intent, ())):
+            return content
+
+        field_ack = self._build_lightweight_field_ack_from_message(message)
+        topic_shift_ack = ""
+        general_ack = self._build_user_feeling_ack(message)
+        if general_ack and any(marker in message for marker in ["先聊这个", "先说这个", "先说说这个", "先聊聊这个", "先问这个", "换个话题", "先不聊这个", "先不说这个", "先不聊资料", "别老问"]):
+            topic_shift_ack = general_ack
+        intent_prefix = {
+            "fee": "收费这块你肯定想先问清楚。",
+            "store_location": "门店这块你肯定也想先确认。",
+            "how_match": "你应该是想先弄清楚具体怎么匹配。",
+            "contact_exchange": "你是想先确认后面联系方式怎么互换。",
+            "contact_why": "你是想先弄明白为什么要留联系方式。",
+            "photo": "照片这块你应该也想先问明白。",
+            "timeline": "节奏和周期这块我先跟你说清楚。",
+            "service_area": "服务范围这块我先跟你说明白。",
+            "success_rate": "效果这块你肯定也会先关心。",
+            "clarification": "我换个更直白的说法。",
+        }.get(intent, "")
+
+        if not intent_prefix:
+            return content
+        prefix_parts = [part for part in (field_ack, topic_shift_ack) if part]
+        if prefix_parts:
+            return f"{' '.join(prefix_parts)} {intent_prefix}{content}".strip()
+        return f"{intent_prefix}{content}"
 
     def _apply_field_ask_guard(self, user_profile: UserProfile, response: str) -> str:
         """
@@ -1336,7 +1704,13 @@ class ChatService:
         if any(marker in message for marker in ["那边", "深圳", "资源", "相亲资源"]):
             loc = (user_profile.location or "").strip()
             if loc and not any(kw in response for kw in [loc, "那边"]):
-                return f"{loc}那边的资源我们这边一直在做筛选更新，我会优先按同城给你匹配～{response}"
+                prefix = self._pick_variant(
+                    tuple(v.format(location=loc) for v in LOCATION_MEMORY_ACK_VARIANTS),
+                    f"{loc}那边我先按同城方向给你优先匹配。",
+                )
+                if response.endswith(("。", "！", "!", "？", "?")):
+                    return f"{prefix}{response}"
+                return f"{prefix} {response}"
 
         # 3) 职业/忙碌承接
         if any(marker in lower_message for marker in ["工作比较忙", "工作忙", "比较忙", "加班"]):
@@ -1487,6 +1861,7 @@ class ChatService:
             return {}
 
         extracted: Dict[str, Any] = {}
+        compact_message = re.sub(r"[，,、。！？!?~～\s]+", "", user_message)
 
         if '我是女生' in user_message or '本人女' in user_message:
             extracted['sex'] = '女'
@@ -1504,19 +1879,24 @@ class ChatService:
             if explicit_age:
                 extracted['age'] = int(explicit_age.group(1))
 
-        location_match = re.search(r'在([\u4e00-\u9fa5]{2,10})', user_message)
-        if location_match:
-            extracted['location'] = location_match.group(1)
-        else:
-            # 支持“我是女生，90后，深圳，本科”这类紧凑输入中的城市片段。
-            city_candidates = {"深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港"}
-            preference_context = bool(re.search(r"(喜欢|想找|找).*(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)", user_message))
-            if not preference_context:
-                for token in re.split(r'[，,、\s]+', user_message):
-                    t = token.strip()
-                    if t in city_candidates:
-                        extracted["location"] = t
-                        break
+        # 支持“我是女生，90后，深圳，本科”这类紧凑输入中的城市片段，同时避免把“在骗我”误提取为地点。
+        city_candidates = {"深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港"}
+        preference_context = bool(re.search(r"(喜欢|想找|找).*(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)", user_message))
+        if not preference_context:
+            for city in city_candidates:
+                if re.search(rf"(?:在|来自|住在)\s*{city}", user_message) or re.search(rf"(?:^|[，,、\s]){city}(?:$|[，,、\s])", user_message):
+                    extracted["location"] = city
+                    break
+                if len(compact_message) <= 8 and re.fullmatch(rf"(?:我是|我在|我来自|我住在|我)?{city}(?:人|的|这边)?", compact_message):
+                    extracted["location"] = city
+                    break
+            if not extracted.get("location"):
+                location_match = re.search(
+                    r'(?:在|来自|住在)\s*([\u4e00-\u9fa5]{2,8}(?:市|省|县|区|州|特别行政区))',
+                    user_message,
+                )
+                if location_match:
+                    extracted["location"] = location_match.group(1)
 
         for edu in ['博士', '硕士', '研究生', '本科', '大专', '中专', '高中']:
             if edu in user_message:
@@ -1580,6 +1960,12 @@ class ChatService:
         location_candidates = {"深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港"}
         if message in location_candidates:
             extracted["location"] = message
+        else:
+            compact_message = re.sub(r"[，,、。！？!?~～\s]+", "", message)
+            for city in location_candidates:
+                if len(compact_message) <= 8 and re.fullmatch(rf"(?:我是|我在|我来自|我住在|我)?{city}(?:人|的|这边)?", compact_message):
+                    extracted["location"] = city
+                    break
 
         for edu in ["博士", "硕士", "研究生", "本科", "大专", "中专", "高中"]:
             if message == edu:
@@ -1596,6 +1982,26 @@ class ChatService:
             candidate = occupation_match.group(1).strip()
             if candidate not in {"男", "女", "单身", "未婚", "离异", "已婚"}:
                 extracted["occupation"] = candidate
+
+        if not extracted.get("occupation"):
+            occupation_aliases = {
+                "it": "IT",
+                "ui": "UI",
+                "hr": "HR",
+                "qa": "QA",
+                "产品": "产品",
+                "运营": "运营",
+                "设计": "设计",
+                "开发": "开发",
+                "程序员": "程序员",
+                "销售": "销售",
+                "老师": "老师",
+                "医生": "医生",
+                "公务员": "公务员",
+            }
+            normalized = message.strip().lower()
+            if normalized in occupation_aliases:
+                extracted["occupation"] = occupation_aliases[normalized]
 
         if not extracted.get("partner_requirement"):
             pref = self._extract_simple_partner_requirement(message)
@@ -1673,26 +2079,155 @@ class ChatService:
         if not next_field:
             return ""
 
-        if next_field == "sex":
-            return "我先记下来啦～顺带问下你是男生还是女生呀？"
-        if next_field == "age":
-            return "好哒～那想问下你今年多大呀？"
-        if next_field == "location":
-            return "收到啦～那你现在主要在哪个城市工作生活呀？"
-        if next_field == "education":
-            return "知道啦～那你这边是什么学历呀？"
-        if next_field == "occupation":
-            return "了解啦～那你现在是做什么工作的呀？"
-        if next_field == "marital_status":
-            return "我记下来啦～那你现在是单身状态，还是离异呢？"
+        variants = RULE_FAST_ASK_VARIANTS.get(next_field)
+        if not variants:
+            return ""
         if next_field == "contact":
-            return "资料我这边先了解得差不多啦～方便留个电话吗？后续有合适的人选时联系你～"
+            return self._build_contact_transition_response(user_message)
+        ask = self._pick_variant(variants, variants[0]).strip()
+        ack = self._build_rule_profile_fast_ack(user_profile, user_message, next_field)
+        if ack:
+            return f"{ack} {ask}".strip()
+        return ask
 
-        if next_field == "partner_requirement":
-            return "顺带聊聊你的偏好吧，你更看重对方哪几点呀？"
-        if next_field == "monthly_income":
-            return "另外我轻问一句，你月收入大概在哪个区间呀？不方便说也没关系。"
+    def _build_rule_profile_fast_ack(self, user_profile: UserProfile, user_message: str, next_field: str) -> str:
+        """
+        为规则快路径补一层“先接住用户，再推进”的承接语。
+        只使用轻量规则，避免把快路径重新做重。
+        """
+        message = str(user_message or "").strip()
+        if not message:
+            return ""
+
+        extracted = self._extract_deterministic_profile_fields(message)
+        extracted = self._apply_extraction_guards(extracted, message)
+
+        preference = str(extracted.get("partner_requirement") or "").strip()
+        if not preference:
+            preference = self._extract_simple_partner_requirement(message) or ""
+        if not preference and any(k in message for k in ["喜欢", "想找", "找"]):
+            preference = str(user_profile.partner_requirement or "").strip()
+        if preference and next_field != "partner_requirement":
+            natural_preference = self._render_preference_for_ack(preference)
+            variants = tuple(v.format(preference=natural_preference) for v in FAST_PATH_PREFERENCE_ACK_VARIANTS)
+            return self._pick_variant(variants, variants[0]).strip()
+
+        for field in ("sex", "age_label", "age", "location", "education", "occupation", "marital_status"):
+            if field == next_field:
+                continue
+            value = extracted.get(field)
+            if not value:
+                continue
+            ack = self._format_fast_path_ack(field, value)
+            if ack:
+                return ack
+
         return ""
+
+    def _build_lightweight_field_ack_from_message(self, user_message: str) -> str:
+        """
+        从用户一句话里抽一条轻量资料承接，供 FAQ / 混合输入场景复用。
+        """
+        message = str(user_message or "").strip()
+        if not message:
+            return ""
+
+        extracted = self._extract_deterministic_profile_fields(message)
+        extracted = self._apply_extraction_guards(extracted, message)
+
+        # FAQ 混合输入里，短答性别经常和问题写在一句里，规则提取未命中时做轻量兜底。
+        if "sex" not in extracted:
+            if re.match(r"^(男的|男生|我是男|男)\b", message):
+                extracted["sex"] = "男"
+            elif re.match(r"^(女的|女生|我是女|女)\b", message):
+                extracted["sex"] = "女"
+
+        preference = str(extracted.get("partner_requirement") or "").strip()
+        if not preference:
+            preference = self._extract_simple_partner_requirement(message) or ""
+        if preference:
+            natural_preference = self._render_preference_for_ack(preference)
+            variants = tuple(v.format(preference=natural_preference) for v in FAST_PATH_PREFERENCE_ACK_VARIANTS)
+            return self._pick_variant(variants, variants[0]).strip()
+
+        for field in ("sex", "age_label", "age", "location", "education", "occupation", "marital_status"):
+            value = extracted.get(field)
+            if not value:
+                continue
+            ack = self._format_fast_path_ack(field, value)
+            if ack:
+                return ack
+
+        return ""
+
+    def _format_fast_path_ack(self, field: str, value: Any) -> str:
+        rendered = str(value or "").strip()
+        if not rendered:
+            return ""
+
+        if field == "age":
+            rendered = self._render_age_value(rendered)
+        elif field == "age_label":
+            field = "age"
+        elif field == "sex":
+            rendered = "男" if "男" in rendered else "女"
+        elif field == "occupation":
+            rendered = self._render_occupation_for_ack(rendered)
+        elif field == "marital_status":
+            rendered = self._render_marital_status_for_ack(rendered)
+
+        variants = FAST_PATH_ACK_VARIANTS.get(field)
+        if not variants:
+            return ""
+        formatted = tuple(v.format(value=rendered) for v in variants)
+        return self._pick_variant(formatted, formatted[0]).strip()
+
+    @staticmethod
+    def _render_preference_for_ack(preference: str) -> str:
+        text = str(preference or "").strip()
+        if not text:
+            return text
+
+        text = re.sub(r"^(喜欢|想找|想要|找)\s*", "", text)
+        text = re.sub(r"^一个", "", text)
+        text = text.strip("，,。 ")
+
+        if text.endswith("的女生"):
+            return text[:-3] + "女生"
+        if text.endswith("的男生"):
+            return text[:-3] + "男生"
+        if text.endswith("的女孩子"):
+            return text[:-4] + "女孩子"
+        if text.endswith("的男孩子"):
+            return text[:-4] + "男孩子"
+        return text
+
+    @staticmethod
+    def _render_occupation_for_ack(value: str) -> str:
+        text = str(value or "").strip()
+        if text.endswith("的") and len(text) >= 3:
+            text = text[:-1]
+        return text
+
+    @staticmethod
+    def _render_marital_status_for_ack(value: str) -> str:
+        text = str(value or "").strip()
+        if text == "单身":
+            return "单身"
+        if text in {"未婚", "离异", "已婚"}:
+            return text
+        return text
+
+    @staticmethod
+    def _render_age_value(value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return text
+        if text.endswith(("岁", "后", "年")):
+            return text
+        if text.isdigit():
+            return f"{text}岁"
+        return text
 
     def _canonicalize_extracted_fields(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """将提取字段映射为统一字段名，清理空值。"""
@@ -1780,6 +2315,18 @@ class ChatService:
         """AI 不可用时的最小可用回复，优先兜住联系方式主线。"""
         message = (user_message or "").strip()
         last_response = await self.dialogue_manager.get_last_response(account_id) or ""
+
+        faq_intent = self.user_question_service.detect_quick_faq_intent(message)
+        if (not faq_intent) and any(token in message for token in ["你的意思是", "是这个意思", "是说", "你刚刚是说"]):
+            faq_intent = "clarification"
+        if faq_intent == "clarification":
+            contextual = self._build_contextual_clarification_reply(last_response, message)
+            if contextual:
+                return contextual
+        if faq_intent:
+            quick_faq = self.user_question_service.get_quick_faq_response(message, repeat_count=1, recent_responses=())
+            if quick_faq:
+                return self._ensure_faq_humanlike_ack(message, quick_faq)
 
         if self.expectation_service.is_matching_timeline_question(message):
             return self.expectation_service.get_matching_timeline_response(user_profile)
@@ -1892,6 +2439,8 @@ class ChatService:
             field_ask_count_before: AI询问前的字段计数快照，用于正确显示"已跳过"时机
                                    （使用"增加前"的值，这样用户还有机会回答当前问题）
         """
+        if bool(user_profile.conversation_ended):
+            response = self._ensure_natural_ending_closure(response)
         response = self._sanitize_forbidden_sales_phrases(response)
         if response_route:
             await self._simulate_non_ai_human_delay(response, route=response_route)
@@ -1925,14 +2474,17 @@ class ChatService:
             elif user_profile.rejected_wechat:
                 parts.append("不愿留微信")
             elif user_profile.wechat_ask_count >= 1 and not user_profile.rejected_wechat:
-                parts.append("微信争取中")
+                parts.append("微信待确认")
             # 电话部分
             if user_profile.phone:
                 parts.append(f"电话:{user_profile.phone}")
             elif user_profile.rejected_phone:
                 parts.append("不愿留电话")
             elif user_profile.phone_ask_count >= 1 and not user_profile.rejected_phone:
-                parts.append("电话争取中")
+                if user_profile.wechat_ask_count >= 1 or user_profile.wechat:
+                    parts.append("电话暂缓")
+                else:
+                    parts.append("电话待确认")
             # 组合结果
             if parts:
                 return ", ".join(parts)
@@ -2195,11 +2747,25 @@ class ChatService:
             jitter_max = self._env_float("MQ_QUICK_FAQ_DELAY_JITTER_MAX", jitter_max)
             cap = self._env_float("MQ_QUICK_FAQ_DELAY_MAX", cap)
 
+        route_floor = self._env_float("MQ_NON_AI_DELAY_FLOOR_SECONDS", 1.05)
+        floor_by_route = {
+            "risk_guard": self._env_float("MQ_DELAY_FLOOR_RISK_GUARD", 1.15),
+            "boundary_pause": self._env_float("MQ_DELAY_FLOOR_BOUNDARY_PAUSE", 1.15),
+            "quick_faq": self._env_float("MQ_DELAY_FLOOR_QUICK_FAQ", 1.10),
+            "collection_short_circuit": self._env_float("MQ_DELAY_FLOOR_COLLECTION_SHORT_CIRCUIT", 1.05),
+            "rule_profile_fast_path": self._env_float("MQ_DELAY_FLOOR_RULE_PROFILE_FAST_PATH", 1.05),
+            "rule_followup_greeting": self._env_float("MQ_DELAY_FLOOR_RULE_FOLLOWUP_GREETING", 1.05),
+            "ending_template": self._env_float("MQ_DELAY_FLOOR_ENDING_TEMPLATE", 1.05),
+        }
+        selected_floor = max(0.0, floor_by_route.get(route, route_floor))
+
         if jitter_max < jitter_min:
             jitter_min, jitter_max = jitter_max, jitter_min
 
         delay = base + max(0, len(response_text)) * per_char + random.uniform(jitter_min, jitter_max)
         delay = max(0.0, min(delay, max(0.0, cap)))
+        if selected_floor > 0:
+            delay = max(delay, selected_floor)
         logger.info(f"[拟人延时] route={route}, delay={delay:.3f}s")
         await asyncio.sleep(delay)
 

@@ -1,0 +1,181 @@
+{
+  "scenarios": [
+    {
+      "id": "listener_first_preference_ack_city",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "preference"],
+      "description": "用户直接表达偏好时，下一句应先接住偏好里的城市或择偶重点，再推进主问题。",
+      "messages": [
+        "我喜欢深圳的女生"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["深圳", "女生", "偏向", "同城"] },
+        { "type": "final_response_not_contains_any", "values": ["知道啦，那我确认下", "收到啦，那我确认下"] }
+      ]
+    },
+    {
+      "id": "listener_first_preference_ack_trait",
+      "category": "humanlike_listener_first",
+      "tags": ["humanlike", "listener_first", "preference"],
+      "description": "用户表达高瘦偏好时，回复应体现至少一个偏好点，而不是只切字段。",
+      "messages": [
+        "我想找高一点瘦一点的"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["高", "瘦", "偏好", "看重"] }
+      ]
+    },
+    {
+      "id": "listener_first_mixed_answer_and_fee",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "mixed", "faq"],
+      "description": "用户同句给资料并问收费时，回复应同时接住资料和收费问题。",
+      "messages": [
+        "男的，怎么收费"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["男生", "收费", "免费", "定制"] },
+        { "type": "final_response_not_contains_any", "values": ["先告诉我你的年龄", "先说下学历"] }
+      ]
+    },
+    {
+      "id": "listener_first_mixed_location_and_faq",
+      "category": "humanlike_listener_first",
+      "tags": ["humanlike", "listener_first", "mixed", "faq"],
+      "description": "用户同句说所在地并问门店时，回复应接住所在地或同城语境，再回答门店。",
+      "messages": [
+        "我在深圳，门店在哪"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["深圳", "门店", "定位", "线下"] }
+      ]
+    },
+    {
+      "id": "listener_first_boundary_ack_before_pause",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "boundary"],
+      "description": "用户说不方便时，应先接住边界感受，而不是继续追问资料。",
+      "messages": [
+        "这个我不太方便说"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["不太想展开", "不方便", "先不追问", "没关系"] },
+        { "type": "final_response_not_contains_any", "values": ["你今年多大", "你在哪个城市", "留个电话"] }
+      ]
+    },
+    {
+      "id": "listener_first_topic_shift_respected_fee",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "topic_shift", "faq"],
+      "description": "用户明确先聊收费时，必须顺着收费话题答，不应硬切回资料收集。",
+      "messages": [
+        "先不聊资料，先说收费"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["先顺着", "收费", "免费", "定制"] },
+        { "type": "final_response_not_contains_any", "values": ["先问下你在哪个城市", "先说下年龄", "先留个电话"] }
+      ]
+    },
+    {
+      "id": "listener_first_topic_shift_respected_store",
+      "category": "humanlike_listener_first",
+      "tags": ["humanlike", "listener_first", "topic_shift", "faq"],
+      "description": "用户要求先聊门店时，应先顺着门店话题，不应忽略用户的转场指令。",
+      "messages": [
+        "先聊这个，门店在哪"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["先顺着", "门店", "定位", "线下"] }
+      ]
+    },
+    {
+      "id": "listener_first_clarification_ack",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "clarification"],
+      "description": "用户说听不明白时，应先接住没听懂，再解释。",
+      "messages": [
+        "什么意思"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["直白", "换个说法", "没听明白"] }
+      ]
+    },
+    {
+      "id": "listener_first_joking_complaint_ack",
+      "category": "humanlike_listener_first",
+      "tags": ["humanlike", "listener_first", "complaint"],
+      "description": "用户吐槽像查户口时，应先轻接吐槽，不应继续强势推进。",
+      "messages": [
+        "你查户口呢问这么细"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["问细", "查户口", "慢慢来", "先不追"] },
+        { "type": "final_response_not_contains_any", "values": ["必须回答", "请配合", "先告诉我"] }
+      ]
+    },
+    {
+      "id": "listener_first_repeated_question_complaint_ack",
+      "category": "humanlike_listener_first",
+      "tags": ["humanlike", "listener_first", "complaint"],
+      "description": "用户抱怨又在问同一个点时，应先降压，不应继续把同一个问题顶上去。",
+      "messages": [
+        "你怎么又问这个"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["不追那么紧", "换个更直接", "先不问这个"] }
+      ]
+    },
+    {
+      "id": "listener_first_reliability_then_answer",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "reliability"],
+      "description": "用户质疑平台靠不靠谱时，应先接住担心，再回答靠谱和安全。",
+      "messages": [
+        "你们靠谱吗，我有点担心"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["靠谱", "安全", "放心", "正常"] },
+        { "type": "final_response_not_contains_any", "values": ["先告诉我你的年龄", "先留个电话"] }
+      ]
+    },
+    {
+      "id": "listener_first_privacy_then_answer",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "privacy"],
+      "description": "用户担心隐私时，应先接住隐私顾虑，再解释用途和保护。",
+      "messages": [
+        "我有点担心隐私，会不会泄露"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["隐私", "安全", "保护", "放心", "明白"] }
+      ]
+    },
+    {
+      "id": "listener_first_mixed_answer_and_boundary",
+      "category": "humanlike_listener_first",
+      "tags": ["humanlike", "listener_first", "mixed", "boundary"],
+      "description": "用户同句给出字段并表达边界时，应先接住已给字段，再尊重边界。",
+      "messages": [
+        "本科，不过这个先不太方便说"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["本科", "不太想展开", "不方便", "先不追问"] },
+        { "type": "final_response_not_contains_any", "values": ["那你职业呢", "再说下城市", "留个电话"] }
+      ]
+    },
+    {
+      "id": "listener_first_burst_preference_followup",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "burst"],
+      "description": "连发后最后一句是偏好时，最终回复应优先承接刚刚那条偏好，而不是只按字段顺序推进。",
+      "messages": [
+        "我找对象",
+        "我是男的",
+        "喜欢深圳女生"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["深圳", "女生", "偏向", "同城"] }
+      ]
+    }
+  ]
+}

@@ -73,6 +73,16 @@ class ProcessChatTurnUseCase:
                 f"total_ms={total_ms} stages={stages} error={error or '-'}"
             )
 
+        def _attach_route_meta(payload: Dict[str, Any], route: str) -> Dict[str, Any]:
+            if not isinstance(payload, dict):
+                return payload
+            meta = payload.get("meta")
+            if not isinstance(meta, dict):
+                meta = {}
+            meta["route"] = route
+            payload["meta"] = meta
+            return payload
+
         logger.info(f"[⏱️ 性能] 开始处理请求: account_id={account_id}, trace_id={trace_id}")
 
         try:
@@ -126,6 +136,7 @@ class ProcessChatTurnUseCase:
                     _mark("rule_state_update", t0)
                 route_name = str(payload.get("route") or "rule")
                 response_channel = "rule"
+                payload = _attach_route_meta(payload, route_name)
                 _log_turn(route_name, True)
                 return payload
 
@@ -142,6 +153,7 @@ class ProcessChatTurnUseCase:
 
             if turn_decision.next_action == "risk_guard":
                 risk_guard_response = self.chat_service._get_risk_guard_response(request.question, user_profile) or ""  # noqa: SLF001
+                risk_guard_response = self.chat_service._ensure_listener_first_ack(request.question, risk_guard_response)  # noqa: SLF001
                 await self.chat_service._update_conversation_state(  # noqa: SLF001
                     account_id,
                     request.question,
@@ -158,6 +170,7 @@ class ProcessChatTurnUseCase:
                     request.dialogId,
                     response_route="risk_guard",
                 )
+                payload = _attach_route_meta(payload, route_name)
                 _log_turn(route_name, True)
                 return payload
 
@@ -168,6 +181,7 @@ class ProcessChatTurnUseCase:
 
             if turn_decision.next_action == "boundary_pause":
                 boundary_pause_response = self.chat_service._get_boundary_pause_response(request.question) or ""  # noqa: SLF001
+                boundary_pause_response = self.chat_service._ensure_listener_first_ack(request.question, boundary_pause_response)  # noqa: SLF001
                 await self.chat_service._update_conversation_state(  # noqa: SLF001
                     account_id,
                     request.question,
@@ -184,6 +198,7 @@ class ProcessChatTurnUseCase:
                     request.dialogId,
                     response_route="boundary_pause",
                 )
+                payload = _attach_route_meta(payload, route_name)
                 _log_turn(route_name, True)
                 return payload
 
@@ -200,6 +215,7 @@ class ProcessChatTurnUseCase:
                     request.dialogId,
                     response_route="ending_template",
                 )
+                payload = _attach_route_meta(payload, route_name)
                 _log_turn(route_name, True)
                 return payload
 
@@ -213,13 +229,20 @@ class ProcessChatTurnUseCase:
                 recent = faq_state.get("recent_responses", [])
                 if not isinstance(recent, list):
                     recent = []
-                quick_faq_response = self.chat_service.user_question_service.get_quick_faq_response(
-                    request.question,
-                    repeat_count=repeat_count,
-                    recent_responses=tuple(recent),
-                )
+                last_response = await self.chat_service.dialogue_manager.get_last_response(account_id) or ""  # noqa: SLF001
+                quick_faq_response = ""
+                if faq_intent == "clarification":
+                    quick_faq_response = self.chat_service._build_contextual_clarification_reply(last_response, request.question)  # noqa: SLF001
+                if not quick_faq_response:
+                    quick_faq_response = self.chat_service.user_question_service.get_quick_faq_response(
+                        request.question,
+                        repeat_count=repeat_count,
+                        recent_responses=tuple(recent),
+                    )
                 if quick_faq_response:
-                    final_response = self.chat_service._ensure_conservative_empathy(request.question, quick_faq_response)  # noqa: SLF001
+                    final_response = self.chat_service._ensure_faq_humanlike_ack(request.question, quick_faq_response)  # noqa: SLF001
+                    final_response = self.chat_service._ensure_conservative_empathy(request.question, final_response)  # noqa: SLF001
+                    final_response = self.chat_service._ensure_listener_first_ack(request.question, final_response)  # noqa: SLF001
                     if faq_intent:
                         faq_state = {
                             "last_intent": faq_intent,
@@ -243,6 +266,7 @@ class ProcessChatTurnUseCase:
                         request.dialogId,
                         response_route="quick_faq",
                     )
+                    payload = _attach_route_meta(payload, route_name)
                     _log_turn(route_name, True)
                     return payload
 
@@ -267,6 +291,7 @@ class ProcessChatTurnUseCase:
                     final_response = self.chat_service._clean_response(final_response)  # noqa: SLF001
                     final_response = self.chat_service._apply_field_ask_guard(user_profile, final_response)  # noqa: SLF001
                     final_response = self.chat_service._ensure_conservative_empathy(request.question, final_response)  # noqa: SLF001
+                    final_response = self.chat_service._ensure_listener_first_ack(request.question, final_response)  # noqa: SLF001
                     final_response = self.chat_service._ensure_humanlike_memory_ack(request.question, user_profile, final_response)  # noqa: SLF001
                     final_response = self.chat_service._apply_dialogue_style_guard(  # noqa: SLF001
                         conversation_context.get("last_response", ""),
@@ -292,6 +317,7 @@ class ProcessChatTurnUseCase:
                         request.dialogId,
                         response_route="collection_short_circuit",
                     )
+                    payload = _attach_route_meta(payload, route_name)
                     extracted_fields_count = len(collection_result.get("all_fields", []))
                     _log_turn(route_name, True)
                     return payload
@@ -305,6 +331,7 @@ class ProcessChatTurnUseCase:
                     final_response = self.chat_service._clean_response(final_response)  # noqa: SLF001
                     final_response = self.chat_service._apply_field_ask_guard(user_profile, final_response)  # noqa: SLF001
                     final_response = self.chat_service._ensure_conservative_empathy(request.question, final_response)  # noqa: SLF001
+                    final_response = self.chat_service._ensure_listener_first_ack(request.question, final_response)  # noqa: SLF001
                     final_response = self.chat_service._ensure_humanlike_memory_ack(request.question, user_profile, final_response)  # noqa: SLF001
                     final_response = self.chat_service._apply_dialogue_style_guard(  # noqa: SLF001
                         conversation_context.get("last_response", ""),
@@ -334,6 +361,7 @@ class ProcessChatTurnUseCase:
                         field_ask_count_before,
                         response_route="rule_profile_fast_path",
                     )
+                    payload = _attach_route_meta(payload, route_name)
                     extracted_fields_count = len(collection_result.get("all_fields", []))
                     _log_turn(route_name, True)
                     return payload
@@ -375,6 +403,7 @@ class ProcessChatTurnUseCase:
                         request.dialogId,
                         response_route="rule_followup_greeting",
                     )
+                    payload = _attach_route_meta(payload, route_name)
                     _log_turn(route_name, True)
                     return payload
                 if is_ending:
@@ -392,6 +421,7 @@ class ProcessChatTurnUseCase:
                         request.dialogId,
                         response_route="ending_template",
                     )
+                    payload = _attach_route_meta(payload, route_name)
                     _log_turn(route_name, True)
                     return payload
 
@@ -458,6 +488,7 @@ class ProcessChatTurnUseCase:
                     tone_policy=turn_decision.tone_policy,
                 )
                 final_response = self.chat_service._ensure_conservative_empathy(request.question, final_response)  # noqa: SLF001
+                final_response = self.chat_service._ensure_listener_first_ack(request.question, final_response)  # noqa: SLF001
                 final_response = self.chat_service._avoid_preference_hard_ending(request.question, final_response)  # noqa: SLF001
                 await self.chat_service._update_conversation_state(  # noqa: SLF001
                     account_id,
@@ -481,6 +512,7 @@ class ProcessChatTurnUseCase:
                         "infra_fail": True,
                         "infra_fail_reason": infra_fail_reason,
                     }
+                payload = _attach_route_meta(payload, route_name)
                 _log_turn(route_name, True)
                 return payload
 
@@ -518,6 +550,7 @@ class ProcessChatTurnUseCase:
                 tone_policy=turn_decision.tone_policy,
             )  # noqa: SLF001
             final_response = self.chat_service._ensure_conservative_empathy(request.question, final_response)  # noqa: SLF001
+            final_response = self.chat_service._ensure_listener_first_ack(request.question, final_response)  # noqa: SLF001
             final_response = self.chat_service._ensure_humanlike_memory_ack(request.question, user_profile, final_response)  # noqa: SLF001
 
             field_ask_count_before = dict(user_profile.field_ask_count) if user_profile.field_ask_count else {}
@@ -549,6 +582,7 @@ class ProcessChatTurnUseCase:
                     "infra_fail": True,
                     "infra_fail_reason": infra_fail_reason,
                 }
+            payload = _attach_route_meta(payload, route_name)
             _log_turn(route_name, True)
             return payload
         except Exception as e:

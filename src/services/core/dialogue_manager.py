@@ -57,6 +57,13 @@ class DialogueManager:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _compact_prompt_text(text: str, max_chars: int) -> str:
+        content = str(text or "").strip()
+        if len(content) <= max_chars:
+            return content
+        return content[:max_chars] + "..."
+
     async def get_conversation_context(self, account_id: str) -> Dict[str, Any]:
         """
         获取对话上下文
@@ -112,6 +119,10 @@ class DialogueManager:
         # 获取已收集信息摘要
         extraction_service = ExtractionService(self.user_service)
         collected_info = extraction_service.get_collected_info_summary(user_profile)
+        collected_info_prompt = self._compact_prompt_text(
+            collected_info,
+            self._env_int("MQ_PROMPT_COLLECTED_INFO_MAX_CHARS", 260),
+        )
 
         # 获取性别指令
         gender_instruction = build_gender_instruction(user_profile.sex)
@@ -198,6 +209,9 @@ class DialogueManager:
 
         # 获取缺失字段列表（使用新的资料收集策略，而不是旧的统一缺失字段）
         missing_fields_list = policy_decision.missing_fields
+        missing_fields_max = self._env_int("MQ_PROMPT_MISSING_FIELDS_MAX", 6)
+        if missing_fields_max > 0:
+            missing_fields_list = missing_fields_list[:missing_fields_max]
         # 从配置获取字段名映射（英文 -> 中文）
         field_name_map = get_all_field_names()
         missing_fields_cn = [field_name_map.get(f, f) for f in missing_fields_list if f in field_name_map]
@@ -206,7 +220,7 @@ class DialogueManager:
         if prioritize_user_question:
             # 答疑优先轮次使用轻量提示词，减少 token 与推理耗时
             main_prompt = get_question_priority_dialogue(
-                collected_info=collected_info,
+                collected_info=collected_info_prompt,
                 gender_instruction=gender_instruction,
             )
         else:
@@ -218,7 +232,7 @@ class DialogueManager:
                 f"- 可进联系方式：{'是' if policy_decision.can_enter_contact else '否'}"
             )
             main_prompt = get_main_dialogue(
-                collected_info=collected_info,
+                collected_info=collected_info_prompt,
                 gender_instruction=gender_instruction,
                 contact_instruction=contact_instruction,
                 skipped_fields_instruction=skipped_fields_instruction,

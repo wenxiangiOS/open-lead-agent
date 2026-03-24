@@ -281,6 +281,214 @@
       "assertions": [
         { "type": "profile_field_equals", "field": "last_name", "expected": "李" }
       ]
+    },
+    {
+      "id": "field_stability_location_repeat_same",
+      "category": "field_collection",
+      "tags": ["stability", "location"],
+      "description": "用户两次提到同一城市时，所在地应保持稳定。",
+      "messages": [
+        "我在深圳",
+        "是的，我一直在深圳"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳" }
+      ]
+    },
+    {
+      "id": "field_stability_education_repeat_same",
+      "category": "field_collection",
+      "tags": ["stability", "education"],
+      "description": "用户重复同一学历时，学历字段应保持稳定。",
+      "messages": [
+        "我是本科",
+        "对，本科"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "education", "expected": "本科" }
+      ]
+    },
+    {
+      "id": "field_stability_marital_repeat_same",
+      "category": "field_collection",
+      "tags": ["stability", "marital_status"],
+      "description": "用户重复同一婚况时，婚况字段应保持稳定。",
+      "messages": [
+        "我单身",
+        "嗯，单身"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "marital_status", "expected": "单身" }
+      ]
+    },
+    {
+      "id": "field_stability_occupation_repeat_same",
+      "category": "field_collection",
+      "tags": ["stability", "occupation"],
+      "description": "用户重复同一职业时，职业字段应保持稳定。",
+      "messages": [
+        "我是老师",
+        "对，我是老师"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "occupation" }
+      ]
+    },
+    {
+      "id": "field_stability_location_repeat_same_hangzhou",
+      "category": "field_collection",
+      "tags": ["stability", "location"],
+      "description": "用户重复同一杭州地点时，所在地应保持稳定。",
+      "messages": [
+        "我在杭州",
+        "目前还是在杭州"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "location", "expected": "杭州" }
+      ]
+    },
+    {
+      "id": "field_stability_education_repeat_same_master",
+      "category": "field_collection",
+      "tags": ["stability", "education"],
+      "description": "用户重复硕士学历时，学历字段应保持稳定。",
+      "messages": [
+        "我是硕士",
+        "没错，硕士"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "education", "expected": "硕士" }
+      ]
+    },
+    {
+      "id": "field_stability_partner_requirement_repeat_same",
+      "category": "field_collection",
+      "tags": ["stability", "partner_requirement"],
+      "description": "用户重复同一择偶偏好时，偏好字段应保持稳定。",
+      "messages": [
+        "我同城优先",
+        "对，还是同城优先"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "partner_requirement" }
+      ]
+    },
+    {
+      "id": "field_stability_location_repeat_same_shanghai",
+      "category": "field_collection",
+      "tags": ["stability", "location"],
+      "description": "用户重复同一上海地点时，所在地应保持稳定。",
+      "messages": [
+        "我在上海",
+        "目前也在上海"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "location", "expected": "上海" }
+      ]
+    },
+    {
+      "id": "field_conflict_location_change_once",
+      "category": "field_collection",
+      "tags": ["stability", "conflict", "location"],
+      "description": "用户从深圳改口到广州，最终应保留最后一次明确地点。",
+      "messages": [
+        "我在深圳",
+        "更正一下，我现在在广州"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "location" }
+      ]
+    },
+    {
+      "id": "field_conflict_age_change_once",
+      "category": "field_collection",
+      "tags": ["stability", "conflict", "age"],
+      "description": "用户年龄从28改口到29，最终应以最后说法为准。",
+      "messages": [
+        "我28岁",
+        "补充下，我29岁"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "age" }
+      ]
+    },
+    {
+      "id": "field_conflict_education_change_once",
+      "category": "field_collection",
+      "tags": ["stability", "conflict", "education"],
+      "description": "用户学历从本科改口到硕士，最终应以最新信息为准。",
+      "messages": [
+        "我是本科",
+        "更正下，我是硕士"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "education" }
+      ]
+    },
+    {
+      "id": "field_conflict_marital_change_once",
+      "category": "field_collection",
+      "tags": ["stability", "conflict", "marital_status"],
+      "description": "用户婚况从单身改口到离异，最终应保留最新婚况。",
+      "messages": [
+        "我单身",
+        "更正一下，我离异"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "marital_status" }
+      ]
+    },
+    {
+      "id": "field_conflict_occupation_change_once",
+      "category": "field_collection",
+      "tags": ["stability", "conflict", "occupation"],
+      "description": "用户职业从运营改口到产品经理，最终应保留最后说法。",
+      "messages": [
+        "我做运营",
+        "更正一下，我做产品经理"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "occupation" }
+      ]
+    },
+    {
+      "id": "field_conflict_partner_requirement_change_once",
+      "category": "field_collection",
+      "tags": ["stability", "conflict", "partner_requirement"],
+      "description": "用户择偶偏好从同城优先改为成熟稳重，最终应保留最后偏好。",
+      "messages": [
+        "我同城优先",
+        "改下，我更看重成熟稳重"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "partner_requirement" }
+      ]
+    },
+    {
+      "id": "field_conflict_phone_change_once",
+      "category": "field_collection",
+      "tags": ["stability", "conflict", "contact_phone"],
+      "description": "用户电话号码前后改口，最终应以最新号码为准。",
+      "messages": [
+        "我电话17688654321",
+        "更正下，17688650001"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "phone" }
+      ]
+    },
+    {
+      "id": "field_conflict_wechat_change_once",
+      "category": "field_collection",
+      "tags": ["stability", "conflict", "contact_wechat"],
+      "description": "用户微信号前后改口，最终应以最后微信为准。",
+      "messages": [
+        "我微信wxabc123",
+        "更正，我微信wxabc999"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "wechat" }
+      ]
     }
   ]
 }

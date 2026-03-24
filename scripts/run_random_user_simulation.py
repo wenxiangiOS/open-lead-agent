@@ -32,7 +32,15 @@ from src.models.requests import ChatRequest
 from src.services.ai_service import AIService
 from src.services.core.chat_service import ChatService
 from src.services.data.user_service import UserService
-from tests.real_ai.scenario_runner import ScenarioLoader
+from tests.real_ai.scenario_runner import AssertionEvaluator, ScenarioCase, ScenarioLoader, TurnRecord as ScenarioTurnRecord
+
+LISTENER_FIRST_SUITE_CATEGORIES = [
+    "humanlike_listener_first",
+    "matchmaker_consulting",
+    "matchmaker_boundary",
+    "matchmaker_preference",
+    "matchmaker_mixed_intent",
+]
 
 LOCATIONS = ["深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州"]
 EDUCATIONS = ["大专", "本科", "硕士"]
@@ -189,6 +197,7 @@ class TurnRecord:
     failures: list[str] = field(default_factory=list)
     infra_fail: bool = False
     infra_fail_reason: str = ""
+    route: str = "unknown"
 
 
 @dataclass
@@ -204,7 +213,9 @@ class SessionResult:
     field_failures: list[str]
     policy_checks: list[dict[str, Any]]
     policy_failures: list[str]
-    duration_s: float
+    scenario_assertion_checks: list[dict[str, Any]] = field(default_factory=list)
+    scenario_assertion_failures: list[str] = field(default_factory=list)
+    duration_s: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -219,6 +230,8 @@ class SessionResult:
             "field_failures": self.field_failures,
             "policy_checks": self.policy_checks,
             "policy_failures": self.policy_failures,
+            "scenario_assertion_checks": self.scenario_assertion_checks,
+            "scenario_assertion_failures": self.scenario_assertion_failures,
             "duration_s": round(self.duration_s, 3),
         }
 
@@ -284,6 +297,12 @@ def parse_args() -> argparse.Namespace:
         help="场景文件或目录；覆盖模式会自动合并 scenarios + scenarios_pending（当未指定时）",
     )
     parser.add_argument("--scenario-id", action="append", dest="scenario_ids", help="只跑指定场景，可传多次")
+    parser.add_argument("--scenario-category", action="append", dest="scenario_categories", help="只跑指定场景类别，可传多次")
+    parser.add_argument(
+        "--listener-first-suite",
+        action="store_true",
+        help="只跑“像人在接话”专项场景（承接/转场/FAQ/边界/混合输入）",
+    )
     parser.add_argument("--max-scenarios", type=int, help="覆盖模式最多跑前 N 个场景")
     parser.add_argument("--template-risk-threshold", type=float, default=0.18, help="模板化风险阈值")
     parser.add_argument(
@@ -384,15 +403,95 @@ def _load_coverage_scenarios(args: argparse.Namespace) -> list[dict[str, Any]]:
             "category": s["category"],
             "tags": s.get("tags", []),
             "messages": s["messages"],
+            "description": s.get("description", ""),
+            "assertions": s.get("assertions", []),
         }
         for s in merged
     ]
+    scenario_categories = list(getattr(args, "scenario_categories", None) or [])
+    if bool(getattr(args, "listener_first_suite", False)):
+        scenario_categories.extend(LISTENER_FIRST_SUITE_CATEGORIES)
+
     if args.scenario_ids:
         allowed = set(args.scenario_ids)
         scenarios = [x for x in scenarios if x["id"] in allowed]
+    if scenario_categories:
+        allowed_categories = set(scenario_categories)
+        scenarios = [x for x in scenarios if x["category"] in allowed_categories]
     if args.max_scenarios is not None:
         scenarios = scenarios[: args.max_scenarios]
     return scenarios
+
+
+def _evaluate_scenario_assertions(
+    scenario_id: str,
+    category: str,
+    tags: list[str],
+    description: str,
+    messages: list[str],
+    assertions: list[dict[str, Any]],
+    turns: list[TurnRecord],
+    final_profile: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    if not assertions:
+        return [], []
+
+    scenario = ScenarioCase.from_dict(
+        {
+            "id": scenario_id,
+            "category": category,
+            "tags": tags,
+            "description": description,
+            "messages": messages,
+            "assertions": assertions,
+        }
+    )
+    evaluator = AssertionEvaluator()
+    runner_turns = [
+        ScenarioTurnRecord(
+            index=t.index,
+            user_message=t.user,
+            assistant_response=t.assistant,
+            collected_info=t.collected_info or {},
+        )
+        for t in turns
+    ]
+    failures = evaluator.evaluate(scenario, runner_turns, final_profile or {})
+    failure_keys = {(item.assertion_type, item.turn, item.field, item.message) for item in failures}
+    checks: list[dict[str, Any]] = []
+    failure_messages: list[str] = []
+    for raw in assertions:
+        assertion_type = str(raw.get("type") or "unknown")
+        turn = raw.get("turn")
+        field = raw.get("field")
+        expected = raw.get("values") if "values" in raw else raw.get("expected")
+        matched_failure = next(
+            (
+                item for item in failures
+                if item.assertion_type == assertion_type and item.turn == turn and item.field == field
+            ),
+            None,
+        )
+        passed = matched_failure is None
+        note = "" if passed else matched_failure.message
+        checks.append(
+            {
+                "name": f"scenario_assertion::{assertion_type}",
+                "passed": passed,
+                "expected": expected,
+                "actual": "pass" if passed else "fail",
+                "note": note,
+            }
+        )
+        if matched_failure and (matched_failure.assertion_type, matched_failure.turn, matched_failure.field, matched_failure.message) in failure_keys:
+            failure_messages.append(f"{assertion_type}: {matched_failure.message}")
+            failure_keys.remove((matched_failure.assertion_type, matched_failure.turn, matched_failure.field, matched_failure.message))
+    for leftover in failures:
+        key = (leftover.assertion_type, leftover.turn, leftover.field, leftover.message)
+        if key in failure_keys:
+            failure_messages.append(f"{leftover.assertion_type}: {leftover.message}")
+            failure_keys.remove(key)
+    return checks, failure_messages
 
 
 def _build_persona(rng: random.Random) -> Persona:
@@ -659,6 +758,16 @@ def _normalize_phone(value: Any) -> str:
 
 def _normalize_wechat(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def _is_expected_contact_collectable(session: SessionResult) -> bool:
+    if not any("contact" in tag for tag in (session.tags or [])):
+        return False
+    scenario_id = str(session.scenario_id or "")
+    for pattern in CONTACT_EXPECTED_NO_COLLECT_PATTERNS:
+        if re.search(pattern, scenario_id):
+            return False
+    return True
 
 
 def _extract_explicit_phone(text: str) -> str | None:
@@ -1041,6 +1150,18 @@ CONTACT_TRANSITION_MARKERS = ["顺便", "资料差不多", "后续方便联系",
 CLARIFICATION_USER_PATTERNS = [r"没看懂", r"看不懂", r"听不懂", r"啥意思", r"什么意思", r"解释下", r"解释一下"]
 CLARIFICATION_ASSISTANT_MARKERS = ["换个直白", "简单说", "意思是", "比如", "关键条件", "标准", "我换个说法"]
 REPEAT_LOOP_SENTENCE_MARKERS = ["我们先不连着问资料", "你也可以先说说你更在意的匹配点"]
+CONTACT_EXPECTED_NO_COLLECT_PATTERNS = [
+    r"no_contact",
+    r"refused",
+    r"reject",
+    r"invalid_should_retry",
+    r"invalid_format_retry",
+    r"contaminated.*retry",
+    r"too_short_should_retry",
+    r"too_long_should_retry",
+    r"confirm_word_after_phone_prompt",
+    r"confirm_word_then_wechat_fallback",
+]
 
 
 def _classify_user_faq_intent(user: str) -> str | None:
@@ -1279,6 +1400,9 @@ async def _run_one(
     scenario_id: str,
     category: str,
     tags: list[str],
+    description: str,
+    scenario_messages: list[str],
+    scenario_assertions: list[dict[str, Any]],
     verbose: bool,
     min_human_latency: float,
     faq_min_human_latency: float,
@@ -1335,6 +1459,7 @@ async def _run_one(
         resp_meta = resp_meta if isinstance(resp_meta, dict) else {}
         infra_fail = bool(resp_meta.get("infra_fail"))
         infra_fail_reason = str(resp_meta.get("infra_fail_reason") or "")
+        route = str(resp_meta.get("route") or "unknown")
         last_ai = ai_text
         prev_ai = records[-1].assistant if records else ""
         if infra_fail:
@@ -1360,6 +1485,7 @@ async def _run_one(
             failures=turn_failures,
             infra_fail=infra_fail,
             infra_fail_reason=infra_fail_reason,
+            route=route,
         )
         records.append(rec)
 
@@ -1383,6 +1509,18 @@ async def _run_one(
         ack_overuse_threshold=ack_overuse_threshold,
         core_streak_max=core_streak_max,
     )
+    scenario_assertion_checks, scenario_assertion_failures = _evaluate_scenario_assertions(
+        scenario_id=scenario_id,
+        category=category,
+        tags=tags,
+        description=description,
+        messages=scenario_messages,
+        assertions=scenario_assertions,
+        turns=records,
+        final_profile=final_profile,
+    )
+    policy_checks.extend(scenario_assertion_checks)
+    policy_failures.extend(scenario_assertion_failures)
 
     return SessionResult(
         session_id=session_id,
@@ -1396,6 +1534,8 @@ async def _run_one(
         field_failures=field_failures,
         policy_checks=policy_checks,
         policy_failures=policy_failures,
+        scenario_assertion_checks=scenario_assertion_checks,
+        scenario_assertion_failures=scenario_assertion_failures,
         duration_s=time.perf_counter() - started,
     )
 
@@ -1414,6 +1554,9 @@ def _build_workload(args: argparse.Namespace, rng: random.Random) -> list[dict[s
                     "scenario_id": sc["id"],
                     "category": sc["category"],
                     "tags": sc["tags"],
+                    "description": sc.get("description", ""),
+                    "scenario_messages": dense[: max(args.min_turns, min(len(dense), args.max_turns))] or ["__AUTO__"],
+                    "scenario_assertions": list(sc.get("assertions", [])),
                     "turns": dense[: max(args.min_turns, min(len(dense), args.max_turns))] or ["__AUTO__"],
                 }
             )
@@ -1442,6 +1585,9 @@ def _build_workload(args: argparse.Namespace, rng: random.Random) -> list[dict[s
                 "scenario_id": f"random_{i+1}",
                 "category": "random",
                 "tags": ["realism", "random"],
+                "description": "",
+                "scenario_messages": turns,
+                "scenario_assertions": [],
                 "turns": turns,
             }
         )
@@ -1745,17 +1891,35 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
     invalid_wechat_cases = turn_failure_counter.get("invalid_wechat_not_retried", 0)
     contact_sessions = 0
     contact_success_sessions = 0
+    contact_collectable_sessions = 0
+    contact_collectable_success_sessions = 0
+    contact_refusal_or_guard_sessions = 0
+    contact_refusal_or_guard_pass_sessions = 0
     for session in results:
         if any("contact" in tag for tag in session.tags):
             contact_sessions += 1
             fp = session.final_profile or {}
-            if fp.get("phone") or fp.get("wechat"):
+            has_contact = bool(fp.get("phone") or fp.get("wechat"))
+            if has_contact:
                 contact_success_sessions += 1
+            is_collectable = _is_expected_contact_collectable(session)
+            if is_collectable:
+                contact_collectable_sessions += 1
+                if has_contact:
+                    contact_collectable_success_sessions += 1
+            else:
+                contact_refusal_or_guard_sessions += 1
+                if (not has_contact) or bool((session.final_profile or {}).get("conversation_ended")):
+                    contact_refusal_or_guard_pass_sessions += 1
 
     # 按意图时延分桶 + 秒回率
     latency_by_intent: dict[str, list[float]] = {}
     instant_reply_cases = 0
     faq_instant_reply_cases = 0
+    model_turns = 0
+    model_instant_reply_cases = 0
+    non_ai_turns = 0
+    non_ai_instant_reply_cases = 0
     for session in results:
         for turn in session.turns:
             intent = _classify_user_faq_intent(turn.user) or "general"
@@ -1764,6 +1928,17 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
                 instant_reply_cases += 1
                 if intent != "general":
                     faq_instant_reply_cases += 1
+            if getattr(turn, "infra_fail", False):
+                continue
+            route = str(getattr(turn, "route", "unknown") or "unknown")
+            if route == "model":
+                model_turns += 1
+                if turn.latency_s < 1.0:
+                    model_instant_reply_cases += 1
+            else:
+                non_ai_turns += 1
+                if turn.latency_s < 1.0:
+                    non_ai_instant_reply_cases += 1
 
     intent_latency = []
     for intent, vals in latency_by_intent.items():
@@ -2016,6 +2191,18 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
             "contact_sessions": contact_sessions,
             "contact_success_sessions": contact_success_sessions,
             "contact_success_rate": round((contact_success_sessions / contact_sessions), 4) if contact_sessions else 1.0,
+            "collectable_contact_sessions": contact_collectable_sessions,
+            "collectable_contact_success_sessions": contact_collectable_success_sessions,
+            "collectable_contact_success_rate": round(
+                (contact_collectable_success_sessions / contact_collectable_sessions),
+                4,
+            ) if contact_collectable_sessions else 1.0,
+            "refusal_or_guard_sessions": contact_refusal_or_guard_sessions,
+            "refusal_or_guard_pass_sessions": contact_refusal_or_guard_pass_sessions,
+            "refusal_or_guard_pass_rate": round(
+                (contact_refusal_or_guard_pass_sessions / contact_refusal_or_guard_sessions),
+                4,
+            ) if contact_refusal_or_guard_sessions else 1.0,
             "invalid_phone_not_retried": invalid_phone_cases,
             "invalid_wechat_not_retried": invalid_wechat_cases,
         },
@@ -2068,6 +2255,12 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
         "latency_experience": {
             "instant_reply_rate_lt_1s": round((instant_reply_cases / len(turns)), 4) if turns else 0.0,
             "faq_instant_reply_rate_lt_1s": round((faq_instant_reply_cases / len(turns)), 4) if turns else 0.0,
+            "model_turns": model_turns,
+            "model_instant_reply_cases_lt_1s": model_instant_reply_cases,
+            "model_only_instant_reply_rate_lt_1s": round((model_instant_reply_cases / model_turns), 4) if model_turns else 0.0,
+            "non_ai_turns": non_ai_turns,
+            "non_ai_instant_reply_cases_lt_1s": non_ai_instant_reply_cases,
+            "non_ai_instant_reply_rate_lt_1s": round((non_ai_instant_reply_cases / non_ai_turns), 4) if non_ai_turns else 0.0,
             "slow_reply_rate_gt_20s": round((sum(1 for t in turns if t.latency_s > 20.0) / len(turns)), 4) if turns else 0.0,
         },
         "slow_turns_top20": slow_turns,
@@ -2378,6 +2571,8 @@ def _build_domain_gates(
         "pass": not contact_failed,
         "failed_checks": contact_failed,
         "contact_success_rate": contact.get("contact_success_rate"),
+        "collectable_contact_success_rate": contact.get("collectable_contact_success_rate"),
+        "refusal_or_guard_pass_rate": contact.get("refusal_or_guard_pass_rate"),
         "refusal_respect_rate": qg.get("refusal_respect_rate"),
     }
     mq_gate = {
@@ -2705,6 +2900,14 @@ def _write_reports(
         f"- 联系方式成功率: {cq.get('contact_success_rate', 1.0):.1%} "
         f"({cq.get('contact_success_sessions', 0)}/{cq.get('contact_sessions', 0)})"
     )
+    lines.append(
+        f"- 可收集场景成功率: {cq.get('collectable_contact_success_rate', 1.0):.1%} "
+        f"({cq.get('collectable_contact_success_sessions', 0)}/{cq.get('collectable_contact_sessions', 0)})"
+    )
+    lines.append(
+        f"- 拒绝/防护场景通过率: {cq.get('refusal_or_guard_pass_rate', 1.0):.1%} "
+        f"({cq.get('refusal_or_guard_pass_sessions', 0)}/{cq.get('refusal_or_guard_sessions', 0)})"
+    )
     lines.append(f"- 无效电话未重试: {cq.get('invalid_phone_not_retried', 0)} 次")
     lines.append(f"- 无效微信未重试: {cq.get('invalid_wechat_not_retried', 0)} 次")
     lines += [
@@ -2728,6 +2931,14 @@ def _write_reports(
     le = analysis.get("latency_experience", {})
     lines.append(f"- 秒回率(<1s): {le.get('instant_reply_rate_lt_1s', 0.0):.1%}")
     lines.append(f"- FAQ秒回率(<1s): {le.get('faq_instant_reply_rate_lt_1s', 0.0):.1%}")
+    lines.append(
+        f"- Model秒回率(<1s): {le.get('model_only_instant_reply_rate_lt_1s', 0.0):.1%} "
+        f"({le.get('model_instant_reply_cases_lt_1s', 0)}/{le.get('model_turns', 0)})"
+    )
+    lines.append(
+        f"- NonAI秒回率(<1s): {le.get('non_ai_instant_reply_rate_lt_1s', 0.0):.1%} "
+        f"({le.get('non_ai_instant_reply_cases_lt_1s', 0)}/{le.get('non_ai_turns', 0)})"
+    )
     lines.append(f"- 超慢回复率(>20s): {le.get('slow_reply_rate_gt_20s', 0.0):.1%}")
     lines += ["", "## 失败样本（自动抽样）", ""]
     sample_payload = analysis.get("failure_samples", {})
@@ -2873,6 +3084,9 @@ async def main() -> int:
             scenario_id=item["scenario_id"],
             category=item["category"],
             tags=item["tags"],
+            description=item.get("description", ""),
+            scenario_messages=item.get("scenario_messages", item["turns"]),
+            scenario_assertions=item.get("scenario_assertions", []),
             verbose=args.verbose,
             min_human_latency=args.min_human_latency,
             faq_min_human_latency=args.faq_min_human_latency,
@@ -2972,6 +3186,8 @@ async def main() -> int:
     print(
         "联系方式质量: "
         f"成功率={cq.get('contact_success_rate', 1.0):.1%}, "
+        f"可收集成功率={cq.get('collectable_contact_success_rate', 1.0):.1%}, "
+        f"拒绝流通过率={cq.get('refusal_or_guard_pass_rate', 1.0):.1%}, "
         f"无效电话未重试={cq.get('invalid_phone_not_retried', 0)}, "
         f"无效微信未重试={cq.get('invalid_wechat_not_retried', 0)}"
     )
@@ -2980,6 +3196,8 @@ async def main() -> int:
         "时延体验: "
         f"秒回率(<1s)={le.get('instant_reply_rate_lt_1s', 0.0):.1%}, "
         f"FAQ秒回率={le.get('faq_instant_reply_rate_lt_1s', 0.0):.1%}, "
+        f"Model秒回率={le.get('model_only_instant_reply_rate_lt_1s', 0.0):.1%}, "
+        f"NonAI秒回率={le.get('non_ai_instant_reply_rate_lt_1s', 0.0):.1%}, "
         f"超慢率(>20s)={le.get('slow_reply_rate_gt_20s', 0.0):.1%}"
     )
     iq = analysis.get("isolation_quality", {})

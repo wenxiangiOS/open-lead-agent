@@ -419,6 +419,18 @@ class ContactCollectionService:
             if profile.wechat_ask_count < max_wechat:
                 return NextAction.PERSUADE_WECHAT
 
+        # 场景4.5: 电话第一次被拒后，非香港用户优先切微信，不立刻继续争电话
+        if (
+            not is_hk
+            and not profile.phone_collected
+            and not profile.rejected_phone
+            and profile.phone_ask_count >= 1
+            and not profile.wechat_collected
+            and not profile.rejected_wechat
+            and profile.wechat_ask_count == 0
+        ):
+            return NextAction.ASK_WECHAT
+
         # 场景5: 电话正在争取中（还没被最终拒绝），继续争取电话
         if not profile.rejected_phone and not profile.phone_collected and profile.phone_ask_count >= 1:
             if profile.phone_ask_count < 2:
@@ -1050,7 +1062,10 @@ class ContactCollectionService:
         elif profile.rejected_phone:
             phone_status = "不愿留电话"
         elif phone_asking:
-            phone_status = "电话争取中"
+            if wechat_asking or profile.wechat_collected:
+                phone_status = "电话暂缓"
+            else:
+                phone_status = "电话待确认"
 
         # 微信状态
         if profile.wechat_collected and profile.wechat:
@@ -1058,7 +1073,7 @@ class ContactCollectionService:
         elif profile.rejected_wechat:
             wechat_status = "不愿留微信"
         elif wechat_asking:
-            wechat_status = "微信争取中"
+            wechat_status = "微信待确认"
 
         # 组合状态
         if phone_status and wechat_status:
