@@ -10,7 +10,7 @@
         "你是中介吗"
       ],
       "assertions": [
-        { "type": "response_contains_any", "turn": 2, "values": ["同城脱单联盟", "牵线"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["中介", "情况", "沟通", "继续"] },
         { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信", "联系方式"] }
       ]
     },
@@ -52,7 +52,8 @@
         "为什么要留电话呢"
       ],
       "assertions": [
-        { "type": "response_contains_any", "turn": 2, "values": ["联系", "用途", "通知", "不会", "打扰"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["联系", "用途", "沟通", "确认", "方便"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["第一时间联系", "有合适的人选", "发资料", "1到8小时"] },
         { "type": "response_not_contains_any", "turn": 2, "values": ["留个电话号码", "方便留个电话", "留微信"] }
       ]
     },
@@ -66,7 +67,8 @@
         "有线下门店吗"
       ],
       "assertions": [
-        { "type": "response_contains_any", "turn": 2, "values": ["深圳门店", "服务点", "定位"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["深圳", "门店", "线下", "沟通安排"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["发具体定位", "发具体地址", "马上发定位"] },
         { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信"] }
       ]
     },
@@ -80,7 +82,8 @@
         "你们怎么匹配"
       ],
       "assertions": [
-        { "type": "response_contains_any", "turn": 2, "values": ["线上", "匹配", "线下安排", "牵线"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["线上", "匹配", "沟通", "了解情况"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["线下安排", "安排见面", "发资料", "1到8小时"] },
         { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信", "年龄"] }
       ]
     },
@@ -94,7 +97,8 @@
         "可以直接加对方微信吗"
       ],
       "assertions": [
-        { "type": "response_contains_any", "turn": 2, "values": ["互换", "牵线", "先搭桥", "双方合适"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["直接", "不会", "沟通", "确认"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["互换联系方式", "直接对接", "加对方微信", "发资料"] },
         { "type": "response_not_contains_any", "turn": 2, "values": ["你的微信", "留个微信", "电话"] }
       ]
     },
@@ -108,8 +112,38 @@
         "能先看照片吗"
       ],
       "assertions": [
-        { "type": "response_contains_any", "turn": 2, "values": ["合适后", "互换照片", "双方觉得合适"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["照片", "隐私", "不会现在就发", "沟通情况"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["互换照片", "发照片", "先把照片发你"] },
         { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信"] }
+      ]
+    },
+    {
+      "id": "faq_priority_specific_target_respects_bidirectional_choice",
+      "category": "faq",
+      "tags": ["faq_priority", "preference", "humanlike"],
+      "description": "用户只想要某个特定对象时，应先承接，但不能承诺一定能成。",
+      "messages": [
+        "找对象",
+        "我就想要这个男生"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["这个男生", "双方", "不合适", "继续"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["100%", "保证", "一定成"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信"] }
+      ]
+    },
+    {
+      "id": "faq_priority_marriage_pace_respected",
+      "category": "faq",
+      "tags": ["faq_priority", "preference", "humanlike"],
+      "description": "用户说暂时不想结婚、着急结婚的不要时，应先承接节奏偏好。",
+      "messages": [
+        "找对象",
+        "我暂时不想结婚，着急结婚的不要"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["节奏", "慢慢", "相处", "了解"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信", "联系方式"] }
       ]
     },
     {
@@ -167,6 +201,7 @@
       ],
       "assertions": [
         { "type": "response_contains_any", "turn": 2, "values": ["时间", "周期", "匹配", "因人而异"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["1到8小时", "1到2天", "第一时间联系", "马上安排"] },
         { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信"] }
       ]
     },

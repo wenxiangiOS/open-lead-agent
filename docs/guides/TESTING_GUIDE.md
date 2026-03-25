@@ -38,6 +38,53 @@ pytest tests/performance/
 pytest --cov=src --cov-report=html
 ```
 
+### 当前推荐回归组
+
+对于最近这轮“固定文案清理 + 错误出口结构化 + MQ 校验指标接入”，优先跑下面这组：
+
+```bash
+pytest -q \
+  tests/unit/test_chat_service_validation_feedback.py \
+  tests/unit/test_message_orchestrator.py \
+  tests/unit/test_error_handler_structured_http.py \
+  tests/unit/test_validation_middleware_structured_errors.py \
+  tests/unit/test_enhanced_exceptions_structured.py \
+  tests/unit/test_security_middleware_structured_errors.py \
+  tests/unit/test_system_dashboard_metrics.py
+```
+
+覆盖点：
+
+- 联系方式校验失败改为 `error_code + AI 引导`
+- MQ 对 `meta.validation` 的消费与指标累加
+- API / middleware / security 的结构化错误输出
+- `/api/doubao/mq/dashboard` 校验类指标与占比
+
+### 当前推荐回归组（拟人化优先）
+
+对于最近这轮“拟人化优先 + 去旧客服腔/快路径 + 回归基线清理”，优先跑下面这组：
+
+```bash
+pytest -q \
+  tests/unit/test_chat_service_regressions.py -k 'contact_validation or select_model_for_turn or select_max_tokens_for_turn or terminal_response_policy or contact_persuasion_style_policy or contact_boundary_softening_policy or generate_system_prompt_avoids_fake_resume_injection or expectation_service_timeline_copy_avoids_contacting_candidates_tone or apply_field_ask_guard' \
+  tests/unit/test_contact_collection_service.py -k 'soft_ack or prefers_wechat_over_phone' \
+  tests/unit/test_chat_service_validation_feedback.py \
+  tests/unit/test_retention.py
+```
+
+覆盖点：
+
+- 不再使用低复杂度快模型 / token 压缩来驱动主链路回复
+- 假履历人设已退出提示词和系统提示
+- 联系方式重复追问已降压
+- 联系方式成功确认、边界软化、收尾回复更接近自然口语
+- `input_fallback_service` 收尾和确认词兜底不再使用明显客服模板句
+
+说明：
+
+- `tests/unit/test_chat_service_regressions.py` 已清掉一批围绕旧 fast-path 和已删除私有方法的失效测试
+- 如果后续继续调拟人化，优先在这个回归组上看行为是否被拉回旧口径
+
 ---
 
 ## 测试类型

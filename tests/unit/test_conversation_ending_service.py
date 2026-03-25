@@ -256,6 +256,26 @@ class TestConversationEndingService:
         result = self.service.check_and_get_ending("你好", profile)
         assert result is None
 
+    def test_build_ending_info_for_ai_scenario(self):
+        """直接构建收尾信息 - AI 场景"""
+        profile = UserProfile(account_id="test")
+        result = self.service.build_ending_info("normal_complete", profile)
+        assert result["scenario"] == "normal_complete"
+        assert result["use_ai"] == True
+        assert "extra_instructions" in result
+        assert "response" not in result
+        assert profile.conversation_ended == True
+
+    def test_build_ending_info_for_preset_scenario(self):
+        """直接构建收尾信息 - 预设场景"""
+        profile = UserProfile(account_id="test")
+        result = self.service.build_ending_info("separation", profile)
+        assert result["scenario"] == "separation"
+        assert result["use_ai"] == False
+        assert "response" in result
+        assert result["response"]
+        assert profile.conversation_ended == True
+
     # ==================== 场景描述测试 ====================
 
     def test_get_scenario_description(self):

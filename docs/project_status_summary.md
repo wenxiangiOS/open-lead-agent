@@ -1,6 +1,6 @@
 # Project Status Summary
 
-> 更新时间：2026-03-18
+> 更新时间：2026-03-24
 > 目标：给当前仓库提供一份简洁、可交接的状态总结
 > 适用对象：当前维护者、后续接手的模型或工程师
 
@@ -98,6 +98,8 @@
 - `93 passed, 1 skipped`
 - `29 passed`
 - `73 passed`
+- `17 passed`
+- `9 passed`
 
 覆盖范围包括：
 
@@ -108,11 +110,54 @@
 - message queue worker
 - reply sender worker
 - message queue integration pipeline
+- contact validation feedback
+- structured API / middleware errors
+- security middleware structured auth errors
+- mq dashboard validation metrics
 
 说明：
 
 - 本地 HTTP 小红书投递 e2e 在某些环境下可能被跳过
 - 当前没有迹象表明本轮结构重构引入了明显回退
+
+### 3.1 近期补充完成
+
+最近一轮“深度删死代码 + 去固定文案残留”已补到下面状态：
+
+- `chat_service` 中联系方式校验失败已改为 `error_code + AI 引导`，不再直接返回固定提示句
+- `ProcessChatTurnUseCase` 已将校验元数据保留到 `payload.meta.validation`
+- MQ 已消费 `meta.validation`，并新增：
+  - `contact_validation_retry`
+  - `contact_validation_silent`
+- `/api/doubao/mq/dashboard` 已新增联系方式校验统计与占比
+- API / middleware / security 面向外部的主错误字段已基本统一成结构化 key，不再以固定中文文案为主
+
+### 3.2 拟人化优先口径已落地一轮
+
+本轮已经明确把“拟人化优先”设为当前对话链路的最高优先级。
+
+这里的“拟人化”不是指文案更花，也不是多用语气词，而是：
+
+- 回复要更像真人当下在接话
+- 不要像客服、脚本、流程广播或业务话术
+- 先承接用户，再决定是否推进字段或联系方式
+- 宁可慢一点，也不再为了所谓快路径牺牲表达稳定性
+
+这一轮已完成的具体收口包括：
+
+- `chat_service` 不再按低复杂度切快模型，统一主模型输出
+- 低复杂度 / 长 prompt / 高风险轮次不再压 `max_tokens`
+- `prompts` / `ai_service` 不再写死“28岁 / 3年经验 / 专业红娘 / 深圳”等假履历
+- 联系方式重复追问已降压：
+  - 电话、微信都推进过后，用户只回“好的 / 嗯”时不再继续索要联系方式
+- 联系方式失败重试、边界降压、成功确认、收尾回复都已改成更自然的当前语境承接
+- `input_fallback_service`、`expectation_service`、`user_question_service` 中高频“业务腔 / 客服腔 / 模板腔”已清理一轮
+
+当前还保留的原则：
+
+- 固定用户可见文案继续减少
+- 结构化状态和错误码负责约束
+- 用户可见回复尽量由 AI 自然生成或由更轻、更自然的兜底句承接
 
 ---
 
@@ -169,6 +214,7 @@
 - 容易碰到 `dialogue_manager`
 - 容易碰到 `message_queue`
 - 容易误伤联系方式业务真源
+ - 也容易把当前已经收住的“拟人化口径”重新拉回旧客服腔或旧快路径
 
 4. 当前更适合进入稳定验证期
 - 补端到端验证

@@ -27,15 +27,15 @@ class ErrorHandler:
         'id_card', 'idcard', 'ssn'
     ]
 
-    # 用户友好的错误信息映射
-    USER_FRIENDLY_MESSAGES = {
-        'ConnectionError': '网络连接失败，请检查网络设置',
-        'TimeoutError': '请求超时，请稍后重试',
-        'RedisError': '缓存服务暂时不可用，正在使用备用存储',
-        'ValidationError': '输入数据格式不正确',
-        'KeyError': '数据处理异常，请重试',
-        'ValueError': '数据值无效',
-        'TypeError': '数据类型错误',
+    # 结构化错误键映射
+    ERROR_KEYS = {
+        'ConnectionError': 'connection_error',
+        'TimeoutError': 'timeout_error',
+        'RedisError': 'redis_error',
+        'ValidationError': 'validation_error',
+        'KeyError': 'key_error',
+        'ValueError': 'value_error',
+        'TypeError': 'type_error',
     }
 
     @classmethod
@@ -119,10 +119,10 @@ class ErrorHandler:
             factory.switch_to_memory_only()
             logger.info("已自动切换到内存存储模式")
 
-            # 返回降级提示（不影响用户体验）
             return {
                 "success": True,
-                "warning": "缓存服务暂时不可用，已切换到备用存储"
+                "warning": "redis_fallback_activated",
+                "warning_code": "REDIS_FALLBACK_ACTIVATED",
             }
 
         # 其他错误不尝试恢复
@@ -142,6 +142,14 @@ class ErrorHandler:
 
         # 如果是 HTTPException
         if isinstance(error, HTTPException):
+            detail = error.detail
+            if isinstance(detail, dict):
+                return {
+                    "success": False,
+                    "error": detail.get("error") or str(detail) or "request_failed",
+                    "error_code": detail.get("error_code") or f"HTTP_{error.status_code}",
+                    "details": detail.get("details") or {},
+                }
             return {
                 "success": False,
                 "error": error.detail,
@@ -149,16 +157,15 @@ class ErrorHandler:
                 "details": {}
             }
 
-        # 其他异常：使用友好的错误信息
         error_type = type(error).__name__
-        friendly_message = cls.USER_FRIENDLY_MESSAGES.get(
+        error_key = cls.ERROR_KEYS.get(
             error_type,
-            "服务暂时不可用，请稍后重试"
+            "internal_service_error"
         )
 
         return {
             "success": False,
-            "error": friendly_message,
+            "error": error_key,
             "error_code": "INTERNAL_ERROR",
             "details": {
                 "type": error_type,

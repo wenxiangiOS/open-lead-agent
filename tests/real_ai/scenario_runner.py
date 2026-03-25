@@ -73,12 +73,19 @@ class ScenarioCase:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ScenarioCase":
+        messages = data.get("messages")
+        if messages is None:
+            messages = [
+                str(item.get("message", ""))
+                for item in data.get("ingest_payloads", [])
+                if isinstance(item, dict)
+            ]
         return cls(
             scenario_id=data["id"],
             category=data["category"],
             tags=list(data.get("tags", [])),
             description=data.get("description", ""),
-            messages=list(data["messages"]),
+            messages=list(messages),
             assertions=[ScenarioAssertion.from_dict(item) for item in data.get("assertions", [])],
         )
 

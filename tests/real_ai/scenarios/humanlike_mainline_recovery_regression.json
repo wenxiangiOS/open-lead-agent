@@ -1,0 +1,62 @@
+{
+  "scenarios": [
+    {
+      "id": "humanlike_divorce_confirmation_returns_to_mainline_without_contact_pivot",
+      "category": "humanlike_mainline",
+      "tags": ["critical", "humanlike", "divorce", "mainline"],
+      "description": "用户说明离异并确认手续已办妥后，系统应自然回到资料主线，而不是停在空承接或直接切联系方式。",
+      "messages": [
+        "男的",
+        "90后",
+        "深圳",
+        "本科",
+        "我是做it的",
+        "我离异过呢",
+        "办理好了"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 6, "values": ["手续", "办妥", "办好"] },
+        { "type": "response_not_contains_any", "turn": 6, "values": ["电话", "微信", "联系方式", "学历", "工作"] },
+        { "type": "response_contains_any", "turn": 7, "values": ["另一半", "偏好", "要求", "月收入", "收入", "看重"] },
+        { "type": "response_not_contains_any", "turn": 7, "values": ["离婚手续", "确认清楚", "慢慢聊其他的", "好，那我知道了", "电话", "微信", "联系方式"] },
+        { "type": "profile_field_equals", "field": "marital_status", "expected": "离异（手续已办妥）" }
+      ]
+    },
+    {
+      "id": "humanlike_resume_profile_collection_does_not_jump_to_contact",
+      "category": "humanlike_mainline",
+      "tags": ["critical", "humanlike", "resume_mainline", "contact_guard"],
+      "description": "当用户催系统继续问资料时，应继续主线资料，不应突然切到手机号或微信。",
+      "messages": [
+        "男的",
+        "90后",
+        "深圳",
+        "本科",
+        "我是做it的",
+        "我离异过呢",
+        "办理好了",
+        "你不问其他了？"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 8, "values": ["另一半", "偏好", "要求", "月收入", "收入", "看重"] },
+        { "type": "response_not_contains_any", "turn": 8, "values": ["电话", "手机号", "微信", "联系方式", "留个电话", "留个微信"] }
+      ]
+    },
+    {
+      "id": "humanlike_phone_refusal_wechat_followup_has_complete_sentence",
+      "category": "humanlike_mainline",
+      "tags": ["critical", "humanlike", "contact", "delivery"],
+      "description": "电话拒绝后转微信时，回复应是完整句，不能再出现半句尾巴或空截断。",
+      "messages": [
+        "我是男的，90后，深圳，本科，做it的，离异，手续已经办妥了",
+        "我想找个年龄别太大的",
+        "你不问其他了？",
+        "不方便留电话"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 4, "values": ["微信", "不想留我们先往下聊", "不想留也行", "继续聊"] },
+        { "type": "response_not_contains_any", "turn": 4, "values": ["我们平时", "留个常用微信也行，我们", "第一时间联系", "发资料", "1到8小时"] }
+      ]
+    }
+  ]
+}

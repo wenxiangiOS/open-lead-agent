@@ -54,6 +54,12 @@ FORBIDDEN_ASSISTANT_PATTERNS = [
     r"(给你|发你|发送给你)(对方)?资料",
     r"(发|给)(你)?(对方)?资料",
     r"对方资料",
+    r"(互换|交换)(照片|联系方式)",
+    r"介绍(男生|女生|对方)的具体情况",
+    r"第一时间联系你",
+    r"\d+\s*(到|-)\s*\d+\s*(小时|天)内",
+    r"\d+\s*(小时|天)内",
+    r"发(你)?具体(定位|地址)",
 ]
 AI_IDENTITY_QUERY_PATTERNS = [
     r"你是ai吗",
@@ -274,14 +280,19 @@ class TimingProbe:
         self._restore.append((obj, attr, original))
         setattr(obj, attr, wrapped)
 
+    def _wrap_async_if_present(self, obj: Any, attr: str, phase: str) -> None:
+        if obj is None or not hasattr(obj, attr):
+            return
+        self._wrap_async(obj, attr, phase)
+
     def _install(self) -> None:
-        self._wrap_async(self.chat_service, "_call_ai", "ai_call")
-        self._wrap_async(self.chat_service.user_service, "get_user_profile", "profile_load")
-        self._wrap_async(self.chat_service.user_service, "save_user_profile", "profile_save")
-        self._wrap_async(self.chat_service.conversation_rule_service, "try_handle", "rule_check")
-        self._wrap_async(self.chat_service.dialogue_manager, "get_conversation_context", "context_load")
-        self._wrap_async(self.chat_service.profile_collection_coordinator, "process_collection", "extract_collect")
-        self._wrap_async(self.chat_service, "_build_chat_response", "response_build")
+        self._wrap_async_if_present(self.chat_service, "_call_ai", "ai_call")
+        self._wrap_async_if_present(self.chat_service.user_service, "get_user_profile", "profile_load")
+        self._wrap_async_if_present(self.chat_service.user_service, "save_user_profile", "profile_save")
+        self._wrap_async_if_present(getattr(self.chat_service, "conversation_rule_service", None), "try_handle", "rule_check")
+        self._wrap_async_if_present(self.chat_service.dialogue_manager, "get_conversation_context", "context_load")
+        self._wrap_async_if_present(self.chat_service.profile_collection_coordinator, "process_collection", "extract_collect")
+        self._wrap_async_if_present(self.chat_service, "_build_chat_response", "response_build")
 
 
 def parse_args() -> argparse.Namespace:
@@ -371,6 +382,463 @@ def parse_args() -> argparse.Namespace:
 
 
 def _load_coverage_scenarios(args: argparse.Namespace) -> list[dict[str, Any]]:
+    built_in_scenarios = [
+        {
+            "id": "builtin_full_journey_phone_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin"],
+            "messages": ["你好", "男的", "90后", "深圳", "本科", "it", "单身", "17688654321"],
+            "description": "内置完整链路：基础资料成熟后提供电话，验证能走到完整联系方式收集/完成态。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "phone"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_wechat_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin"],
+            "messages": ["你好", "女的", "95后", "广州", "本科", "运营", "单身", "wx_ling233"],
+            "description": "内置完整链路：基础资料成熟后提供微信，验证能覆盖非电话完成态。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_phone_complete_with_ai_ending",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "ai_ending"],
+            "messages": ["你好", "男的", "90后", "深圳", "本科", "产品", "单身", "17622334455"],
+            "description": "内置完整链路：资料成熟后留电话，并验证最终走到正常完成收尾而不是继续追问。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "phone"},
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_contains_any", "values": ["先聊到这儿", "祝你", "顺利", "继续推进", "到这里"]},
+                {"type": "final_response_not_contains_any", "values": ["留个微信", "留个电话", "方便留", "微信号", "电话号码"]},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_wechat_complete_with_ai_ending",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "ai_ending"],
+            "messages": ["你好", "女的", "95后", "杭州", "本科", "设计", "单身", "wx_hzending95"],
+            "description": "内置完整链路：资料成熟后留微信，并验证最终走到正常完成收尾而不是回流联系方式。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "wechat"},
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_contains_any", "values": ["先聊到这儿", "祝你", "顺利", "继续推进", "到这里"]},
+                {"type": "final_response_not_contains_any", "values": ["留个微信", "留个电话", "方便留", "微信号", "电话号码"]},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_phone_then_wechat_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "dual_contact"],
+            "messages": ["你好", "男的", "90后", "杭州", "本科", "产品", "单身", "17688654321", "微信是hangzhou_pm88"],
+            "description": "内置完整链路：先留电话，再补微信，覆盖双联系方式完成态。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "phone"},
+                {"type": "profile_field_truthy", "field": "wechat"},
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_wechat_then_phone_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "dual_contact"],
+            "messages": ["你好", "女的", "90后", "上海", "硕士", "设计", "单身", "微信是sh_designer77", "电话17612345678"],
+            "description": "内置完整链路：先留微信，再补电话，覆盖反向双联系方式完成态。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "phone"},
+                {"type": "profile_field_truthy", "field": "wechat"},
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_short_answers_phone",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "short_answer"],
+            "messages": ["你好", "男", "90后", "深圳", "本科", "it", "单身", "17611112222"],
+            "description": "内置完整链路：全程短答，最终留电话，验证短答型用户可完成建档。",
+            "assertions": [],
+        },
+        {
+            "id": "builtin_full_journey_short_answers_wechat",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "short_answer"],
+            "messages": ["你好", "女", "95后", "成都", "本科", "运营", "单身", "wx_cdyy95"],
+            "description": "内置完整链路：全程短答，最终留微信，验证短答型用户非电话完成态。",
+            "assertions": [],
+        },
+        {
+            "id": "builtin_full_journey_dense_profile_then_phone",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "dense_input"],
+            "messages": ["你好", "我是男生，90后，在深圳，本科，做产品，单身", "17600001111"],
+            "description": "内置完整链路：用户一条消息给出多个核心字段，后续直接留电话。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "location"},
+                {"type": "profile_field_truthy", "field": "occupation"},
+                {"type": "profile_field_truthy", "field": "phone"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_faq_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "faq_interrupt"],
+            "messages": ["你好", "怎么收费", "男的", "90后", "广州", "本科", "程序员", "单身", "wx_gzcoder90"],
+            "description": "内置完整链路：中途 FAQ 打断后回主线，最终完成联系方式。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 2, "values": ["收费", "免费", "基础匹配", "定制服务"]},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_fee_first_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "faq_fee"],
+            "messages": ["你好", "先不聊资料，先说收费", "女的", "95后", "深圳", "本科", "HR", "单身", "wx_szhr95"],
+            "description": "内置完整链路：用户明确要求先聊收费，系统应先答 FAQ，再回主线并完成联系方式。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 2, "values": ["收费", "免费", "基础匹配", "定制服务"]},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_privacy_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "faq_privacy"],
+            "messages": ["你好", "你们会泄露隐私吗", "男的", "90后", "杭州", "本科", "产品", "单身", "17677778888"],
+            "description": "内置完整链路：用户先问隐私，系统先解释隐私边界，再回主线并完成联系方式。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 2, "values": ["隐私", "保护", "泄露", "仅用于", "放心"]},
+                {"type": "profile_field_truthy", "field": "phone"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_match_process_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "faq_match_process"],
+            "messages": ["你好", "怎么匹配", "女的", "90后", "广州", "本科", "设计", "单身", "wx_match_flow90"],
+            "description": "内置完整链路：用户先问匹配流程，系统先解释流程，再回主线完成联系方式。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 2, "values": ["匹配", "了解", "基本情况", "后续", "沟通"]},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_store_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "faq_store"],
+            "messages": ["你好", "深圳有门店吗", "男的", "90后", "深圳", "本科", "运营", "单身", "17666667777"],
+            "description": "内置完整链路：用户先问门店，系统应说明线下门店边界，再回主线完成联系方式。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 2, "values": ["门店", "深圳", "线下", "安排", "沟通"]},
+                {"type": "profile_field_truthy", "field": "phone"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_photo_request_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "faq_photo"],
+            "messages": ["你好", "能先看照片吗", "女的", "90后", "上海", "硕士", "老师", "单身", "wx_photo_case90"],
+            "description": "内置完整链路：用户先问能否直接看照片，系统应保持隐私边界，再回主线完成联系方式。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 2, "values": ["照片", "资料", "当前阶段", "隐私", "沟通"]},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_mixed_info_and_fee_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "mixed_input", "faq_fee"],
+            "messages": ["你好", "男的，怎么收费", "90后", "深圳", "本科", "程序员", "单身", "wx_mix_fee90"],
+            "description": "内置完整链路：用户在同一轮里同时给信息和收费问题，系统应先接住 FAQ，再继续完成建档。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 2, "values": ["收费", "免费", "基础匹配", "定制服务"]},
+                {"type": "profile_field_truthy", "field": "sex"},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_mixed_info_and_privacy_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "mixed_input", "faq_privacy"],
+            "messages": ["你好", "我在深圳，本科，做产品，你们会泄露隐私吗", "男的", "90后", "单身", "17655556666"],
+            "description": "内置完整链路：用户把资料和隐私顾虑混在一起说，系统应先解释边界，同时继续完成建档。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 2, "values": ["隐私", "保护", "泄露", "放心"]},
+                {"type": "profile_field_truthy", "field": "location"},
+                {"type": "profile_field_truthy", "field": "education"},
+                {"type": "profile_field_truthy", "field": "occupation"},
+                {"type": "profile_field_truthy", "field": "phone"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_boundary_once_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "boundary_once"],
+            "messages": ["你好", "女的", "90后", "苏州", "本科", "老师", "单身", "这个为啥要问", "微信是suzhou_teacher9"],
+            "description": "内置完整链路：用户中途有一次顾虑，系统解释后仍能完成。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 8, "values": ["理解", "了解", "方便", "主要是", "想多了解"]},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_contact_privacy_concern_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "contact_privacy"],
+            "messages": ["你好", "男的", "90后", "深圳", "本科", "产品", "单身", "留微信会泄露隐私吗", "微信是privacy_safe88"],
+            "description": "内置完整链路：进入联系方式阶段后用户提出隐私顾虑，系统应先解释，再完成联系方式。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 8, "values": ["隐私", "保护", "放心", "仅用于", "后续沟通"]},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_authenticity_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "faq_authenticity"],
+            "messages": ["你好", "你们靠谱吗", "女的", "90后", "深圳", "本科", "运营", "单身", "wx_auth_ok90"],
+            "description": "内置完整链路：用户先质疑服务是否靠谱，系统先解释再回主线完成联系方式。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 2, "values": ["理解", "顾虑", "沟通", "匹配", "放心"]},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_human_or_ai_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "faq_authenticity"],
+            "messages": ["你好", "你是真人还是AI", "男的", "95后", "广州", "本科", "程序员", "单身", "17644445555"],
+            "description": "内置完整链路：用户先问真人还是 AI，系统先承接说明，再继续完整建档。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 2, "values": ["现在", "先", "沟通", "帮助", "了解"]},
+                {"type": "profile_field_truthy", "field": "phone"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_why_keep_asking_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "boundary_explain"],
+            "messages": ["你好", "女的", "90后", "杭州", "本科", "老师", "单身", "为什么一直问这些资料", "wx_why_ask90"],
+            "description": "内置完整链路：用户质疑为什么一直问资料，系统应先解释用途，再回到联系方式完成。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 8, "values": ["理解", "主要是", "更好", "匹配", "了解"]},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_contact_defer_then_end",
+            "category": "contact_logic",
+            "tags": ["critical", "ending", "contact_guard", "builtin", "contact_defer"],
+            "messages": ["你好", "男的", "90后", "深圳", "本科", "产品", "单身", "回头再说吧", "先不留了"],
+            "description": "内置完整链路：联系方式阶段用户持续暂缓，应按边界处理并收尾，不继续硬推。",
+            "assertions": [
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_not_contains_any", "values": ["留个微信", "留个电话", "方便留", "微信号", "电话号码"]},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_both_rejected_terminal_override",
+            "category": "contact_logic",
+            "tags": ["critical", "ending", "contact_guard", "builtin", "terminal_override"],
+            "messages": ["你好", "女的", "90后", "深圳", "本科", "运营", "单身", "电话不方便", "微信也不方便"],
+            "description": "内置完整链路：双拒联系方式后，最终回复必须被强制覆盖成收尾句，不能继续索要联系方式。",
+            "assertions": [
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_contains_any", "values": ["先聊到这儿", "之后要是想继续了解", "不打扰", "先这样"]},
+                {"type": "final_response_not_contains_any", "values": ["留个微信", "留个电话", "方便留", "微信号", "电话号码", "加你"]},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_already_ended_terminal_override",
+            "category": "ending",
+            "tags": ["critical", "ending", "builtin", "terminal_override", "already_ended"],
+            "messages": ["你好", "男的", "90后", "深圳", "本科", "产品", "单身", "电话不方便", "微信也不方便", "那先这样吧", "还有人选吗"],
+            "description": "内置完整链路：对话已结束后用户继续发消息，最终回复仍应被强制压成极简结束句，不再重启主线。",
+            "assertions": [
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_contains_any", "values": ["先聊到这儿", "先这样", "那先这样", "先到这儿"]},
+                {"type": "final_response_not_contains_any", "values": ["微信", "电话", "年龄", "学历", "城市", "还有人选", "方便留"]},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_proactive_contact_early",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "proactive_contact"],
+            "messages": ["你好", "我先留个微信吧，wx_early_contact88", "男的", "90后", "深圳", "本科", "产品", "单身"],
+            "description": "内置完整链路：用户一上来主动给联系方式，系统应被动接住并继续补足资料直到完成。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "wechat"},
+                {"type": "profile_field_truthy", "field": "sex"},
+                {"type": "profile_field_truthy", "field": "location"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_contact_faq_then_phone_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "contact_faq"],
+            "messages": ["你好", "女的", "90后", "深圳", "本科", "运营", "单身", "为什么要留电话", "17699990000"],
+            "description": "内置完整链路：进入联系方式阶段后用户先追问联系方式用途，系统先解释，再完成电话收集。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 8, "values": ["后续沟通", "方便联系", "进展", "打扰", "匹配"]},
+                {"type": "profile_field_truthy", "field": "phone"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_phone_refusal_then_wechat_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "phone_refusal"],
+            "messages": ["你好", "男的", "95后", "武汉", "本科", "销售", "单身", "电话不方便", "微信是wh_sale95"],
+            "description": "内置完整链路：电话拒绝后转微信完成，覆盖联系方式兜底链路。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_hongkong_wechat_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "hongkong"],
+            "messages": ["你好", "女的", "95后", "香港", "本科", "运营", "单身", "微信是hk_match95"],
+            "description": "内置完整链路：香港用户完整流程，验证香港用户路径也能自然完成联系方式。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "location"},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_invalid_phone_retry_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "contact_retry"],
+            "messages": ["你好", "女的", "90后", "杭州", "本科", "运营", "单身", "12345", "不好意思，重新发 17612345678"],
+            "description": "内置完整链路：电话格式无效后重试，最终完成完整对话。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 8, "values": ["确认", "重新", "再发", "格式"]},
+                {"type": "profile_field_truthy", "field": "phone"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_invalid_wechat_retry_then_complete",
+            "category": "full_journey",
+            "tags": ["critical", "completion", "contact_complete", "builtin", "contact_retry"],
+            "messages": ["你好", "女的", "95后", "广州", "本科", "运营", "单身", "电话不方便", "微信wx_12", "重新发，微信是gz_operator95"],
+            "description": "内置完整链路：电话拒绝后转微信，微信格式无效后重试，最终完成完整对话。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 9, "values": ["确认", "重新", "再发", "格式"]},
+                {"type": "profile_field_truthy", "field": "wechat"},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_separation_end_after_context",
+            "category": "full_journey",
+            "tags": ["critical", "ending", "builtin", "high_risk"],
+            "messages": ["你好", "男的", "90后", "深圳", "最近是分居中"],
+            "description": "内置完整链路：先有正常建联，再出现分居信息，系统应礼貌提前结束。",
+            "assertions": [
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_not_contains_any", "values": ["电话", "微信", "学历", "职业"]},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_already_married_end_after_context",
+            "category": "full_journey",
+            "tags": ["critical", "ending", "builtin", "high_risk"],
+            "messages": ["你好", "女的", "90后", "广州", "其实我已经结婚了"],
+            "description": "内置完整链路：先有正常开场，再出现已婚信息，系统应提前结束。",
+            "assertions": [
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_not_contains_any", "values": ["电话", "微信", "学历", "职业"]},
+            ],
+        },
+        {
+            "id": "builtin_full_journey_divorce_incomplete_end_after_context",
+            "category": "full_journey",
+            "tags": ["critical", "ending", "builtin", "high_risk"],
+            "messages": ["你好", "男的", "90后", "杭州", "离婚手续还在办"],
+            "description": "内置完整链路：先有正常建联，再出现离异手续未办妥，系统应提前结束。",
+            "assertions": [
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_not_contains_any", "values": ["电话", "微信", "学历", "职业"]},
+            ],
+        },
+        {
+            "id": "builtin_contact_both_rejected_end",
+            "category": "contact_logic",
+            "tags": ["critical", "ending", "contact_guard", "builtin"],
+            "messages": ["你好", "男的", "90后", "深圳", "本科", "it", "单身", "电话不方便", "微信也不方便"],
+            "description": "内置联系方式逻辑：电话和微信都拒绝后，应该礼貌收尾并结束对话。",
+            "assertions": [
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_contains_any", "values": ["先这样", "不打扰", "随时来找我", "没关系"]},
+                {"type": "final_response_not_contains_any", "values": ["留个微信", "留个电话", "方便留", "微信号", "电话号码"]},
+            ],
+        },
+        {
+            "id": "builtin_contact_invalid_phone_retry",
+            "category": "contact_logic",
+            "tags": ["critical", "contact_retry", "builtin"],
+            "messages": ["你好", "女的", "90后", "杭州", "本科", "运营", "单身", "12345"],
+            "description": "内置联系方式逻辑：用户提供无效电话时，系统应提示重新确认而不是跳过。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 8, "values": ["确认", "重新", "再发", "格式"]},
+            ],
+        },
+        {
+            "id": "builtin_contact_invalid_wechat_retry",
+            "category": "contact_logic",
+            "tags": ["critical", "contact_retry", "builtin"],
+            "messages": ["你好", "女的", "95后", "广州", "本科", "运营", "单身", "电话不方便", "微信wx_12"],
+            "description": "内置联系方式逻辑：电话拒绝转微信后，如果微信格式无效，应提示重试。",
+            "assertions": [
+                {"type": "response_contains_any", "turn": 9, "values": ["确认", "重新", "再发", "格式"]},
+            ],
+        },
+        {
+            "id": "builtin_contact_wechat_refusal_then_phone_complete",
+            "category": "contact_logic",
+            "tags": ["critical", "contact_fallback", "builtin"],
+            "messages": ["你好", "男的", "90后", "苏州", "本科", "程序员", "单身", "微信不方便", "17633334444"],
+            "description": "内置联系方式逻辑：微信不方便后转电话完成，验证反向兜底逻辑。",
+            "assertions": [
+                {"type": "profile_field_truthy", "field": "phone"},
+            ],
+        },
+        {
+            "id": "builtin_ending_separation_end",
+            "category": "ending",
+            "tags": ["critical", "ending", "builtin", "high_risk"],
+            "messages": ["你好", "我是男的", "分居中"],
+            "description": "内置完整链路：分居中应提前礼貌结束，不继续推进资料或联系方式。",
+            "assertions": [
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_not_contains_any", "values": ["电话", "微信", "学历", "职业"]},
+            ],
+        },
+        {
+            "id": "builtin_ending_already_married_end",
+            "category": "ending",
+            "tags": ["critical", "ending", "builtin", "high_risk"],
+            "messages": ["你好", "我已经结婚了"],
+            "description": "内置完整链路：已婚用户应提前结束，不继续推进收集。",
+            "assertions": [
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_not_contains_any", "values": ["电话", "微信", "学历", "职业"]},
+            ],
+        },
+        {
+            "id": "builtin_ending_divorce_incomplete_end",
+            "category": "ending",
+            "tags": ["critical", "ending", "builtin", "high_risk"],
+            "messages": ["你好", "我正在办离婚手续"],
+            "description": "内置完整链路：离异手续未办妥应提前结束，不继续推进资料和联系方式。",
+            "assertions": [
+                {"type": "profile_field_equals", "field": "conversation_ended", "expected": True},
+                {"type": "final_response_not_contains_any", "values": ["电话", "微信", "学历", "职业"]},
+            ],
+        },
+    ]
+
     def _iter_scenario_files(path: Path) -> list[Path]:
         if path.is_dir():
             return sorted(path.glob("*.json"))
@@ -390,12 +858,18 @@ def _load_coverage_scenarios(args: argparse.Namespace) -> list[dict[str, Any]]:
 
     merged: list[dict[str, Any]] = []
     if not args.scenario_file:
-        for p in [PROJECT_ROOT / "tests/real_ai/scenarios", PROJECT_ROOT / "tests/real_ai/scenarios_pending"]:
-            if p.exists():
-                merged.extend(_load_non_mq_cases(p))
+        # 默认覆盖模式只跑“完整对话套件”，避免混入短碎片场景。
+        merged = [item for item in built_in_scenarios if str(item.get("id") or "").startswith("builtin_full_journey_")]
     else:
         scenario_path = Path(args.scenario_file)
         merged = _load_non_mq_cases(scenario_path)
+
+    existing_ids = {str(item.get("id") or "") for item in merged}
+    for item in built_in_scenarios:
+        if not args.scenario_file and not str(item.get("id") or "").startswith("builtin_full_journey_"):
+            continue
+        if item["id"] not in existing_ids:
+            merged.append(item)
 
     scenarios = [
         {
@@ -695,14 +1169,14 @@ def _check_turn(
         raw = str(user or "").strip()
         candidate = raw
         inline_match = re.search(
-            r"(?:微信|微信号|weixin|wx|vx)[:：\s]*([A-Za-z][A-Za-z0-9_-]{5,19})",
+            r"(?:微信|微信号|weixin|wx|vx)(?:是)?[:：\s]*([A-Za-z][A-Za-z0-9_-]{5,19})",
             raw,
             flags=re.IGNORECASE,
         )
         if inline_match:
             candidate = inline_match.group(1).strip()
         else:
-            candidate = re.sub(r"^(微信|微信号|weixin|wx|vx)[:：\s]*", "", raw, flags=re.IGNORECASE).strip()
+            candidate = re.sub(r"^(微信|微信号|weixin|wx|vx)(?:是)?[:：\s]*", "", raw, flags=re.IGNORECASE).strip()
         looks_wechat_attempt = bool(re.search(r"[A-Za-z]", candidate))
         valid_wechat = bool(re.match(r"^[A-Za-z][A-Za-z0-9_-]{5,19}$", candidate))
         if looks_wechat_attempt and not valid_wechat and not any(m in assistant for m in retry_markers):
@@ -2032,6 +2506,7 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
     # 收尾自然度：结束会话最后一轮是否有自然收束表达
     ending_cases = 0
     ending_natural_hits = 0
+    ending_bucket_stats: dict[str, dict[str, int]] = {}
     for session in results:
         ended = bool((session.final_profile or {}).get("conversation_ended"))
         if not ended or not session.turns:
@@ -2040,6 +2515,14 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
         last_assistant = str(session.turns[-1].assistant or "")
         if any(marker in last_assistant for marker in FAREWELL_MARKERS):
             ending_natural_hits += 1
+        bucket = _classify_ending_bucket(session)
+        if bucket:
+            stats = ending_bucket_stats.setdefault(bucket, {"sessions": 0, "passed": 0, "ended": 0})
+            stats["sessions"] += 1
+            stats["ended"] += 1
+            has_failures = bool(session.field_failures or session.policy_failures or session.scenario_assertion_failures)
+            if not has_failures:
+                stats["passed"] += 1
 
     # 异常恢复率：出现空回复/超慢后，下一轮是否恢复为非空且无严重失败
     anomaly_cases = 0
@@ -2146,6 +2629,16 @@ def _analyze(results: list[SessionResult], template_threshold: float) -> dict[st
             "anomaly_recovery_rate": round((anomaly_recovered / anomaly_cases), 4) if anomaly_cases else 1.0,
             "persona_consistency_score": round(persona_consistency_score, 4),
             "action_consistency_score": round(action_consistency_score, 4),
+            "ending_bucket_breakdown": [
+                {
+                    "bucket": bucket,
+                    "sessions": stats["sessions"],
+                    "ended": stats["ended"],
+                    "passed": stats["passed"],
+                    "pass_rate": round((stats["passed"] / stats["sessions"]), 4) if stats["sessions"] else 1.0,
+                }
+                for bucket, stats in sorted(ending_bucket_stats.items())
+            ],
         },
         "isolation_quality": {
             "sessions": len(results),
@@ -2680,6 +3173,24 @@ def _build_root_cause_buckets(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda x: x["count"], reverse=True)
 
 
+def _classify_ending_bucket(session: SessionResult) -> str | None:
+    scenario_id = str(session.scenario_id or "")
+    tags = {str(tag or "") for tag in (session.tags or [])}
+    final_profile = session.final_profile or {}
+    ended = bool(final_profile.get("conversation_ended"))
+    if not ended:
+        return None
+    if "terminal_override" in tags or "already_ended" in tags or "already_ended" in scenario_id:
+        return "already_ended"
+    if "both_rejected" in scenario_id or "contact_defer" in scenario_id or ("contact_guard" in tags and "ending" in tags):
+        return "both_rejected"
+    if "high_risk" in tags or any(key in scenario_id for key in ("separation", "already_married", "divorce_incomplete")):
+        return "high_risk_ending"
+    if "contact_complete" in tags or "completion" in tags:
+        return "normal_complete"
+    return None
+
+
 def _write_latest_summary(analysis: dict[str, Any], json_path: Path, md_path: Path) -> Path:
     out_path = PROJECT_ROOT / "reports" / "latest_summary.txt"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2862,6 +3373,11 @@ def _write_reports(
         f"- 收尾自然度: {qg.get('ending_natural_rate', 1.0):.1%} "
         f"({qg.get('ending_natural_hits', 0)}/{qg.get('ending_cases', 0)})"
     )
+    for item in (qg.get("ending_bucket_breakdown") or []):
+        lines.append(
+            f"- 收尾链路 {item['bucket']}: 通过率={item['pass_rate']:.1%} "
+            f"({item['passed']}/{item['sessions']})"
+        )
     lines.append(
         f"- 异常恢复率: {qg.get('anomaly_recovery_rate', 1.0):.1%} "
         f"({qg.get('anomaly_recovered', 0)}/{qg.get('anomaly_cases', 0)})"
@@ -3169,6 +3685,13 @@ async def main() -> int:
         f"人设一致性={qg.get('persona_consistency_score', 1.0):.1%}, "
         f"动作一致性={qg.get('action_consistency_score', 1.0):.1%}"
     )
+    for item in (qg.get("ending_bucket_breakdown") or []):
+        print(
+            "收尾链路: "
+            f"{item.get('bucket')} "
+            f"通过率={item.get('pass_rate', 1.0):.1%} "
+            f"({item.get('passed', 0)}/{item.get('sessions', 0)})"
+        )
     qp = analysis.get("question_pressure", {})
     print(
         "提问压迫感: "

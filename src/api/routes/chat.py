@@ -32,6 +32,14 @@ def init_service(service: ChatService):
     chat_service = service
 
 
+def _http_detail(error_code: str, error: str, **details: Any) -> Dict[str, Any]:
+    return {
+        "error": error,
+        "error_code": error_code,
+        "details": details,
+    }
+
+
 async def _process_chat_via_protocol(request_model: ChatRequest) -> Dict[str, Any]:
     use_case = getattr(chat_service, "process_chat_turn_use_case", None)
     if use_case is not None and hasattr(use_case, "execute_command"):
@@ -90,7 +98,10 @@ async def _process_chat_via_protocol(request_model: ChatRequest) -> Dict[str, An
 async def chat(request: Dict[str, Any]) -> ChatResponse:
     """AI红娘对话端点，处理用户消息并返回AI回复"""
     if chat_service is None:
-        raise HTTPException(status_code=500, detail="服务未初始化")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("SERVICE_NOT_INITIALIZED", "service_not_initialized", route="chat"),
+        )
 
     try:
         # 将 dict 转换为 ChatRequest 模型
@@ -140,10 +151,21 @@ async def chat(request: Dict[str, Any]) -> ChatResponse:
 
     except (ValueError, ValidationError) as e:
         logger.warning(f"Validation error: {e}")
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(
+            status_code=422,
+            detail=_http_detail(
+                "CHAT_REQUEST_VALIDATION_ERROR",
+                "chat_request_validation_failed",
+                route="chat",
+                message=str(e),
+            ),
+        )
     except Exception as e:
         logger.error(f"Chat processing error: {e}")
-        raise HTTPException(status_code=500, detail="处理聊天请求时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("CHAT_PROCESSING_ERROR", "chat_processing_failed", route="chat"),
+        )
 
 
 def _format_contact_display(profile: Dict[str, Any]) -> str:
@@ -331,7 +353,10 @@ def _format_debug_info(profile: Dict[str, Any]) -> str:
 async def welcome(user_id: str) -> Dict[str, Any]:
     """为新用户生成欢迎消息"""
     if chat_service is None:
-        raise HTTPException(status_code=500, detail="服务未初始化")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("SERVICE_NOT_INITIALIZED", "service_not_initialized", route="welcome"),
+        )
 
     try:
         logger.info(f"Generating welcome for user: {user_id}")
@@ -343,7 +368,10 @@ async def welcome(user_id: str) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Welcome generation error: {e}")
-        raise HTTPException(status_code=500, detail="生成欢迎消息时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("WELCOME_GENERATION_ERROR", "welcome_generation_failed", route="welcome"),
+        )
 
 
 @router.post(
@@ -381,7 +409,10 @@ async def feedback(
 ) -> Dict[str, Any]:
     """处理用户反馈"""
     if chat_service is None:
-        raise HTTPException(status_code=500, detail="服务未初始化")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("SERVICE_NOT_INITIALIZED", "service_not_initialized", route="feedback"),
+        )
 
     try:
         logger.info(f"Processing feedback from user: {user_id}")
@@ -395,4 +426,7 @@ async def feedback(
 
     except Exception as e:
         logger.error(f"Feedback processing error: {e}")
-        raise HTTPException(status_code=500, detail="处理反馈时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("FEEDBACK_PROCESSING_ERROR", "feedback_processing_failed", route="feedback"),
+        )

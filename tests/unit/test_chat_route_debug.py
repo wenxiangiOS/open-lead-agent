@@ -157,6 +157,22 @@ async def _test_process_chat_turn_use_case_execute_command_wraps_payload():
     assert result.dialog_id == "d_cmd_chat"
 
 
+def test_process_chat_turn_use_case_syncs_payload_response_to_final_response():
+    use_case = ProcessChatTurnUseCase(chat_service=object())
+
+    payload = {
+        "success": True,
+        "response": "半句",
+        "dialogId": "d_sync",
+        "meta": {},
+    }
+
+    synced = use_case._sync_payload_response(payload, "完整回复")
+
+    assert synced["response"] == "完整回复"
+    assert synced["meta"]["response_synced"] is True
+
+
 def test_chat_route_keeps_collected_info_fields_in_response_model():
     asyncio.run(_test_chat_route_keeps_collected_info_fields_in_response_model())
 

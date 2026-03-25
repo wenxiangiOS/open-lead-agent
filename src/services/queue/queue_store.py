@@ -38,6 +38,8 @@ FUNNEL_METRICS = [
     "turn_stale",
     "empty_response_business_silent",
     "empty_response_error",
+    "contact_validation_retry",
+    "contact_validation_silent",
     "outbox_created",
     "outbox_delivery_success",
     "outbox_delivery_retry",

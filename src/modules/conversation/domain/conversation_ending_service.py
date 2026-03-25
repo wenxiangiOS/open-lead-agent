@@ -4,17 +4,16 @@
 基于配置驱动设计，支持:
 1. 场景配置：ending_config.yaml
 2. 场景检测：ConversationEndingService.check_ending_reason()
-3. 场景话术：ConversationEndingService.get_ending_response()
-4. AI 场景判断：ConversationEndingService.should_use_ai_ending()
-5. 用户状态更新:ConversationEndingService.update_profile_for_ending()
+3. AI 场景附加指令：ConversationEndingService.get_ai_extra_instructions()
+4. 用户状态更新:ConversationEndingService.update_profile_for_ending()
 
 新增收尾场景只需要修改 ending_config.yaml 配置文件即可，无需修改代码。
 """
 
-import random
 import logging
 from typing import Optional, Dict, Any, List
 from pathlib import Path
+import random
 import yaml
 from src.models.user_profile import UserProfile
 
@@ -27,7 +26,7 @@ class ConversationEndingService:
 
     统一管理所有收尾场景，提供：
     1. 场景检测（基于配置动态检测）
-    2. 话术生成（预设模板或 AI 生成）
+    2. AI 收尾附加指令
     3. 用户状态更新
     """
 
@@ -184,42 +183,6 @@ class ConversationEndingService:
 
         return False
 
-    def should_use_ai_ending(self, scenario_name: str) -> bool:
-        """
-        判断是否使用 AI 生成话术
-
-        Args:
-            scenario_name: 场景名称
-
-        Returns:
-            是否使用 AI 生成
-        """
-        endings = self.config.get('endings', {})
-        scenario_config = endings.get(scenario_name, {})
-        return scenario_config.get('useAiEnding', False)
-
-    def get_ending_response(self, scenario_name: str) -> Optional[str]:
-        """
-        获取收尾话术
-
-        Args:
-            scenario_name: 场景名称
-
-        Returns:
-            收尾话术，如果是 AI 生成场景则返回 None
-        """
-        endings = self.config.get('endings', {})
-        scenario_config = endings.get(scenario_name, {})
-
-        if scenario_config.get('useAiEnding', False):
-            return None
-
-        templates = scenario_config.get('templates', [])
-        if not templates:
-            return ""
-
-        return random.choice(templates)
-
     def get_ai_extra_instructions(self, scenario_name: str) -> str:
         """
         获取 AI 生成的附加指令
@@ -233,6 +196,24 @@ class ConversationEndingService:
         endings = self.config.get('endings', {})
         scenario_config = endings.get(scenario_name, {})
         return scenario_config.get('extraInstructions', '')
+
+    def should_use_ai_ending(self, scenario_name: str) -> bool:
+        """按配置判断该收尾场景是否应走 AI 生成。"""
+        endings = self.config.get('endings', {})
+        scenario_config = endings.get(scenario_name, {})
+        return bool(scenario_config.get('useAiEnding', False))
+
+    def get_ending_response(self, scenario_name: str) -> Optional[str]:
+        """按配置获取预设收尾话术；AI 场景返回 None。"""
+        if self.should_use_ai_ending(scenario_name):
+            return None
+
+        endings = self.config.get('endings', {})
+        scenario_config = endings.get(scenario_name, {})
+        templates = list(scenario_config.get('templates', []) or [])
+        if not templates:
+            return ""
+        return random.choice(templates)
 
     def update_profile_for_ending(self, scenario_name: str, profile: UserProfile) -> None:
         """
@@ -282,9 +263,8 @@ class ConversationEndingService:
         Returns:
             收尾信息字典，包含：
             - scenario: 场景名称
-            - use_ai: 是否使用 AI
-            - response: 预设话术（如果 use_ai=False）
-            - extra_instructions: AI 附加指令（如果 use_ai=True）
+            - use_ai: 是否使用 AI（固定 True）
+            - extra_instructions: AI 附加指令
             如果不需要收尾则返回 None
         """
         # 1. 检测关键词/字段触发场景
@@ -300,21 +280,35 @@ class ConversationEndingService:
         if not scenario:
             return None
 
-        # 3. 获取收尾信息
+        # 3. 获取收尾信息（拟人化优先：统一走 AI 收尾）
         use_ai = self.should_use_ai_ending(scenario)
         result = {
             'scenario': scenario,
             'use_ai': use_ai,
             'description': self.get_scenario_description(scenario),
+            'extra_instructions': self.get_ai_extra_instructions(scenario),
         }
-
-        if use_ai:
-            result['extra_instructions'] = self.get_ai_extra_instructions(scenario)
-        else:
+        if not use_ai:
             result['response'] = self.get_ending_response(scenario)
 
         # 4. 更新用户状态
         self.update_profile_for_ending(scenario, profile)
 
         logger.info(f"[收尾服务] 触发收尾场景: {scenario}, AI生成: {use_ai}")
+        return result
+
+    def build_ending_info(self, scenario_name: str, profile: UserProfile) -> Dict[str, Any]:
+        """直接为已知场景构建 ending_info，并更新用户状态。"""
+        use_ai = self.should_use_ai_ending(scenario_name)
+        result = {
+            'scenario': scenario_name,
+            'use_ai': use_ai,
+            'description': self.get_scenario_description(scenario_name),
+            'extra_instructions': self.get_ai_extra_instructions(scenario_name),
+        }
+        if not use_ai:
+            result['response'] = self.get_ending_response(scenario_name)
+
+        self.update_profile_for_ending(scenario_name, profile)
+        logger.info(f"[收尾服务] 直接构建收尾场景: {scenario_name}, AI生成: {use_ai}")
         return result

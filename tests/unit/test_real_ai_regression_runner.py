@@ -56,6 +56,34 @@ def test_scenario_loader_reads_directory(tmp_path):
     assert scenarios[0].tags == ["critical"]
 
 
+def test_scenario_loader_derives_messages_from_ingest_payloads_for_mq(tmp_path):
+    scenario_file = tmp_path / "mq.json"
+    scenario_file.write_text(
+        """
+        {
+          "scenarios": [
+            {
+              "id": "mq_demo",
+              "category": "mq",
+              "tags": ["pending"],
+              "ingest_payloads": [
+                {"message": "第一条"},
+                {"message": "第二条"}
+              ],
+              "assertions": []
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    scenarios = ScenarioLoader(scenario_file).load()
+
+    assert len(scenarios) == 1
+    assert scenarios[0].messages == ["第一条", "第二条"]
+
+
 def test_scenario_loader_detects_duplicate_ids(tmp_path):
     scenario_file = tmp_path / "dup.json"
     scenario_file.write_text(

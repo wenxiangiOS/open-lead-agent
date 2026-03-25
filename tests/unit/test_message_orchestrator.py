@@ -38,6 +38,33 @@ class DummyChatServiceWithProtocol:
         )
 
 
+class ValidationRetryChatServiceWithProtocol:
+    def __init__(self, *, response: str, silent: bool):
+        self.process_chat_turn_use_case = self
+        self.response = response
+        self.silent = silent
+
+    async def execute_command(self, command):
+        return ProcessChatTurnResult(
+            success=True,
+            response=self.response,
+            dialog_id=command.dialog_id,
+            payload={
+                "success": True,
+                "response": self.response,
+                "dialogId": command.dialog_id,
+                "meta": {
+                    "validation": {
+                        "error_code": "CONTACT_INVALID_FORMAT",
+                        "field": "contact",
+                        "attempt": 3 if self.silent else 1,
+                        "silent": self.silent,
+                    }
+                },
+            },
+        )
+
+
 def test_ingest_returns_queued():
     asyncio.run(_test_ingest_returns_queued())
 
@@ -151,6 +178,65 @@ async def _test_empty_response_business_silent_metric():
 
     metrics = await store.get_queue_metrics()
     assert metrics["empty_response_business_silent"] >= 1
+
+
+def test_contact_validation_retry_metric():
+    asyncio.run(_test_contact_validation_retry_metric())
+
+
+async def _test_contact_validation_retry_metric():
+    redis_service.enabled = False
+    store = QueueStore()
+    orchestrator = MessageOrchestrator(
+        chat_service=ValidationRetryChatServiceWithProtocol(
+            response="你再发一个能联系到你的号码就行，不方便的话晚点发也可以。",
+            silent=False,
+        ),
+        queue_store=store,
+    )
+
+    await orchestrator.ingest(
+        {
+            "accountId": "u_validation_retry",
+            "dialogId": "d_validation_retry",
+            "message": "我电话12345，好了",
+            "platformMsgId": "pm_validation_retry_1",
+        }
+    )
+    await orchestrator.run_user_turn("u_validation_retry")
+
+    metrics = await store.get_queue_metrics()
+    assert metrics["contact_validation_retry"] >= 1
+    assert metrics["contact_validation_silent"] == 0
+
+
+def test_contact_validation_silent_metric():
+    asyncio.run(_test_contact_validation_silent_metric())
+
+
+async def _test_contact_validation_silent_metric():
+    redis_service.enabled = False
+    store = QueueStore()
+    orchestrator = MessageOrchestrator(
+        chat_service=ValidationRetryChatServiceWithProtocol(
+            response="",
+            silent=True,
+        ),
+        queue_store=store,
+    )
+
+    await orchestrator.ingest(
+        {
+            "accountId": "u_validation_silent",
+            "dialogId": "d_validation_silent",
+            "message": "我电话12345，好了",
+            "platformMsgId": "pm_validation_silent_1",
+        }
+    )
+    await orchestrator.run_user_turn("u_validation_silent")
+
+    metrics = await store.get_queue_metrics()
+    assert metrics["contact_validation_silent"] >= 1
 
 
 def test_combine_messages_context_compaction():

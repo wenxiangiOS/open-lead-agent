@@ -19,6 +19,18 @@ logger = logging.getLogger(__name__)
 T = TypeVar('T')
 
 
+def _validation_detail(errors: List[str], source: str) -> Dict[str, Any]:
+    return {
+        "success": False,
+        "error": "request_validation_failed",
+        "error_code": "VALIDATION_ERROR",
+        "details": {
+            "source": source,
+            "errors": errors,
+        }
+    }
+
+
 class ValidationRule:
     """验证规则基类"""
 
@@ -212,12 +224,7 @@ def validate_request(validator: RequestValidator):
                     logger.warning(f"请求验证失败: {error_message}")
                     raise HTTPException(
                         status_code=400,
-                        detail={
-                            "success": False,
-                            "error": "请求数据验证失败",
-                            "error_code": "VALIDATION_ERROR",
-                            "details": {"errors": errors}
-                        }
+                        detail=_validation_detail(errors, source="request_validator")
                     )
 
             # 调用原始函数
@@ -286,12 +293,7 @@ def validate_pydantic(model: type[BaseModel]):
                     logger.warning(f"Pydantic 验证失败: {errors}")
                     raise HTTPException(
                         status_code=400,
-                        detail={
-                            "success": False,
-                            "error": "请求数据验证失败",
-                            "error_code": "VALIDATION_ERROR",
-                            "details": {"errors": errors}
-                        }
+                        detail=_validation_detail(errors, source="pydantic")
                     )
 
             return await func(*args, **kwargs)

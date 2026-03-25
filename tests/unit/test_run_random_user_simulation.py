@@ -2,7 +2,9 @@ from scripts.run_random_user_simulation import (
     Persona,
     TurnRecord,
     SessionResult,
+    TimingProbe,
     _analyze,
+    _load_coverage_scenarios,
     _build_workload,
     _check_policy_rules,
     _check_turn,
@@ -357,6 +359,17 @@ def test_check_turn_invalid_wechat_retry_uses_inline_wechat_candidate():
     assert "invalid_wechat_not_retried" in failures
 
 
+def test_check_turn_accepts_valid_wechat_with_shi_prefix():
+    failures = _check_turn(
+        user="微信是abc12345",
+        assistant="好，微信我看到了，我们接着聊。",
+        previous_assistant="你方便的话直接发我微信号就行～",
+        latency_s=1.2,
+        turn_index=3,
+    )
+    assert "invalid_wechat_not_retried" not in failures
+
+
 def test_check_turn_flags_preference_misclassified_as_fake_info():
     failures = _check_turn(
         user="身高高挑，不要超过30岁",
@@ -393,3 +406,101 @@ def test_build_workload_cover_scenarios_preserves_explicit_message_boundaries(mo
     workload = _build_workload(args, random.Random(42))
 
     assert workload[0]["turns"] == ["你好", "身高高挑，不要超过30岁"]
+
+
+def test_load_coverage_scenarios_includes_builtin_full_journey_cases():
+    from argparse import Namespace
+    from pathlib import Path
+
+    args = Namespace(
+        scenario_file=str(Path(__file__).resolve().parents[2] / "tests/real_ai/scenarios"),
+        scenario_ids=None,
+        scenario_categories=None,
+        listener_first_suite=False,
+        max_scenarios=None,
+    )
+
+    scenarios = _load_coverage_scenarios(args)
+    ids = {item["id"] for item in scenarios}
+
+    expected_ids = {
+        "builtin_full_journey_phone_complete",
+        "builtin_full_journey_wechat_complete",
+        "builtin_full_journey_phone_complete_with_ai_ending",
+        "builtin_full_journey_wechat_complete_with_ai_ending",
+        "builtin_full_journey_phone_then_wechat_complete",
+        "builtin_full_journey_wechat_then_phone_complete",
+        "builtin_full_journey_short_answers_phone",
+        "builtin_full_journey_short_answers_wechat",
+        "builtin_full_journey_dense_profile_then_phone",
+        "builtin_full_journey_faq_then_complete",
+        "builtin_full_journey_fee_first_then_complete",
+        "builtin_full_journey_privacy_then_complete",
+        "builtin_full_journey_match_process_then_complete",
+        "builtin_full_journey_store_then_complete",
+        "builtin_full_journey_photo_request_then_complete",
+        "builtin_full_journey_mixed_info_and_fee_then_complete",
+        "builtin_full_journey_mixed_info_and_privacy_then_complete",
+        "builtin_full_journey_boundary_once_then_complete",
+        "builtin_full_journey_contact_privacy_concern_then_complete",
+        "builtin_full_journey_authenticity_then_complete",
+        "builtin_full_journey_human_or_ai_then_complete",
+        "builtin_full_journey_why_keep_asking_then_complete",
+        "builtin_full_journey_contact_defer_then_end",
+        "builtin_full_journey_both_rejected_terminal_override",
+        "builtin_full_journey_already_ended_terminal_override",
+        "builtin_full_journey_proactive_contact_early",
+        "builtin_full_journey_contact_faq_then_phone_complete",
+        "builtin_full_journey_phone_refusal_then_wechat_complete",
+        "builtin_full_journey_hongkong_wechat_complete",
+        "builtin_full_journey_invalid_phone_retry_then_complete",
+        "builtin_full_journey_invalid_wechat_retry_then_complete",
+        "builtin_full_journey_separation_end_after_context",
+        "builtin_full_journey_already_married_end_after_context",
+        "builtin_full_journey_divorce_incomplete_end_after_context",
+        "builtin_contact_both_rejected_end",
+        "builtin_contact_invalid_phone_retry",
+        "builtin_contact_invalid_wechat_retry",
+        "builtin_contact_wechat_refusal_then_phone_complete",
+        "builtin_ending_separation_end",
+        "builtin_ending_already_married_end",
+        "builtin_ending_divorce_incomplete_end",
+    }
+
+    assert expected_ids.issubset(ids)
+
+
+def test_load_coverage_scenarios_defaults_to_complete_dialogues_only():
+    from argparse import Namespace
+
+    args = Namespace(
+        scenario_file=None,
+        scenario_ids=None,
+        scenario_categories=None,
+        listener_first_suite=False,
+        max_scenarios=None,
+    )
+
+    scenarios = _load_coverage_scenarios(args)
+
+    assert scenarios
+    assert all(str(item["id"]).startswith("builtin_full_journey_") for item in scenarios)
+
+
+def test_timing_probe_tolerates_missing_conversation_rule_service():
+    from unittest.mock import AsyncMock
+
+    class _ChatServiceStub:
+        def __init__(self) -> None:
+            self._call_ai = AsyncMock()
+            self._build_chat_response = AsyncMock()
+            self.user_service = type("UserSvc", (), {})()
+            self.user_service.get_user_profile = AsyncMock()
+            self.user_service.save_user_profile = AsyncMock()
+            self.dialogue_manager = type("DialogueMgr", (), {})()
+            self.dialogue_manager.get_conversation_context = AsyncMock()
+            self.profile_collection_coordinator = type("ProfileCoord", (), {})()
+            self.profile_collection_coordinator.process_collection = AsyncMock()
+
+    probe = TimingProbe(_ChatServiceStub())
+    probe.close()

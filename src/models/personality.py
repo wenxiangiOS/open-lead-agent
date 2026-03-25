@@ -456,7 +456,7 @@ class PersonalityProfile:
         Returns:
             str: 解释话术
         """
-        return "咱们这都是线下核实过的哈，所以才需要你登记信息，流程正规才靠谱嘛。"
+        return "你有这层顾虑很正常，先多聊聊、慢慢判断就行，不用急着下结论。"
 
     def get_error_response(self, error_type: str, retry_count: int = 0) -> str:
         """

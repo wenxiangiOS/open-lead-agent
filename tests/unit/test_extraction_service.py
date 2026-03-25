@@ -65,6 +65,22 @@ def test_parse_age_handles_birth_year_with_suffix():
     assert service._parse_age("1998年") == 28
 
 
+def test_extract_partner_requirement_from_user_message_preserves_negation():
+    extracted = ExtractionService._extract_partner_requirement_from_user_message(
+        "不超过30岁，身高至少160，温柔的"
+    )
+
+    assert extracted == "年龄不超过30岁，身高至少160，温柔"
+
+
+def test_extract_partner_requirement_from_user_message_captures_qizhi_preference():
+    extracted = ExtractionService._extract_partner_requirement_from_user_message(
+        "本科，看中对方气质吧"
+    )
+
+    assert extracted == "气质"
+
+
 @pytest.mark.anyio
 async def test_process_extracted_data_clears_stale_age_label_when_user_provides_exact_age():
     user_service = _FakeUserService()
@@ -81,3 +97,26 @@ async def test_process_extracted_data_clears_stale_age_label_when_user_provides_
     refreshed = await user_service.get_user_profile("user_age")
     assert refreshed.age == 28
     assert refreshed.age_label is None
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_does_not_pollute_occupation_with_partner_requirement():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_preference")
+
+    await service.process_extracted_data(
+        "user_preference",
+        profile,
+        {
+            "education": "本科",
+            "occupation": "看对方气质吧",
+            "partner_requirement": "看重对方气质",
+        },
+        user_message="本科，看中对方气质吧",
+    )
+
+    refreshed = await user_service.get_user_profile("user_preference")
+    assert refreshed.education == "本科"
+    assert refreshed.partner_requirement == "气质"
+    assert refreshed.occupation is None

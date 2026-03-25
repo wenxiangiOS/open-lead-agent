@@ -255,8 +255,8 @@ class InputFallbackService:
                 sex = user_profile.sex if user_profile else None
                 call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
                 responses = [
-                    f"好的～{call_name}，那先这样啦～有需要随时再来找我哦～拜拜👋",
-                    f"嗯嗯，好的～{call_name}，那我们下次再聊～拜拜啦👋",
+                    f"好，{call_name}，那我们先聊到这儿。",
+                    f"行，{call_name}，那今天先这样。",
                 ]
                 return random.choice(responses)
 
@@ -285,19 +285,19 @@ class InputFallbackService:
 
         if has_name and not has_location:
             responses = [
-                f"好啦好啦～{call_name}是不是不太想聊这些呀？那我们先简单点，你是在哪个城市呢？",
-                f"没关系呀～{call_name}方便说下你在哪个城市吗？",
+                f"{call_name}要是现在不想聊这些，我们就先简单一点。你现在主要在哪个城市？",
+                f"没关系，{call_name}。那我先问个简单的，你现在在哪个城市？",
             ]
         elif has_name:
             responses = [
-                f"好啦好啦～{call_name}是不是不太想聊这些呀？没关系，我们慢慢来～",
-                f"没关系呀～{call_name}我们换个话题聊聊？",
+                f"{call_name}要是现在不想聊这些也没事，我们慢慢来。",
+                f"没关系，{call_name}。要不我们换个轻松点的话题。",
             ]
         else:
             responses = [
-                f"{call_name}要不我们重新聊聊？你现在主要在哪个城市工作生活呀～",
-                f"好啦好啦～{call_name}是不是不太想聊这些呀？那我们先简单点，你是在哪个城市呢？",
-                f"嗯呢，{call_name}我们先从轻松点的开始，你是在哪个城市呀？",
+                f"{call_name}要不我们重新捋一下。你现在主要在哪个城市工作生活？",
+                f"{call_name}要是现在不想聊太多，我们就先从简单的开始。你在哪个城市？",
+                f"{call_name}那我们先从轻松点的开始，你现在在哪个城市？",
             ]
         return random.choice(responses)
 
@@ -305,18 +305,18 @@ class InputFallbackService:
         sex = user_profile.sex if user_profile else None
         call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
         return random.choice([
-            f"感觉{call_name}好像不太想聊呢...要不这样吧，等你想聊的时候再来找我～",
-            f"{call_name}是不是在逗我玩呀哈哈～要是真的想脱单的话，我们可以认真聊聊哦～",
-            f"嗯呢，可能{call_name}现在不太方便吧～那我就不打扰你啦，有空再聊～",
+            f"感觉{call_name}现在可能不太想聊这个。等你想聊的时候我们再继续。",
+            f"{call_name}你现在要是不想展开也没关系，我们先停一下。",
+            f"我感觉{call_name}现在可能不太方便，那我们晚点再聊也行。",
         ])
 
     def get_closing_response(self, user_profile: UserProfile) -> str:
         sex = user_profile.sex if user_profile else None
         call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
         return random.choice([
-            f"好啦好啦，{call_name}那我先忙去啦～以后真的想脱单的话随时来找我哦，拜拜～",
-            f"嗯嗯，感觉{call_name}今天好像不太想聊呢，那我就不打扰啦～祝你早日脱单哦！",
-            f"好哒{call_name}，那我们先这样～以后有需要的话随时来找我呀，拜拜～",
+            f"好，{call_name}，那我们今天就先聊到这儿。",
+            f"感觉{call_name}今天不太想继续，那我就先收住了。",
+            f"行，{call_name}，那我们先这样，之后想继续再聊。",
         ])
 
     def get_confirm_word_response(self, user_profile: UserProfile, confirm_count: int) -> Optional[str]:
@@ -326,20 +326,20 @@ class InputFallbackService:
 
         if confirm_count == 1:
             return random.choice([
-                "电话这边主要是方便后面登记和联系你，不会私下打扰你的。要是你方便的话，把号码发我就行～",
-                "这个电话主要是留作后面联系用的，我们不会乱打给你。你方便的话，把号码发我就可以～",
-                "电话只是留作登记和后面联系，不会拿去做别的。你要是方便的话，发我一个号码就行～",
+                "电话这块主要是后面需要的时候能联系到你。你要是方便，发我一个号码就行。",
+                "这个电话只是想在需要时能联系到你。你方便的话，给我一个号码就可以。",
+                "电话这块如果你方便，就发我一个号码。不方便我们也可以先不聊这个。",
             ])
         if confirm_count == 2:
             return random.choice([
-                "如果电话不方便的话，留个微信也可以，后面联系会顺手一点～",
-                "你要是不想留电话也没关系，微信留一个也行，方便后面沟通～",
-                "电话不方便的话就留微信吧，有合适的情况我这边也能及时联系你～",
+                "如果电话不方便，微信也可以。",
+                "你要是不想留电话也没关系，微信方便的话说一个也行。",
+                "电话这块不方便的话，我们也可以换成微信。",
             ])
         if confirm_count == 3:
             return random.choice([
-                "好呀，那我先不继续问这个了。你后面要是方便了，再告诉我也行～",
-                f"没事的，那我们先聊到这儿。{call_name}之后要是想继续，再来找我就行～",
-                "好的，那这个我先不追问啦。你什么时候方便，什么时候再说～",
+                "好，那这个我先不继续问了。",
+                f"没事，{call_name}，那我们先聊到这儿。",
+                "行，这个话题我先收住。",
             ])
         return ""

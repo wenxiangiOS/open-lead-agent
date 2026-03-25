@@ -197,7 +197,8 @@
       ],
       "assertions": [
         { "type": "profile_field_falsey", "field": "phone" },
-        { "type": "final_response_contains_any", "values": ["电话", "号码", "联系"] }
+        { "type": "final_response_contains_any", "values": ["电话", "号码", "联系"] },
+        { "type": "final_response_not_contains_any", "values": ["发资料", "第一时间联系", "1到8小时", "介绍具体情况"] }
       ]
     },
     {
@@ -212,7 +213,83 @@
       ],
       "assertions": [
         { "type": "profile_field_falsey", "field": "phone" },
-        { "type": "response_contains_any", "turn": 3, "values": ["微信", "沟通", "联系"] }
+        { "type": "response_contains_any", "turn": 3, "values": ["微信", "沟通", "联系"] },
+        { "type": "response_not_contains_any", "turn": 3, "values": ["发资料", "第一时间联系", "1到8小时", "介绍具体情况"] }
+      ]
+    },
+    {
+      "id": "contact_low_info_okay_should_ask_wechat_without_overpromising",
+      "category": "contact",
+      "tags": ["critical", "contact_confirm", "contact_wechat", "humanlike"],
+      "description": "用户在电话转场时只回“好的”，系统应自然切到微信，不要承诺发资料、具体时效或介绍详情。",
+      "messages": [
+        "我是男的，90后，在深圳，本科，IT，单身",
+        "好的"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "phone" },
+        { "type": "response_contains_any", "turn": 2, "values": ["微信", "方便", "沟通"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["发资料", "第一时间联系", "1到8小时", "介绍具体情况", "发具体定位"] }
+      ]
+    },
+    {
+      "id": "contact_low_info_en_should_ask_wechat_without_overpromising",
+      "category": "contact",
+      "tags": ["critical", "contact_confirm", "contact_wechat", "humanlike"],
+      "description": "用户在电话转场时只回“嗯”，系统应自然切到微信，不要越界承诺。",
+      "messages": [
+        "我是男的，90后，在深圳，本科，IT，单身",
+        "嗯"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "phone" },
+        { "type": "response_contains_any", "turn": 2, "values": ["微信", "方便", "沟通"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["发资料", "第一时间联系", "1到8小时", "介绍具体情况", "发具体定位"] }
+      ]
+    },
+    {
+      "id": "contact_low_info_xing_should_ask_wechat_without_overpromising",
+      "category": "contact",
+      "tags": ["critical", "contact_confirm", "contact_wechat", "humanlike"],
+      "description": "用户在电话转场时只回“行”，系统应自然切到微信，不要越界承诺。",
+      "messages": [
+        "我是男的，90后，在深圳，本科，IT，单身",
+        "行"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "phone" },
+        { "type": "response_contains_any", "turn": 2, "values": ["微信", "方便", "沟通"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["发资料", "第一时间联系", "1到8小时", "介绍具体情况", "发具体定位"] }
+      ]
+    },
+    {
+      "id": "contact_low_info_keyi_should_ask_wechat_without_overpromising",
+      "category": "contact",
+      "tags": ["critical", "contact_confirm", "contact_wechat", "humanlike"],
+      "description": "用户在电话转场时只回“可以”，系统应自然切到微信，不要越界承诺。",
+      "messages": [
+        "我是男的，90后，在深圳，本科，IT，单身",
+        "可以"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "phone" },
+        { "type": "response_contains_any", "turn": 2, "values": ["微信", "方便", "沟通"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["发资料", "第一时间联系", "1到8小时", "介绍具体情况", "发具体定位"] }
+      ]
+    },
+    {
+      "id": "contact_low_info_huitouzaishuo_should_pause_without_hard_push",
+      "category": "contact",
+      "tags": ["critical", "contact_confirm", "contact_boundary", "humanlike"],
+      "description": "用户说“回头再说”时，回复应降压，不应继续硬推联系方式或越界承诺。",
+      "messages": [
+        "我是男的，90后，在深圳，本科，IT，单身",
+        "回头再说"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "phone" },
+        { "type": "response_contains_any", "turn": 2, "values": ["先", "不急", "方便", "继续聊"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["必须留电话", "赶紧留", "发资料", "第一时间联系", "1到8小时", "介绍具体情况"] }
       ]
     },
     {

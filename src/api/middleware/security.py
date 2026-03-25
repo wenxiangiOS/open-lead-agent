@@ -100,10 +100,10 @@ class JWTMiddleware:
                 return JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     content={
-                        "error": "未授权访问",
+                        "error": "auth_required",
                         "error_code": "AUTH_REQUIRED",
                         "details": {
-                            "message": "需要提供有效的 JWT token"
+                            "message": "valid_bearer_token_required"
                         }
                     }
                 )
@@ -121,10 +121,10 @@ class JWTMiddleware:
                 return JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     content={
-                        "error": "认证失败",
+                        "error": "invalid_token",
                         "error_code": "INVALID_TOKEN",
                         "details": {
-                            "message": "Token 无效或已过期"
+                            "message": "token_invalid_or_expired"
                         }
                     }
                 )

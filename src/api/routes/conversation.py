@@ -21,6 +21,14 @@ def init_service(service: ChatService):
     chat_service = service
 
 
+def _http_detail(error_code: str, error: str, **details: Any) -> Dict[str, Any]:
+    return {
+        "error": error,
+        "error_code": error_code,
+        "details": details,
+    }
+
+
 @router.get(
     "/api/doubao/history",
     summary="获取对话历史",
@@ -64,7 +72,10 @@ async def get_conversation_history(
 ) -> Dict[str, Any]:
     """获取用户对话历史"""
     if chat_service is None:
-        raise HTTPException(status_code=500, detail="服务未初始化")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("SERVICE_NOT_INITIALIZED", "service_not_initialized", route="conversation_history"),
+        )
 
     try:
         logger.info(f"Getting history for user: {user_id}")
@@ -78,7 +89,10 @@ async def get_conversation_history(
 
     except Exception as e:
         logger.error(f"History retrieval error: {e}")
-        raise HTTPException(status_code=500, detail="获取对话历史时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("CONVERSATION_HISTORY_ERROR", "conversation_history_failed", route="conversation_history"),
+        )
 
 
 @router.post(
@@ -108,7 +122,10 @@ async def get_conversation_history(
 async def reset_conversation(user_id: str) -> Dict[str, Any]:
     """重置用户对话"""
     if chat_service is None:
-        raise HTTPException(status_code=500, detail="服务未初始化")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("SERVICE_NOT_INITIALIZED", "service_not_initialized", route="conversation_reset"),
+        )
 
     try:
         logger.info(f"Resetting conversation for user: {user_id}")
@@ -120,4 +137,7 @@ async def reset_conversation(user_id: str) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Conversation reset error: {e}")
-        raise HTTPException(status_code=500, detail="重置对话时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("CONVERSATION_RESET_ERROR", "conversation_reset_failed", route="conversation_reset"),
+        )

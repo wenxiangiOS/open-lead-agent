@@ -137,224 +137,80 @@ class ContactCollectionService:
     # ==================== 提示词模板 ====================
 
     PROMPT_END_CONVERSATION = """
-
-【end_conversation】
-【当前任务：结束对话收尾】
-用户已拒绝提供微信和电话，现在需要礼貌地结束对话。
-
-回复要求：
-• 用自然、友好的方式结束对话
-• 表达如果以后有需要可以再联系
-• 保持简短，1-2句话即可
-
-参考风格（可灵活调整）：
-- "好的呢～那有需要再联系我哈，祝你生活愉快～"
-- "嗯嗯好的呀～那先这样哈～有需要随时找我呀～"
-
-禁止行为：
-❌ 禁止继续收集任何用户信息
-❌ 禁止再问任何问题
+【当前任务：结束对话】
+用户已拒绝提供电话和微信。
+本轮只做自然收尾，不追问资料，不再索要联系方式。
 """
 
     PROMPT_ASK_PHONE_FIRST = """
-
-【⚠️⚠️⚠️立即执行-询问电话⚠️⚠️⚠️】
-【当前任务：首次询问电话号码】
-用户资料已收集完成，这是首次询问电话，用户还没提供过任何联系方式。
-
-回复要求：
-• 用自然、亲切的方式询问用户的电话号码
-• 简单说明用途（方便后续联系）
-• 保持简短，1-2句话即可
-
-参考风格（可根据语境灵活调整）：
-- "方便留个电话吗？后续有合适的人选时联系你～"
-- "留个电话号码方便后续联系哦～"
-
-禁止行为：
-❌ 禁止提"微信"、"WX"、"weixin"等与微信相关的词
-❌ 禁止使用"嗯嗯"、"好的呀"等无意义开场白
-❌ 禁止过度解释电话用途
+【当前任务：询问电话】
+首次询问电话号码。
+自然、简短地说明用途并询问电话。
+不要提微信，不要写模板腔开场。
 """
 
     PROMPT_PERSUADE_PHONE = """
-
-【⚠️⚠️⚠️立即执行-争取电话⚠️⚠️⚠️】
-【当前任务：争取电话号码】
-用户刚才说不留电话，这是第一次拒绝，需要争取一下。
-
-回复要求：
-• 解释电话的用途，打消用户顾虑
-• 说明电话只是系统登记用，保护隐私
-• 保持简短，1-2句话
-
-参考风格（可灵活调整）：
-- "这个电话只是用于系统登记哈，牵线的小伙伴才能对接到你，我们是不能够私下去牵线的～请你放心～"
-- "电话只是登记用的哦，有合适的人选才能联系到你，我们不会私下打扰的～"
-
-禁止行为：
-❌ 禁止提"微信"、"WX"、"weixin"等与微信相关的词
-❌ 禁止使用"没关系哒～"、"那先这样"等放弃语气
-❌ 禁止使用"嗯嗯"、"好的呀"等无意义开场白
+【当前任务：电话拒绝后继续沟通】
+用户第一次拒绝电话。
+先承接顾虑，再轻轻给一次电话选项。
+最多两句，避免长解释。
+禁止重复强调“不会骚扰 / 不会打扰 / 不会发广告 / 绝对不会”。
+不要营销感，不要连续说服。
 """
 
     PROMPT_ASK_PHONE_AFTER_WECHAT_REJECTED = """
-
-【⚠️⚠️⚠️立即执行-询问电话（微信已拒）⚠️⚠️⚠️】
-【当前任务：询问电话号码（微信已拒绝）】
-用户已拒绝微信，现在询问电话号码。
-
-回复要求：
-• 表示理解，然后询问电话
-• 保持简短，1-2句话
-• 不要有放弃或结束的语气
-
-参考风格（可灵活调整）：
-- "好的那留个电话也可以哦，后续有合适的人选时联系你～"
-- "没关系呀～那留个电话也行，后续联系你～"
-
-禁止行为：
-❌ 禁止使用"嗯嗯好的呀～那先这样哈～"等结束语气
-❌ 禁止使用"祝你早日脱单"、"有需要再联系"等结束对话用语
-❌ 禁止提微信
+【当前任务：微信拒绝后询问电话】
+用户拒绝微信，当前改问电话。
+自然承接后简短询问电话，不要结束对话。
 """
 
     PROMPT_ASK_PHONE_AFTER_WECHAT_COLLECTED = """
-
-【⚠️⚠️⚠️立即执行-询问电话（微信已收）⚠️⚠️⚠️】
-【当前任务：询问电话号码（联系方式已收集）】
-用户的联系方式已记录，现在询问电话号码以便更及时联系。
-
-回复要求：
-• 确认已记录，然后询问电话
-• 保持简短，1-2句话
-• 语气自然亲切
-
-参考风格（可灵活调整）：
-- "好的呀～记下啦😊 对啦，方便再留个电话号码吗？电话联系会更方便及时呢～"
-- "好哒～记下啦😊 对了对了，方便再留个电话吗？电话联系更方便哦～"
-
-禁止行为：
-❌ 禁止使用"嗯嗯好的呀～那先这样哈～"等结束语气
-❌ 禁止使用"祝你早日脱单"、"有需要再联系"等结束对话用语
-❌ 禁止提"微信"、"WX"、"weixin"等词
+【当前任务：微信已收集后补充电话】
+用户微信已记录，可继续顺带确认电话。
+表达要自然简短，不要套话。
 """
 
     PROMPT_ASK_WECHAT_FIRST = """
-
-【⚠️⚠️⚠️立即执行-询问微信⚠️⚠️⚠️】
-【当前任务：首次询问微信号】
-这是首次询问微信，用户还没提供过任何联系方式。
-
-回复要求：
-• 用自然、亲切的方式询问用户的微信号
-• 简单说明用途（方便后续联系）
-• 保持简短，1-2句话即可
-
-参考风格（可灵活调整）：
-- "要是你微信方便的话，也可以留一个，后面沟通会更顺手一点～"
-- "如果你微信常用的话，留一个也行，后续联系会方便些～"
-
-禁止行为：
-❌ 禁止提"电话"、"手机号"等与电话相关的词
-❌ 禁止使用"嗯嗯"、"好的呀"等无意义开场白
+【当前任务：询问微信】
+首次询问微信号。
+自然简短说明用途并询问微信，不要提电话。
 """
 
     PROMPT_ASK_WECHAT_AFTER_PHONE_REJECTED = """
-
-【⚠️⚠️⚠️立即执行-询问微信（电话已拒）⚠️⚠️⚠️】
-【当前任务：询问微信（电话已拒绝）】
-用户已拒绝电话，现在询问微信。
-
-回复要求：
-• 表示理解，然后询问微信
-• 保持简短，1-2句话
-
-参考风格（可灵活调整）：
-- "好的，那微信留一个也可以，后面联系会方便一点～"
-- "没关系呀，要是微信方便的话，留一个也行～"
-
-禁止行为：
-❌ 禁止提电话
-❌ 禁止使用"嗯嗯好的呀～那先这样哈～"等结束语气
+【当前任务：电话拒绝后询问微信】
+用户拒绝电话，当前改问微信。
+自然承接后简短询问微信，不要结束语气。
 """
 
     PROMPT_ASK_WECHAT_ON_USER_PREFERENCE = """
-
-【⚠️⚠️⚠️立即执行-接住微信方案⚠️⚠️⚠️】
-【当前任务：用户主动提出留微信】
-用户这轮明确表示微信更方便，你要顺着用户的选择接住微信方案。
-
-回复要求：
-• 明确表示微信可以
-• 自然请用户直接发微信号
-• 保持简短，1-2句话
-• 语气要像接住用户的提议，不要像重新发起盘问
-
-参考风格（可灵活调整）：
-- "可以呀，那你直接发我微信号就行，我这边先记下来～"
-- "没问题呀，你方便的话把微信发过来就好，后面联系也可以～"
-
-禁止行为：
-❌ 禁止继续坚持其他联系方式
-❌ 禁止转成隐私解释长文
-❌ 禁止出现结束对话语气
+【当前任务：接住用户的微信偏好】
+用户明确说微信更方便。
+直接顺着用户提议，请其提供微信号。
+不要转成长解释或继续坚持其他联系方式。
 """
 
     PROMPT_PERSUADE_WECHAT = """
-
-【⚠️⚠️⚠️立即执行-争取微信⚠️⚠️⚠️】
-【当前任务：争取微信】
-用户刚才说不留微信，这是第一次拒绝，需要争取一下。
-
-回复要求：
-• 解释微信的用途，打消用户顾虑
-• 说明不会随便打扰
-• 保持简短，1-2句话
-
-参考风格（可灵活调整）：
-- "微信主要是方便后面沟通，我们不会随便打扰你的～"
-- "如果你微信方便的话，留一个就行，有合适的情况再联系你～"
-
-禁止行为：
-❌ 禁止提"电话"、"手机号"等与电话相关的词
-❌ 禁止使用"没关系哒～"、"那先这样"等放弃语气
-❌ 禁止使用"嗯嗯"、"好的呀"等无意义开场白
-❌ 禁止使用"有需要再联系"等结束对话用语
+【当前任务：微信拒绝后继续沟通】
+用户第一次拒绝微信。
+先承接顾虑，再轻轻给一次微信选项。
+最多两句，避免长解释。
+禁止重复强调“不会骚扰 / 不会打扰 / 不会发广告 / 绝对不会”。
+不要模板化，不要连续说服。
 """
 
     PROMPT_HK_ASK_WECHAT = """
-
-【⚠️⚠️⚠️立即执行-询问微信（香港）⚠️⚠️⚠️】
-【当前任务：询问微信（香港用户）】
-已收集电话号码，现在询问微信号。
-
-回复要求：
-• 用自然、亲切的方式询问微信
-• 保持简短，1-2句话
-
-参考风格（可灵活调整）：
-- "要是你微信方便的话，也可以留一个，后面联系会更顺手一点～"
-- "如果你微信常用的话，留一个也行，后续沟通方便些～"
+【当前任务：香港用户询问微信】
+已收集电话，当前询问微信。
+自然、简短询问，不要模板化开场。
 """
 
     PROMPT_HK_PERSUADE_WECHAT = """
-
-【⚠️⚠️⚠️立即执行-争取微信（香港）⚠️⚠️⚠️】
-【当前任务：争取微信（香港用户）】
-香港用户的电话已收集，用户刚才拒绝微信，需要争取一下。
-
-回复要求：
-• 解释微信的用途，打消用户顾虑
-• 保持简短，1-2句话
-
-参考风格（可灵活调整）：
-- "微信主要是方便后面联系你，我们不会随便打扰你的～"
-- "如果你微信方便的话，留一个也行，有合适的人选再联系你～"
-
-禁止行为：
-❌ 禁止使用"嗯嗯"、"好的呀"等无意义开场白
-❌ 禁止使用"那先这样"、"有需要再联系"等结束对话用语
+【当前任务：香港用户微信拒绝后继续沟通】
+用户第一次拒绝微信。
+承接顾虑后轻轻再问一次即可。
+最多两句，避免长解释。
+禁止重复强调“不会骚扰 / 不会打扰 / 不会发广告 / 绝对不会”。
+不要结束语气，也不要长篇说服。
 """
 
     def __init__(self, user_service=None):
@@ -386,14 +242,6 @@ class ContactCollectionService:
 
         is_hk = self.is_hongkong_user(profile)
 
-        if self._should_switch_from_phone_to_wechat(profile, user_message, is_hk):
-            logger.info("[联系方式保护] 低信息确认后不继续追问电话，切到微信方案")
-            return NextAction.ASK_WECHAT
-
-        if self._should_switch_from_wechat_to_phone(profile, user_message, is_hk):
-            logger.info("[联系方式保护] 低信息确认后不继续追问微信，切到电话方案")
-            return NextAction.ASK_PHONE
-
         # 场景1: 双方都被拒绝 → 结束对话
         if profile.rejected_phone and profile.rejected_wechat:
             return NextAction.END_CONVERSATION
@@ -418,18 +266,6 @@ class ContactCollectionService:
             max_wechat = self.get_max_asks(profile, 'wechat')
             if profile.wechat_ask_count < max_wechat:
                 return NextAction.PERSUADE_WECHAT
-
-        # 场景4.5: 电话第一次被拒后，非香港用户优先切微信，不立刻继续争电话
-        if (
-            not is_hk
-            and not profile.phone_collected
-            and not profile.rejected_phone
-            and profile.phone_ask_count >= 1
-            and not profile.wechat_collected
-            and not profile.rejected_wechat
-            and profile.wechat_ask_count == 0
-        ):
-            return NextAction.ASK_WECHAT
 
         # 场景5: 电话正在争取中（还没被最终拒绝），继续争取电话
         if not profile.rejected_phone and not profile.phone_collected and profile.phone_ask_count >= 1:
@@ -637,6 +473,7 @@ class ContactCollectionService:
             return False
         return (
             profile.phone_ask_count >= 1
+            and profile.wechat_ask_count == 0
             and not profile.phone_collected
             and not profile.rejected_phone
             and not profile.wechat_collected
@@ -653,11 +490,24 @@ class ContactCollectionService:
             return False
         return (
             profile.wechat_ask_count >= 1
+            and profile.phone_ask_count == 0
             and not profile.wechat_collected
             and not profile.rejected_wechat
             and not profile.phone_collected
             and not profile.rejected_phone
         )
+
+    def _should_pause_after_repeated_contact_soft_ack(
+        self,
+        profile: UserProfile,
+        user_message: str,
+        is_hk: bool,
+    ) -> bool:
+        if is_hk or not self._is_soft_ack_without_contact(user_message):
+            return False
+        if profile.phone_collected or profile.wechat_collected:
+            return False
+        return profile.phone_ask_count >= 1 and profile.wechat_ask_count >= 1
 
     def _message_indicates_phone_refusal_preference(self, user_message: str) -> bool:
         """判断用户是否表达了“电话不方便，优先微信”的拒绝偏好。"""
@@ -723,83 +573,52 @@ class ContactCollectionService:
 
         result = None
 
-        # === 核心逻辑：根据当前状态决定判断优先级 ===
-        # 电话已收集 → 优先判断微信拒绝
-        # 微信已收集 → 优先判断电话拒绝
-        # 都没收集 → 根据 last_response 内容判断
-
         phone_collected = profile.phone_collected and profile.phone
         wechat_collected = profile.wechat_collected and profile.wechat
-
-        # 检查 last_response 的上下文
-        # 调试：打印 last_response 的实际内容
         logger.info(f"[拒绝检测-调试] last_response 内容: '{last_response}'")
         is_about_phone = self._is_context_about(last_response, 'phone')
         is_about_wechat = self._is_context_about(last_response, 'wechat')
-
         logger.info(f"[拒绝检测-上下文] 电话已收集={phone_collected}, 微信已收集={wechat_collected}, 关于电话={is_about_phone}, 关于微信={is_about_wechat}")
 
         user_mentions_wechat = any(marker in message_lower for marker in ['微信', 'wx', 'weixin'])
         user_mentions_phone = any(marker in message_lower for marker in ['电话', '手机', '手机号', '号码'])
+        last_requested_type = str(getattr(profile, "last_contact_request_type", "") or "").strip()
+        current_action = self.get_next_action(profile, "")
+        action_value = getattr(current_action, "value", str(current_action))
 
-        # === 情况1：电话已收集，正在询问微信 ===
-        if phone_collected and not wechat_collected:
-            if wechat_refusal or (general_refusal and (is_about_wechat or user_mentions_wechat)):
-                logger.info(f"[拒绝检测] 电话已收集，检测到微信拒绝")
-                result = self._handle_refusal(profile, 'wechat', wechat_refusal)
-
-        # === 情况2：微信已收集，正在询问电话 ===
-        elif wechat_collected and not phone_collected:
-            if phone_refusal or (general_refusal and (is_about_phone or user_mentions_phone)):
-                logger.info(f"[拒绝检测] 微信已收集，检测到电话拒绝")
-                result = self._handle_refusal(profile, 'phone', phone_refusal)
-
-        # === 情况3：都没收集，根据 last_response 判断 ===
-        elif not phone_collected and not wechat_collected:
-            # 先检查显式拒绝
-            if phone_refusal:
-                logger.info(f"[拒绝检测] 检测到显式电话拒绝")
-                result = self._handle_refusal(profile, 'phone', True)
-            elif wechat_refusal:
-                logger.info(f"[拒绝检测] 检测到显式微信拒绝")
-                result = self._handle_refusal(profile, 'wechat', True)
-            # 再根据上下文判断
-            elif general_refusal:
-                if user_mentions_wechat:
-                    logger.info(f"[拒绝检测] 通用拒绝 + 明确提及微信，按微信拒绝处理")
-                    result = self._handle_refusal(profile, 'wechat', False)
-                elif user_mentions_phone:
-                    logger.info(f"[拒绝检测] 通用拒绝 + 明确提及电话，按电话拒绝处理")
-                    result = self._handle_refusal(profile, 'phone', False)
-                elif is_about_wechat:
-                    logger.info(f"[拒绝检测] 根据上下文检测到微信拒绝")
-                    result = self._handle_refusal(profile, 'wechat', False)
-                elif is_about_phone:
-                    logger.info(f"[拒绝检测] 根据上下文检测到电话拒绝")
-                    result = self._handle_refusal(profile, 'phone', False)
-                # 通用拒绝 + 已询问过（根据已拒绝状态智能判断）
-                elif profile.rejected_phone and not profile.rejected_wechat:
-                    # 电话已拒绝，只处理微信
-                    if profile.wechat_ask_count >= 1:
-                        logger.info(f"[拒绝检测] 电话已拒绝，处理微信拒绝")
-                        result = self._handle_refusal(profile, 'wechat', False)
-                elif profile.rejected_wechat and not profile.rejected_phone:
-                    # 微信已拒绝，只处理电话
-                    if profile.phone_ask_count >= 1:
-                        logger.info(f"[拒绝检测] 微信已拒绝，处理电话拒绝")
-                        result = self._handle_refusal(profile, 'phone', False)
-                elif not profile.rejected_phone and not profile.rejected_wechat:
-                    # 都没被拒绝，按顺序处理（先电话后微信）
-                    if profile.phone_ask_count >= 1:
-                        logger.info(f"[拒绝检测] 电话已询问过，处理电话拒绝")
-                        result = self._handle_refusal(profile, 'phone', False)
-                    elif profile.wechat_ask_count >= 1:
-                        logger.info(f"[拒绝检测] 微信已询问过，处理微信拒绝")
-                        result = self._handle_refusal(profile, 'wechat', False)
-                else:
-                    logger.info(f"[拒绝检测] 通用拒绝但无法确定目标")
-        else:
-            logger.info(f"[拒绝检测] 未匹配任何情况分支")
+        if phone_refusal:
+            logger.info("[拒绝检测] 检测到显式电话拒绝")
+            result = self._handle_refusal(profile, 'phone', True)
+        elif wechat_refusal:
+            logger.info("[拒绝检测] 检测到显式微信拒绝")
+            result = self._handle_refusal(profile, 'wechat', True)
+        elif general_refusal:
+            if user_mentions_wechat:
+                logger.info("[拒绝检测] 通用拒绝 + 明确提及微信，按微信拒绝处理")
+                result = self._handle_refusal(profile, 'wechat', False)
+            elif user_mentions_phone:
+                logger.info("[拒绝检测] 通用拒绝 + 明确提及电话，按电话拒绝处理")
+                result = self._handle_refusal(profile, 'phone', False)
+            elif last_requested_type == 'phone':
+                logger.info("[拒绝检测] 使用最近一次真实展示的电话请求类型优先归因")
+                result = self._handle_refusal(profile, 'phone', False)
+            elif last_requested_type == 'wechat':
+                logger.info("[拒绝检测] 使用最近一次真实展示的微信请求类型优先归因")
+                result = self._handle_refusal(profile, 'wechat', False)
+            elif action_value in {NextAction.ASK_PHONE.value, NextAction.PERSUADE_PHONE.value}:
+                logger.info("[拒绝检测] 当前动作是电话流程，按电话拒绝处理")
+                result = self._handle_refusal(profile, 'phone', False)
+            elif action_value in {NextAction.ASK_WECHAT.value, NextAction.PERSUADE_WECHAT.value}:
+                logger.info("[拒绝检测] 当前动作是微信流程，按微信拒绝处理")
+                result = self._handle_refusal(profile, 'wechat', False)
+            elif is_about_wechat:
+                logger.info("[拒绝检测] 当前动作未知，按上一轮微信上下文兜底")
+                result = self._handle_refusal(profile, 'wechat', False)
+            elif is_about_phone:
+                logger.info("[拒绝检测] 当前动作未知，按上一轮电话上下文兜底")
+                result = self._handle_refusal(profile, 'phone', False)
+            else:
+                logger.info("[拒绝检测] 通用拒绝但无法确定联系方式类型")
 
         if result:
             logger.info(f"[拒绝检测] 检测到拒绝: {result.contact_type}, 最终={result.is_final}, 次数={result.ask_count_after}")
@@ -855,7 +674,8 @@ class ContactCollectionService:
             # - 争取模式："电话只是"、"电话用于"、"请你放心"、"保护你的隐私"
             phone_patterns = [
                 '电话号码', '留电话', '个电话', '电话吗', '电话~', '电话哈',
-                '电话只是', '电话用于', '请你放心', '保护你的隐私', '不会私下'
+                '电话只是', '电话用于', '请你放心', '保护你的隐私', '不会私下',
+                '手机号', '手机号码', '号码', '手机号不', '手机号吗', '号码不', '号码吗'
             ]
             return any(p in response_lower for p in phone_patterns)
         else:
@@ -880,11 +700,10 @@ class ContactCollectionService:
         """
         处理拒绝
 
-        在检测到拒绝时递增计数器，这样后续 get_next_action 能正确判断
+        询问次数在“真实展示给用户”时由 record_ask 记录。
+        这里不重复递增，避免一次询问 + 一次拒绝被双重计数。
         """
         if contact_type == 'phone':
-            # 递增询问次数
-            profile.phone_ask_count += 1
             new_count = profile.phone_ask_count
             max_asks = self.get_max_asks(profile, 'phone')
 
@@ -905,8 +724,6 @@ class ContactCollectionService:
                     ask_count_after=new_count
                 )
         else:  # wechat
-            # 递增询问次数
-            profile.wechat_ask_count += 1
             new_count = profile.wechat_ask_count
             max_asks = self.get_max_asks(profile, 'wechat')
 
@@ -942,9 +759,11 @@ class ContactCollectionService:
         """
         if contact_type == 'phone':
             profile.phone_ask_count += 1
+            profile.last_contact_request_type = 'phone'
             return profile.phone_ask_count
         else:
             profile.wechat_ask_count += 1
+            profile.last_contact_request_type = 'wechat'
             return profile.wechat_ask_count
 
     def record_rejection(self, profile: UserProfile, contact_type: str) -> None:
@@ -1065,7 +884,7 @@ class ContactCollectionService:
             if wechat_asking or profile.wechat_collected:
                 phone_status = "电话暂缓"
             else:
-                phone_status = "电话待确认"
+                phone_status = "电话争取中"
 
         # 微信状态
         if profile.wechat_collected and profile.wechat:
@@ -1073,7 +892,7 @@ class ContactCollectionService:
         elif profile.rejected_wechat:
             wechat_status = "不愿留微信"
         elif wechat_asking:
-            wechat_status = "微信待确认"
+            wechat_status = "微信争取中"
 
         # 组合状态
         if phone_status and wechat_status:

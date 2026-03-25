@@ -244,13 +244,12 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
             f"堆栈: {traceback.format_exc()}"
         )
 
-        # 构建错误响应
-        error_response = {
-            "success": False,
-            "error": "服务暂时不可用，请稍后重试",
-            "error_code": "INTERNAL_ERROR",
-            "trace_id": trace_id
-        }
+        error_response = ErrorHandler.handle(
+            exc,
+            context=f"{request.method} {request.url.path}",
+            user_id=self._get_user_id(request)
+        )
+        error_response["trace_id"] = trace_id
 
         # 调试模式下返回详细错误信息
         if self.debug_mode:
@@ -307,36 +306,26 @@ class ValidationErrorHandler:
         error_type = type(error).__name__
         error_message = str(error)
 
+        details: Dict[str, Any] = {"type": error_type}
+
         # 尝试解析 Pydantic 验证错误
         if "validation error" in error_message.lower():
             try:
-                import json
-                # 提取字段名和错误消息
                 errors = []
                 for line in error_message.split("\n"):
                     if line.strip():
                         errors.append(line.strip())
-
-                return {
-                    "success": False,
-                    "error": "请求数据验证失败",
-                    "error_code": "VALIDATION_ERROR",
-                    "details": {
-                        "errors": errors
-                    }
-                }
+                details["errors"] = errors
             except Exception:
                 pass
+        else:
+            details["message"] = error_message
 
-        # 通用验证错误
         return {
             "success": False,
-            "error": "输入数据格式不正确",
+            "error": "request_validation_failed",
             "error_code": "VALIDATION_ERROR",
-            "details": {
-                "type": error_type,
-                "message": error_message
-            }
+            "details": details,
         }
 
 

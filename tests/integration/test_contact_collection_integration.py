@@ -20,6 +20,8 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
+import pytest
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -90,12 +92,22 @@ class FakeAIService:
     """离线测试专用 AI，根据提示词返回稳定话术。"""
 
     RESPONSE_MAP = [
-        (re.compile(r"【当前任务：结束对话收尾】"), "好的，那先这样哈，有需要再联系我，祝你生活愉快。"),
-        (re.compile(r"【当前任务：争取电话号码】"), "电话只是登记用的，方便后续联系你，我们不会私下打扰。"),
-        (re.compile(r"【当前任务：首次询问电话号码】|【当前任务：询问电话号码"), "方便留个电话吗？后续有合适的人选时联系你。"),
-        (re.compile(r"【当前任务：争取微信（香港用户）】"), "微信方便后续有合适的人选时联系你哦，我们不会随便打扰你的。"),
-        (re.compile(r"【当前任务：争取微信】"), "留个微信吧，后续有合适的人选时联系你，不会随便打扰。"),
-        (re.compile(r"【当前任务：首次询问微信号】|【当前任务：询问微信"), "方便留个微信吗？后续有合适的人选时联系你。"),
+        (
+            re.compile(r"【当前任务：(结束对话收尾|结束对话)】"),
+            "好的，那先这样哈，有需要再联系我，祝你生活愉快。",
+        ),
+        (
+            re.compile(r"【当前任务：(争取电话号码|询问电话|首次询问电话号码|微信拒绝后询问电话|微信已收集后补充电话)】"),
+            "方便留个电话吗？后面沟通会方便些。",
+        ),
+        (
+            re.compile(r"【当前任务：(询问微信|首次询问微信号|电话拒绝后询问微信|香港用户询问微信|接住用户的微信偏好)】"),
+            "方便留个微信吗？后面沟通会方便些。",
+        ),
+        (
+            re.compile(r"【当前任务：(争取微信（香港用户）|争取微信|香港用户微信拒绝后继续沟通|微信拒绝后继续沟通|电话拒绝后继续沟通)】"),
+            "你要是方便的话，留个微信也行，后面沟通会顺一点。",
+        ),
     ]
 
     EXTRACT_FIELDS = [
@@ -176,7 +188,8 @@ class FakeAIService:
         system_prompt: str,
         temperature: float = 0.7,
         max_tokens: int = 500,
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        **_: object,
     ) -> str:
         user_message = self._get_user_message(message)
 
@@ -197,12 +210,12 @@ class FakeAIService:
 VERIFICATION_RULES: Dict[ExpectAction, VerificationRule] = {
     ExpectAction.PERSUADE_PHONE: VerificationRule(
         # 检查是否在争取电话（解释用途/打消顾虑）
-        must_contain_any=["电话", "登记", "放心", "不会私", "不会打"],
+        must_contain_any=["电话", "方便", "沟通", "顺一点", "后面"],
         must_not_contain=["微信", "WX", "weixin"]
     ),
     ExpectAction.PERSUADE_WECHAT: VerificationRule(
         # 检查是否在争取微信（解释用途/打消顾虑）
-        must_contain_any=["微信", "后续", "联系", "不会打", "不会随"],
+        must_contain_any=["微信", "后面", "沟通", "顺", "方便"],
         must_not_contain=["电话", "手机号"]
     ),
     ExpectAction.ASK_PHONE: VerificationRule(
@@ -224,7 +237,7 @@ VERIFICATION_RULES: Dict[ExpectAction, VerificationRule] = {
     ExpectAction.CONTINUE_OTHER_FIELDS: VerificationRule(
         # 检查是否在继续收集其他字段或表示完成
         # 包括：确认收集完成、继续其他字段、安慰性收尾等
-        must_contain_any=["性别", "年龄", "身高", "学历", "职业", "还有", "其他", "好的", "等好消息", "早日脱单", "记下", "收到", "没关系", "留意", "联系你", "合适", "信息都记下", "尽快联系", "记好", "通知", "第一时间"],
+        must_contain_any=["性别", "年龄", "身高", "学历", "职业", "还有", "其他", "好的", "记下", "收到", "没关系", "留意", "沟通", "顺一点", "记好"],
         must_not_contain=[]
     ),
     ExpectAction.COLLECTED_PHONE: VerificationRule(
@@ -913,6 +926,49 @@ class ContactScenarioTester:
         else:
             print(f"⚠️ 测试结果: 部分失败 ({total_passed}/{total_count} 通过)")
         print("=" * 70)
+
+
+PYTEST_SCENARIO_IDS = [
+    "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9",
+    "2.1", "2.2", "2.3", "2.4",
+    "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8",
+]
+
+
+def _pytest_scenario_map(tester: ContactScenarioTester) -> Dict[str, callable]:
+    return {
+        "1.1": tester.test_scenario_1_1,
+        "1.2": tester.test_scenario_1_2,
+        "1.3": tester.test_scenario_1_3,
+        "1.4": tester.test_scenario_1_4,
+        "1.5": tester.test_scenario_1_5,
+        "1.6": tester.test_scenario_1_6,
+        "1.7": tester.test_scenario_1_7,
+        "1.8": tester.test_scenario_1_8,
+        "1.9": tester.test_scenario_1_9,
+        "2.1": tester.test_scenario_2_1,
+        "2.2": tester.test_scenario_2_2,
+        "2.3": tester.test_scenario_2_3,
+        "2.4": tester.test_scenario_2_4,
+        "3.1": tester.test_scenario_3_1,
+        "3.2": tester.test_scenario_3_2,
+        "3.3": tester.test_scenario_3_3,
+        "3.4": tester.test_scenario_3_4,
+        "3.5": tester.test_scenario_3_5,
+        "3.6": tester.test_scenario_3_6,
+        "3.7": tester.test_scenario_3_7,
+        "3.8": tester.test_scenario_3_8,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario_id", PYTEST_SCENARIO_IDS)
+async def test_contact_collection_scenario_matrix(scenario_id: str) -> None:
+    """将脚本式联系方式集成场景桥接为 pytest 可执行测试。"""
+    tester = ContactScenarioTester(use_real_ai=False)
+    scenario_map = _pytest_scenario_map(tester)
+    result = await scenario_map[scenario_id]()
+    assert result.passed, f"scenario={scenario_id}, details={result.details}"
 
 
 async def main():

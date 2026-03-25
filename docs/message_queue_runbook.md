@@ -67,6 +67,7 @@
 - 入站漏斗：`ingest_total`, `ingest_accepted`, `ingest_duplicate`, `ingest_queue_full`
 - 执行漏斗：`turn_started`, `turn_succeeded`, `turn_failed`, `turn_stale`
 - 空回复：`empty_response_business_silent`, `empty_response_error`
+- 联系方式校验：`contact_validation_retry`, `contact_validation_silent`
 - 发送漏斗：`outbox_created`, `outbox_delivery_success`, `outbox_delivery_retry`, `outbox_delivery_drop`
 - 质量：`invalid_timestamp_count`, `stale_drop_count`
 

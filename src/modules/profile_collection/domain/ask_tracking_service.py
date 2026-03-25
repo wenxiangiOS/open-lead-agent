@@ -18,7 +18,7 @@ class AskTrackingService:
     PARTNER_REQUIREMENT_CONTEXT_KEYWORDS = [
         '找什么样的', '有什么要求', '择偶要求', '找什么类型',
         '喜欢什么样的', '对...有要求', '要求对方', '对方的要求',
-        '想找', '希望找', '要求是', '有什么择偶'
+        '想找', '希望找', '要求是', '有什么择偶', '另一半', '在意的点'
     ]
 
     PARTNER_REQUIREMENT_FIELDS = {'height', 'age', 'education', 'location', 'monthly_income', 'occupation'}
@@ -34,6 +34,102 @@ class AskTrackingService:
         '做什么工作的', '从事什么工作', '做哪方面工作', '做什么工作',
         '是做什么的', '做哪行', '从事哪方面', '职业是什么', '做什么呀',
     ]
+
+    # Phase 2: 语义槽映射（用于更精细的去重）
+    SEMANTIC_SLOT_PATTERNS = {
+        # 地区偏好
+        'partner_pref_location': [
+            '同城', '本地', '深圳', '广州', '北京', '上海', '杭州', '成都', '武汉', '南京',
+            '附近的', '本地的', '同一个城市', '这边', '那边',
+        ],
+        # 年龄偏好
+        'partner_pref_age': [
+            '不超过', '以下', '以上', '岁', '90后', '80后', '00后', '95后', '同龄',
+            '大一点', '小一点', '差不多大',
+        ],
+        # 身高偏好
+        'partner_pref_height': [
+            '身高', 'cm', '米', '高', '不矮',
+        ],
+        # 性格偏好
+        'partner_pref_personality': [
+            '性格', '温柔', '开朗', '内向', '外向', '稳重', '活泼', '安静',
+            '幽默', '有趣', '随和', '善良', '体贴',
+        ],
+        # 收入偏好
+        'partner_pref_income': [
+            '收入', '月薪', '年薪', '工资', '万',
+        ],
+    }
+
+    @staticmethod
+    def detect_semantic_slot(user_message: str) -> Optional[str]:
+        """
+        Phase 2: 检测用户消息中提供的语义槽。
+
+        Args:
+            user_message: 用户消息
+
+        Returns:
+            检测到的语义槽名称，        """
+        message = str(user_message or "").strip()
+        if not message:
+            return None
+
+        for slot_name, patterns in AskTrackingService.SEMANTIC_SLOT_PATTERNS.items():
+            for pattern in patterns:
+                if pattern in message:
+                    return slot_name
+
+        return None
+
+    @staticmethod
+    def should_block_slot_ask(
+        user_profile,
+        slot_name: str,
+        max_recent_slots: int = 5,
+    ) -> bool:
+        """
+        Phase 2: 判断是否应该阻止对某个语义槽的追问。
+
+        规则：
+        1. 用户近 5 轮内明确给过该语义槽，        2. 该槽已收集完成
+
+        Args:
+            user_profile: 用户画像
+            slot_name: 语义槽名称
+            max_recent_slots: 最大历史轮数
+
+        Returns:
+            是否应该阻止追问
+        """
+        # 检查是否在最近的语义槽历史中
+        recent_slots = getattr(user_profile, 'recent_semantic_slots', []) or []
+        if slot_name in recent_slots[-max_recent_slots:]:
+            logger.info(f"[语义槽去重] {slot_name} 在最近 {max_recent_slots} 轮内已提供，阻止追问")
+            return True
+
+        return False
+
+    @staticmethod
+    def record_semantic_slot(user_profile, slot_name: str, max_slots: int = 5) -> None:
+        """
+        Phase 2: 记录用户提供的语义槽。
+
+        Args:
+            user_profile: 用户画像
+            slot_name: 语义槽名称
+            max_slots: 最大保留数量
+        """
+        recent_slots = list(getattr(user_profile, 'recent_semantic_slots', []) or [])
+        # 避免重复
+        if slot_name not in recent_slots:
+            recent_slots.append(slot_name)
+            # 只保留最近的 max_slots 个
+            if len(recent_slots) > max_slots:
+                recent_slots = recent_slots[-max_slots:]
+            user_profile.recent_semantic_slots = recent_slots
+            logger.info(f"[语义槽记录] 记录 {slot_name}，当前历史: {recent_slots}")
 
     @staticmethod
     def _env_int(name: str, default: int) -> int:
@@ -63,6 +159,9 @@ class AskTrackingService:
 
         asked_fields = []
         ai_response_lower = ai_response.lower()
+
+        if is_asking_partner_requirement:
+            asked_fields.append('partner_requirement')
 
         if any(pattern in ai_response for pattern in self.LOCATION_PATTERNS):
             asked_fields.append('location')
@@ -126,8 +225,10 @@ class AskTrackingService:
                 user_profile.mark_recent_asked_field(field, max_history=max_history)
                 recorded_primary = True
 
-            # 中等字段（如择偶要求、月收入）只做计数限流，不做自动 skip。
+            # 中等字段主动问过一次后，关闭主动追问，后续仅允许被动提取。
             if field in self.MEDIUM_FIELDS:
+                user_profile.close_active_ask(field)
+                logger.info(f"[智能追问] 中等字段 {field} 已关闭主动追问，后续仅被动提取")
                 continue
 
             if current_count >= 2 and not skip_guard_enabled:

@@ -12,9 +12,16 @@ class TurnDecision:
     risk: str = "none"
     stage: str = "collect"
     next_action: str = "continue"
+    primary_move: str = "ack_and_ask"
     ask_field: str | None = None
-    response_channel: str = "model"  # model | fixed_template | quick_faq
+    prioritize_user_question: bool = False
+    allow_contact_target: bool = True
+    allow_medium_target: bool = True
+    response_channel: str = "model"  # model | quick_faq
     tone_policy: dict[str, Any] = field(default_factory=dict)
+    # Phase 2: 投诉修复状态
+    in_repair_mode: bool = False
+    repair_cooldown_remaining: int = 0
 
     def to_log_dict(self) -> dict[str, Any]:
         return {
@@ -22,7 +29,13 @@ class TurnDecision:
             "risk": self.risk,
             "stage": self.stage,
             "next_action": self.next_action,
+            "primary_move": self.primary_move,
             "ask_field": self.ask_field,
+            "prioritize_user_question": self.prioritize_user_question,
+            "allow_contact_target": self.allow_contact_target,
+            "allow_medium_target": self.allow_medium_target,
             "response_channel": self.response_channel,
             "tone_policy": self.tone_policy,
+            "in_repair_mode": self.in_repair_mode,
+            "repair_cooldown_remaining": self.repair_cooldown_remaining,
         }

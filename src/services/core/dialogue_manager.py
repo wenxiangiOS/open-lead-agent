@@ -64,6 +64,15 @@ class DialogueManager:
             return content
         return content[:max_chars] + "..."
 
+    @staticmethod
+    def normalize_assistant_response(response: str) -> str:
+        """统一 assistant 回复在 history / recent_responses 中的存储口径。"""
+        import re
+
+        clean_response = re.sub(r'<extract>.*?</extract>', '', str(response or ""), flags=re.DOTALL).strip()
+        clean_response = re.sub(r"\s+", " ", clean_response).strip()
+        return clean_response
+
     async def get_conversation_context(self, account_id: str) -> Dict[str, Any]:
         """
         获取对话上下文
@@ -102,6 +111,9 @@ class DialogueManager:
         user_profile: UserProfile,
         conversation_context: Dict[str, Any],
         prioritize_user_question: bool = False,
+        primary_move: str = "ack_and_ask",
+        allow_contact_target: bool = True,
+        allow_medium_target: bool = True,
     ) -> str:
         """
         构建主对话提示词
@@ -176,14 +188,37 @@ class DialogueManager:
             user_profile,
             user_message=user_message,
             message_count=message_count,
+            allow_contact_target=allow_contact_target,
+            allow_medium_target=allow_medium_target,
+            prioritize_user_question=prioritize_user_question,
+            primary_move=primary_move,
         )
+        prompt_can_enter_contact = policy_decision.can_enter_contact and allow_contact_target
 
+        # 显式禁止切联系方式时，直接压制联系方式提示，避免主线轮次被旧提示带偏。
+        if not allow_contact_target:
+            contact_instruction = ""
+            logger.info("[联系方式指令] 当前轮次禁止切联系方式，已压制联系方式提示")
         # 未到联系方式进入时机时，压制联系方式主动提示，避免旧逻辑抢跑
-        if not self.collection_policy.should_allow_contact_instruction(user_profile, next_action_enum.name):
+        elif not self.collection_policy.should_allow_contact_instruction(user_profile, next_action_enum.name):
             contact_instruction = ""
             logger.info("[联系方式指令] 当前资料不足，暂不进入联系方式逻辑")
 
         question_priority_instruction = ""
+        if self.collection_policy.has_divorce_confirmation_pending(user_profile):
+            contact_instruction = ""
+            ask_count_instruction = ""
+            question_priority_instruction = """
+【离异手续确认优先】
+用户当前处于“离异待确认手续”状态，这一轮只做这一件事：确认离婚手续是否已经办妥。
+- 先承接用户刚刚关于离异/婚况的表达
+- 只问手续是否已经办妥
+- 不要追问学历、职业、城市、年龄、联系方式或其他资料
+- 如果用户回答“还在办/没办完/分居中”，礼貌收尾，不再继续收集
+- 如果用户回答“已经办妥/办好了/现在是单身”，下一轮再回到正常资料收集
+"""
+            logger.info("[离异确认] 已锁定本轮只确认手续状态")
+
         if prioritize_user_question:
             contact_instruction = ""
             ask_count_instruction = ""
@@ -197,6 +232,40 @@ class DialogueManager:
 - 只有用户疑虑放下后，下一轮再回到资料收集
 """
             logger.info("[答疑优先] 已压制联系方式和字段追问提示")
+
+        move_instruction = ""
+        if primary_move == "answer_then_pause":
+            move_instruction = """
+【本轮动作】
+这轮先答清楚用户当前的问题或顾虑，再决定是否轻轻收住。
+- 先答，不要急着追问字段
+- 回答尽量像真人解释，不像业务说明书
+- 若回答完已完整，就停在这里，不强行补问
+"""
+        elif primary_move == "confirm_status_only":
+            move_instruction = """
+【本轮动作】
+这轮只做状态确认。
+- 先承接用户刚刚提到的婚况/手续
+- 只确认当前状态，不并列追问别的资料
+- 用更像真人确认的语气，不要像系统复核
+"""
+        elif primary_move == "soft_hold":
+            move_instruction = """
+【本轮动作】
+这轮先接住用户边界或顾虑，不往前顶。
+- 先让用户感觉你听到了
+- 不急着推进资料或联系方式
+- 允许轻轻收一下，不必硬问
+"""
+        elif primary_move == "light_followup":
+            move_instruction = """
+【本轮动作】
+这轮用轻量承接推进一小步。
+- 先接住用户刚给的短答
+- 追问只问一个点
+- 句子尽量短，别像登记表
+"""
 
         # 构建主提示词
         # 首轮判定以用户消息轮次为准，避免因预填sex导致首轮承接被跳过
@@ -217,6 +286,35 @@ class DialogueManager:
         missing_fields_cn = [field_name_map.get(f, f) for f in missing_fields_list if f in field_name_map]
         missing_fields_str = "、".join(missing_fields_cn) if missing_fields_cn else "无"
 
+        # Phase 2: repair_mode 修复态约束（最高优先级）
+        in_repair_mode = user_profile.repair_mode and user_profile.ask_cooldown_turns > 0
+        if in_repair_mode:
+            # 修复态：只允许确认问题 + 复述已记录信息 + 停止追问
+            repair_reason = user_profile.repair_reason or "repeat_ask"
+            reason_text = {
+                "repeat_ask": "用户表示我们在重复追问",
+                "over_questioning": "用户表示我们问得太多",
+            }.get(repair_reason, "用户有不满")
+            main_prompt = f"""【修复态约束】
+当前处于修复模式，原因：{reason_text}
+剩余冷却轮数：{user_profile.ask_cooldown_turns}
+
+【严格约束】
+- 先承认用户的不满，简短道歉
+- 用1-2句话复述我们已经记录的关于用户的信息（不要展开追问）
+- 停止追问任何新资料
+- 不要索要联系方式
+- 不要问"最看重什么/更在意什么"等偏好问题
+- 回复要简短自然，像朋友聊天
+
+【已记录的关于你的信息】
+{collected_info_prompt}
+
+请简短回复（1-2句），确认问题后自然收住，不要再追问。
+"""
+            logger.info(f"[repair_mode] 进入修复模式，原因={repair_reason}, 冷却剩余={user_profile.ask_cooldown_turns}")
+            return main_prompt
+
         if prioritize_user_question:
             # 答疑优先轮次使用轻量提示词，减少 token 与推理耗时
             main_prompt = get_question_priority_dialogue(
@@ -229,7 +327,7 @@ class DialogueManager:
                 f"- 主目标：{field_name_map.get(policy_decision.main_target, policy_decision.main_target or '无')}\n"
                 f"- 顺带目标：{field_name_map.get(policy_decision.side_target, policy_decision.side_target or '无')}\n"
                 f"- 用户类型：{policy_decision.user_type or '未知'}\n"
-                f"- 可进联系方式：{'是' if policy_decision.can_enter_contact else '否'}"
+                f"- 可进联系方式：{'是' if prompt_can_enter_contact else '否'}"
             )
             main_prompt = get_main_dialogue(
                 collected_info=collected_info_prompt,
@@ -243,8 +341,9 @@ class DialogueManager:
                 current_main_target=field_name_map.get(policy_decision.main_target, policy_decision.main_target or "无"),
                 current_side_target=field_name_map.get(policy_decision.side_target, policy_decision.side_target or "无"),
                 user_type=policy_decision.user_type,
-                can_enter_contact=policy_decision.can_enter_contact,
+                can_enter_contact=prompt_can_enter_contact,
                 turn_plan_instruction=turn_plan_instruction,
+                move_instruction=move_instruction,
             )
 
         # 获取上一轮 AI 回复（用于上下文感知提取）
@@ -253,10 +352,17 @@ class DialogueManager:
         if last_question:
             logger.debug(f"[上下文] 上一轮AI: {last_question[:50]}...")
 
-        # 添加信息提取提示词（传递 last_question 用于上下文感知）
+        # Phase 2: 获取期望提取字段（短答槽位绑定）
+        message_count = conversation_context.get('message_count', 0)
+        expected_field = user_profile.get_expected_field_for_short_answer(message_count)
+        if expected_field:
+            logger.info(f"[短答槽位绑定] 期望字段: {expected_field}, 当前轮次: {message_count}")
+
+        # 添加信息提取提示词（传递 last_question 和 expected_field 用于上下文感知）
         extraction_prompt = get_extraction(
             user_message=user_message,
-            last_question=last_question
+            last_question=last_question,
+            expected_field=expected_field or ""
         )
 
         # 组合完整提示词
@@ -318,9 +424,7 @@ class DialogueManager:
         context = await self.get_conversation_context(account_id)
         recent_responses = context.get('recent_responses', [])
 
-        # 清理旧的回复（移除 <extract> 标签）
-        import re
-        clean_response = re.sub(r'<extract>.*?</extract>', '', response, flags=re.DOTALL).strip()
+        clean_response = self.normalize_assistant_response(response)
 
         recent_responses.append(clean_response)
 

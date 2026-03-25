@@ -21,6 +21,26 @@ class ProcessChatTurnUseCase:
         self.chat_service = chat_service
 
     @staticmethod
+    def _sync_payload_response(payload: Dict[str, Any], final_response: str) -> Dict[str, Any]:
+        """确保用户可见回复和主流程最终回复完全一致。"""
+        if not isinstance(payload, dict):
+            return payload
+        payload_response = str(payload.get("response") or "")
+        canonical_response = str(final_response or "")
+        if payload_response != canonical_response:
+            logger.warning(
+                "[响应一致性] payload.response 与 final_response 不一致，已强制对齐: "
+                f"payload_len={len(payload_response)}, final_len={len(canonical_response)}"
+            )
+            payload["response"] = canonical_response
+            meta = payload.get("meta")
+            if not isinstance(meta, dict):
+                meta = {}
+            meta["response_synced"] = True
+            payload["meta"] = meta
+        return payload
+
+    @staticmethod
     def _to_command(request: ChatRequest | ProcessChatTurnCommand) -> ProcessChatTurnCommand:
         if isinstance(request, ProcessChatTurnCommand):
             return request
@@ -111,34 +131,7 @@ class ProcessChatTurnUseCase:
                 _mark("new_session_reset", t0)
 
             t0 = time.perf_counter()
-            rule_result = await self.chat_service.conversation_rule_service.try_handle(
-                request,
-                user_profile,
-                is_first_user_turn=is_first_user_turn,
-                message_count=message_count,
-            )
             _mark("rule_check", t0)
-            if rule_result.handled:
-                payload = rule_result.response_payload or {}
-                response_text = str(payload.get("response") or "")
-                if response_text:
-                    # 规则分支若未更新上下文，会导致后续拒绝检测读取到旧 last_response。
-                    t0 = time.perf_counter()
-                    last_response = await self.chat_service.dialogue_manager.get_last_response(account_id)
-                    if last_response != response_text:
-                        await self.chat_service._update_conversation_state(  # noqa: SLF001
-                            account_id,
-                            request.question,
-                            response_text,
-                            response_text,
-                            track_asked_fields=False,
-                        )
-                    _mark("rule_state_update", t0)
-                route_name = str(payload.get("route") or "rule")
-                response_channel = "rule"
-                payload = _attach_route_meta(payload, route_name)
-                _log_turn(route_name, True)
-                return payload
 
             t0 = time.perf_counter()
             conversation_context = await self.chat_service.dialogue_manager.get_conversation_context(account_id)
@@ -151,25 +144,36 @@ class ProcessChatTurnUseCase:
             response_channel = turn_decision.response_channel
             logger.info(f"[决策器] account_id={account_id}, decision={turn_decision.to_log_dict()}")
 
-            if turn_decision.next_action == "risk_guard":
-                risk_guard_response = self.chat_service._get_risk_guard_response(request.question, user_profile) or ""  # noqa: SLF001
-                risk_guard_response = self.chat_service._ensure_listener_first_ack(request.question, risk_guard_response)  # noqa: SLF001
+            if turn_decision.risk == "high_risk":
+                final_response = self.chat_service._get_risk_guard_response(request.question, user_profile)  # noqa: SLF001
+                final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                # Phase 2: FAQ/risk 结束后设置 bridge_back 标记
+                user_profile.needs_bridge_back = True
+                user_profile.last_side_topic_type = "risk"
+                await self.chat_service.user_service.save_user_profile(account_id, user_profile)
+                t0 = time.perf_counter()
                 await self.chat_service._update_conversation_state(  # noqa: SLF001
                     account_id,
                     request.question,
-                    risk_guard_response,
-                    risk_guard_response,
+                    final_response,
+                    final_response,
                     track_asked_fields=False,
                 )
+                _mark("state_update", t0)
+                t0 = time.perf_counter()
+                user_profile = await self.chat_service.user_service.get_user_profile(account_id)
+                _mark("profile_reload", t0)
                 route_name = "risk_guard"
                 payload = await self.chat_service._build_chat_response(  # noqa: SLF001
                     account_id,
                     user_profile,
-                    risk_guard_response,
-                    {"collected": False, "all_fields": []},
+                    final_response,
+                    {"all_fields": []},
                     request.dialogId,
-                    response_route="risk_guard",
+                    dict(user_profile.field_ask_count) if user_profile.field_ask_count else {},
+                    response_route=route_name,
                 )
+                payload = self._sync_payload_response(payload, final_response)
                 payload = _attach_route_meta(payload, route_name)
                 _log_turn(route_name, True)
                 return payload
@@ -179,199 +183,146 @@ class ProcessChatTurnUseCase:
             await self.chat_service._handle_refusal_detection(request.question, account_id, user_profile)  # noqa: SLF001
             _mark("refusal_detection", t0)
 
-            if turn_decision.next_action == "boundary_pause":
-                boundary_pause_response = self.chat_service._get_boundary_pause_response(request.question) or ""  # noqa: SLF001
-                boundary_pause_response = self.chat_service._ensure_listener_first_ack(request.question, boundary_pause_response)  # noqa: SLF001
+            if response_channel == "quick_faq":
+                final_response = self.chat_service.user_question_service.get_quick_faq_response(  # noqa: SLF001
+                    request.question,
+                    repeat_count=1,
+                    recent_responses=conversation_context.get("recent_responses") or (),
+                ) or await self.chat_service._build_no_ai_response(account_id, user_profile, request.question)  # noqa: SLF001
+                final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                # Phase 2: FAQ 结束后设置 bridge_back 标记
+                user_profile.needs_bridge_back = True
+                user_profile.last_side_topic_type = "faq"
+                await self.chat_service.user_service.save_user_profile(account_id, user_profile)
+                t0 = time.perf_counter()
                 await self.chat_service._update_conversation_state(  # noqa: SLF001
                     account_id,
                     request.question,
-                    boundary_pause_response,
-                    boundary_pause_response,
+                    final_response,
+                    final_response,
                     track_asked_fields=False,
                 )
+                _mark("state_update", t0)
+                t0 = time.perf_counter()
+                user_profile = await self.chat_service.user_service.get_user_profile(account_id)
+                _mark("profile_reload", t0)
+                route_name = "quick_faq"
+                payload = await self.chat_service._build_chat_response(  # noqa: SLF001
+                    account_id,
+                    user_profile,
+                    final_response,
+                    {"all_fields": []},
+                    request.dialogId,
+                    dict(user_profile.field_ask_count) if user_profile.field_ask_count else {},
+                    response_route=route_name,
+                )
+                payload = self._sync_payload_response(payload, final_response)
+                payload = _attach_route_meta(payload, route_name)
+                _log_turn(route_name, True)
+                return payload
+
+            if turn_decision.risk == "boundary":
+                final_response = self.chat_service._get_boundary_pause_response(request.question)  # noqa: SLF001
+                final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                # Phase 2: boundary 结束后设置 bridge_back 标记
+                user_profile.needs_bridge_back = True
+                user_profile.last_side_topic_type = "boundary"
+                await self.chat_service.user_service.save_user_profile(account_id, user_profile)
+                t0 = time.perf_counter()
+                await self.chat_service._update_conversation_state(  # noqa: SLF001
+                    account_id,
+                    request.question,
+                    final_response,
+                    final_response,
+                    track_asked_fields=False,
+                )
+                _mark("state_update", t0)
+                t0 = time.perf_counter()
+                user_profile = await self.chat_service.user_service.get_user_profile(account_id)
+                _mark("profile_reload", t0)
                 route_name = "boundary_pause"
                 payload = await self.chat_service._build_chat_response(  # noqa: SLF001
                     account_id,
                     user_profile,
-                    boundary_pause_response,
-                    {"collected": False, "all_fields": []},
+                    final_response,
+                    {"all_fields": []},
                     request.dialogId,
-                    response_route="boundary_pause",
+                    dict(user_profile.field_ask_count) if user_profile.field_ask_count else {},
+                    response_route=route_name,
                 )
+                payload = self._sync_payload_response(payload, final_response)
                 payload = _attach_route_meta(payload, route_name)
                 _log_turn(route_name, True)
                 return payload
 
-            if self.chat_service._looks_like_fake_info(request.question):  # noqa: SLF001
-                self.chat_service.ending_service.update_profile_for_ending("fake_info", user_profile)
+            # Phase 1: complaint / repair 意图处理
+            if turn_decision.intent == "complaint":
+                final_response = self.chat_service._get_complaint_repair_response(request.question)  # noqa: SLF001
+                final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                # complaint 修复态不再桥接回“继续采集”的主线，避免下一轮又把用户拉回资料追问。
+                user_profile.needs_bridge_back = False
+                user_profile.last_side_topic_type = None
+                user_profile.complaint_cooldown_until = message_count + 2
                 await self.chat_service.user_service.save_user_profile(account_id, user_profile)
-                fake_info_response = self.chat_service.ending_service.get_ending_response("fake_info") or ""
-                route_name = "ending_template"
+                t0 = time.perf_counter()
+                await self.chat_service._update_conversation_state(  # noqa: SLF001
+                    account_id,
+                    request.question,
+                    final_response,
+                    final_response,
+                    track_asked_fields=False,
+                )
+                _mark("state_update", t0)
+                t0 = time.perf_counter()
+                user_profile = await self.chat_service.user_service.get_user_profile(account_id)
+                _mark("profile_reload", t0)
+                route_name = "complaint_repair"
                 payload = await self.chat_service._build_chat_response(  # noqa: SLF001
                     account_id,
                     user_profile,
-                    fake_info_response,
-                    {"collected": False, "all_fields": []},
+                    final_response,
+                    {"all_fields": []},
                     request.dialogId,
-                    response_route="ending_template",
+                    dict(user_profile.field_ask_count) if user_profile.field_ask_count else {},
+                    response_route=route_name,
                 )
+                payload = self._sync_payload_response(payload, final_response)
                 payload = _attach_route_meta(payload, route_name)
                 _log_turn(route_name, True)
                 return payload
 
-            prioritize_user_question = turn_decision.response_channel == "quick_faq"
-            if prioritize_user_question:
-                faq_intent = turn_decision.intent if turn_decision.intent != "general" else self.chat_service.user_question_service.detect_quick_faq_intent(request.question)
-                faq_state_raw = await self.chat_service.user_service.get_user_preference(account_id, "faq_state", {})
-                faq_state = faq_state_raw if isinstance(faq_state_raw, dict) else {}
-                last_intent = faq_state.get("last_intent")
-                repeat_count = int(faq_state.get("repeat_count", 0)) + 1 if faq_intent and faq_intent == last_intent else 1
-                recent = faq_state.get("recent_responses", [])
-                if not isinstance(recent, list):
-                    recent = []
-                last_response = await self.chat_service.dialogue_manager.get_last_response(account_id) or ""  # noqa: SLF001
-                quick_faq_response = ""
-                if faq_intent == "clarification":
-                    quick_faq_response = self.chat_service._build_contextual_clarification_reply(last_response, request.question)  # noqa: SLF001
-                if not quick_faq_response:
-                    quick_faq_response = self.chat_service.user_question_service.get_quick_faq_response(
-                        request.question,
-                        repeat_count=repeat_count,
-                        recent_responses=tuple(recent),
-                    )
-                if quick_faq_response:
-                    final_response = self.chat_service._ensure_faq_humanlike_ack(request.question, quick_faq_response)  # noqa: SLF001
-                    final_response = self.chat_service._ensure_conservative_empathy(request.question, final_response)  # noqa: SLF001
-                    final_response = self.chat_service._ensure_listener_first_ack(request.question, final_response)  # noqa: SLF001
-                    if faq_intent:
-                        faq_state = {
-                            "last_intent": faq_intent,
-                            "repeat_count": repeat_count,
-                            "recent_responses": (recent + [final_response])[-3:],
-                        }
-                        await self.chat_service.user_service.update_user_preference(account_id, "faq_state", faq_state)
-                    await self.chat_service._update_conversation_state(  # noqa: SLF001
-                        account_id,
-                        request.question,
-                        final_response,
-                        final_response,
-                        track_asked_fields=False,
-                    )
-                    route_name = "quick_faq"
-                    payload = await self.chat_service._build_chat_response(  # noqa: SLF001
-                        account_id,
-                        user_profile,
-                        final_response,
-                        {"collected": False, "all_fields": []},
-                        request.dialogId,
-                        response_route="quick_faq",
-                    )
-                    payload = _attach_route_meta(payload, route_name)
-                    _log_turn(route_name, True)
-                    return payload
-
-            deterministic_fields = self.chat_service._extract_deterministic_profile_fields(request.question)  # noqa: SLF001
-            if self.chat_service._should_use_rule_profile_fast_path(  # noqa: SLF001
-                request.question,
-                deterministic_fields,
-                turn_decision.response_channel,
-            ):
-                profile_result = await self.chat_service.profile_collection_coordinator.process_collection(
-                    account_id,
-                    user_profile,
-                    deterministic_fields,
-                    request.question,
-                    extraction_meta=None,
-                    turn_id=message_count + 1,
+            # Phase 2: FAQ/边界/complaint 后的 bridge-back 检查（repair_mode 下禁用）
+            bridge_prefix = ""
+            in_repair_mode = turn_decision.in_repair_mode
+            if not in_repair_mode and user_profile.needs_bridge_back:
+                bridge_prefix = self.chat_service._build_bridge_back_prefix(  # noqa: SLF001
+                    user_profile.last_side_topic_type
                 )
-                collection_result = profile_result.collection_result
-
-                if collection_result.get("success") and "response" in collection_result:
-                    final_response = collection_result.get("response", "")
-                    final_response = self.chat_service._clean_response(final_response)  # noqa: SLF001
-                    final_response = self.chat_service._apply_field_ask_guard(user_profile, final_response)  # noqa: SLF001
-                    final_response = self.chat_service._ensure_conservative_empathy(request.question, final_response)  # noqa: SLF001
-                    final_response = self.chat_service._ensure_listener_first_ack(request.question, final_response)  # noqa: SLF001
-                    final_response = self.chat_service._ensure_humanlike_memory_ack(request.question, user_profile, final_response)  # noqa: SLF001
-                    final_response = self.chat_service._apply_dialogue_style_guard(  # noqa: SLF001
-                        conversation_context.get("last_response", ""),
-                        final_response,
-                        user_profile,
-                        user_message=request.question,
-                        tone_policy=turn_decision.tone_policy or {},
-                    )
-                    await self.chat_service._update_conversation_state(  # noqa: SLF001
-                        account_id,
-                        request.question,
-                        final_response,
-                        final_response,
-                        track_asked_fields=False,
-                    )
-                    user_profile = await self.chat_service.user_service.get_user_profile(account_id)
-                    route_name = "collection_short_circuit"
-                    payload = await self.chat_service._build_chat_response(  # noqa: SLF001
-                        account_id,
-                        user_profile,
-                        final_response,
-                        {"collected": False, "all_fields": []},
-                        request.dialogId,
-                        response_route="collection_short_circuit",
-                    )
-                    payload = _attach_route_meta(payload, route_name)
-                    extracted_fields_count = len(collection_result.get("all_fields", []))
-                    _log_turn(route_name, True)
-                    return payload
-
-                user_profile = await self.chat_service.user_service.get_user_profile(account_id)
-                final_response = self.chat_service._build_rule_profile_fast_response(  # noqa: SLF001
-                    user_profile,
-                    user_message=request.question,
+                logger.info(
+                    f"[bridge_back] account_id={account_id}, "
+                    f"side_topic={user_profile.last_side_topic_type}, "
+                    f"prefix={bridge_prefix[:20]}..."
                 )
-                if final_response:
-                    final_response = self.chat_service._clean_response(final_response)  # noqa: SLF001
-                    final_response = self.chat_service._apply_field_ask_guard(user_profile, final_response)  # noqa: SLF001
-                    final_response = self.chat_service._ensure_conservative_empathy(request.question, final_response)  # noqa: SLF001
-                    final_response = self.chat_service._ensure_listener_first_ack(request.question, final_response)  # noqa: SLF001
-                    final_response = self.chat_service._ensure_humanlike_memory_ack(request.question, user_profile, final_response)  # noqa: SLF001
-                    final_response = self.chat_service._apply_dialogue_style_guard(  # noqa: SLF001
-                        conversation_context.get("last_response", ""),
-                        final_response,
-                        user_profile,
-                        user_message=request.question,
-                        tone_policy=turn_decision.tone_policy or {},
-                    )
-                    field_ask_count_before = dict(user_profile.field_ask_count) if user_profile.field_ask_count else {}
-                    await self.chat_service._update_conversation_state(  # noqa: SLF001
-                        account_id,
-                        request.question,
-                        final_response,
-                        final_response,
-                        track_asked_fields=True,
-                    )
-                    user_profile = await self.chat_service.user_service.get_user_profile(account_id)
-                    total_duration = time.perf_counter() - start_time
-                    logger.info(f"[⏱️ 性能] 请求处理完成(规则快路径): account_id={account_id}, 总耗时={total_duration:.3f}秒")
-                    route_name = "rule_profile_fast_path"
-                    payload = await self.chat_service._build_chat_response(  # noqa: SLF001
-                        account_id,
-                        user_profile,
-                        final_response,
-                        collection_result,
-                        request.dialogId,
-                        field_ask_count_before,
-                        response_route="rule_profile_fast_path",
-                    )
-                    payload = _attach_route_meta(payload, route_name)
-                    extracted_fields_count = len(collection_result.get("all_fields", []))
-                    _log_turn(route_name, True)
-                    return payload
+                # 重置标记并保存
+                user_profile.needs_bridge_back = False
+                user_profile.last_side_topic_type = None
+                await self.chat_service.user_service.save_user_profile(account_id, user_profile)
 
+            profile_summary = ""
+
+            ai_response = ""
+            infra_fail = False
+            infra_fail_reason = ""
             t0 = time.perf_counter()
+            # 使用完整 prompt
             main_prompt = self.chat_service.dialogue_manager.build_main_dialogue_prompt(
                 request.question,
                 user_profile,
                 conversation_context,
-                prioritize_user_question=prioritize_user_question,
+                prioritize_user_question=turn_decision.prioritize_user_question,
+                primary_move=turn_decision.primary_move,
+                allow_contact_target=turn_decision.allow_contact_target,
+                allow_medium_target=turn_decision.allow_medium_target,
             )
             _mark("prompt_build", t0)
             prompt_chars = len(main_prompt or "")
@@ -380,64 +331,15 @@ class ProcessChatTurnUseCase:
             await self.chat_service.user_service.save_user_profile(account_id, user_profile)
             _mark("profile_save_pre_ai", t0)
 
-            collected_info = self.chat_service.extraction_service.get_collected_info_summary(user_profile)
-            has_contact = "已留联系" in collected_info
-            has_requirement = "要求:" in collected_info
-            if has_contact and has_requirement:
-                user_input = request.question.strip()
-                ending_signals = [
-                    "没有了", "没啦", "没了", "就这些", "就这点", "暂时没有", "暂时没", "先这样", "差不多", "应该没了",
-                    "应该没", "没有了呢", "没啥了", "其他没了", "其他没", "暂时就这些", "目前没", "目前没有",
-                ]
-                is_ending = any(signal in user_input for signal in ending_signals)
-                greeting_words = ["在吗", "在不在", "你好", "您好", "嗨", "哈喽", "hello", "hi"]
-                is_greeting = any(word in user_input for word in greeting_words)
-                if is_greeting:
-                    natural_response = f"在的呀～{user_profile.get_greeting()}，你要是还有想了解的可以直接跟我说"
-                    route_name = "rule_followup_greeting"
-                    payload = await self.chat_service._build_chat_response(  # noqa: SLF001
-                        account_id,
-                        user_profile,
-                        natural_response,
-                        {"collected": False, "all_fields": []},
-                        request.dialogId,
-                        response_route="rule_followup_greeting",
-                    )
-                    payload = _attach_route_meta(payload, route_name)
-                    _log_turn(route_name, True)
-                    return payload
-                if is_ending:
-                    last_response = await self.chat_service.dialogue_manager.get_last_response(account_id)
-                    closing_message = self.chat_service._build_rotating_ending_message(  # noqa: SLF001
-                        user_profile,
-                        last_response or "",
-                    )
-                    route_name = "ending_template"
-                    payload = await self.chat_service._build_chat_response(  # noqa: SLF001
-                        account_id,
-                        user_profile,
-                        closing_message,
-                        {"collected": False, "all_fields": []},
-                        request.dialogId,
-                        response_route="ending_template",
-                    )
-                    payload = _attach_route_meta(payload, route_name)
-                    _log_turn(route_name, True)
-                    return payload
-
             t0 = time.perf_counter()
             ai_response = await self.chat_service._call_ai(main_prompt, account_id, request.question)  # noqa: SLF001
             _mark("ai_call", t0)
-            infra_fail = False
-            infra_fail_reason = ""
             if not ai_response:
                 infra_fail = True
                 infra_fail_reason = getattr(self.chat_service, "_last_ai_failure_reason", None) or "ai_empty_response"
                 t0 = time.perf_counter()
                 ai_response = await self.chat_service._build_no_ai_response(account_id, user_profile, request.question)  # noqa: SLF001
                 _mark("no_ai_fallback", t0)
-                if not str(ai_response or "").strip():
-                    ai_response = "我先接住你这句话，我们继续聊你最在意的匹配条件就好。"
 
             t0 = time.perf_counter()
             if infra_fail:
@@ -475,47 +377,6 @@ class ProcessChatTurnUseCase:
             _mark("collection_process", t0)
             extracted_fields_count = len(collection_result.get("all_fields", []))
 
-            if collection_result.get("success") and "response" in collection_result:
-                final_response = collection_result.get("response", "")
-                final_response = self.chat_service._clean_response(final_response)  # noqa: SLF001
-                final_response = self.chat_service._apply_field_ask_guard(user_profile, final_response)  # noqa: SLF001
-                last_response = await self.chat_service.dialogue_manager.get_last_response(account_id) or ""
-                final_response = self.chat_service._apply_dialogue_style_guard(  # noqa: SLF001
-                    last_response,
-                    final_response,
-                    user_profile,
-                    user_message=request.question,
-                    tone_policy=turn_decision.tone_policy,
-                )
-                final_response = self.chat_service._ensure_conservative_empathy(request.question, final_response)  # noqa: SLF001
-                final_response = self.chat_service._ensure_listener_first_ack(request.question, final_response)  # noqa: SLF001
-                final_response = self.chat_service._avoid_preference_hard_ending(request.question, final_response)  # noqa: SLF001
-                await self.chat_service._update_conversation_state(  # noqa: SLF001
-                    account_id,
-                    request.question,
-                    final_response,
-                    ai_response,
-                    track_asked_fields=False,
-                )
-                user_profile = await self.chat_service.user_service.get_user_profile(account_id)
-                route_name = "collection_short_circuit"
-                payload = await self.chat_service._build_chat_response(  # noqa: SLF001
-                    account_id,
-                    user_profile,
-                    final_response,
-                    {"collected": False, "all_fields": []},
-                    request.dialogId,
-                    response_route="collection_short_circuit",
-                )
-                if infra_fail:
-                    payload["meta"] = {
-                        "infra_fail": True,
-                        "infra_fail_reason": infra_fail_reason,
-                    }
-                payload = _attach_route_meta(payload, route_name)
-                _log_turn(route_name, True)
-                return payload
-
             for field_info in collection_result.get("all_fields", []):
                 if field_info.get("field") == "partner_requirement":
                     await self.chat_service.input_fallback_service.reset_confirm_count(account_id)
@@ -523,35 +384,192 @@ class ProcessChatTurnUseCase:
 
             user_profile = await self.chat_service.user_service.get_user_profile(account_id)
             _ = self.chat_service.profile_collection_coordinator.build_contact_decision(user_profile, request.question)
-            enhanced_response = await self.chat_service._handle_contact_validation(  # noqa: SLF001
-                account_id,
-                user_profile,
-                collection_result,
-                ai_response,
-                request.question,
-            )
-
-            is_hong_user = self.chat_service._is_hong_user(user_profile.location)  # noqa: SLF001
-            contact_just_collected = any(f.get("field") == "contact" for f in collection_result.get("all_fields", []))
-            if is_hong_user and contact_just_collected and not user_profile.wechat:
-                enhanced_response = f"好的呀～{user_profile.get_greeting()}的电话我记下啦😊 要是你微信方便的话，也可以留一个，后面联系会更顺手一点～"
+            preset_response = str(collection_result.get("response") or "").strip()
+            if preset_response:
+                enhanced_response = preset_response
+            else:
+                enhanced_response = await self.chat_service._handle_contact_validation(  # noqa: SLF001
+                    account_id,
+                    user_profile,
+                    collection_result,
+                    ai_response,
+                    request.question,
+                )
 
             response_to_clean = enhanced_response if enhanced_response is not None else ai_response
+            ending_info = collection_result.get("ending_info") if isinstance(collection_result, dict) else None
+            if isinstance(ending_info, dict) and ending_info.get("use_ai"):
+                ai_ending_response = await self.chat_service._generate_ai_ending_response(  # noqa: SLF001
+                    account_id=account_id,
+                    user_profile=user_profile,
+                    user_message=request.question,
+                    ending_info=ending_info,
+                    fallback_response=response_to_clean,
+                )
+                if ai_ending_response:
+                    response_to_clean = ai_ending_response
+                    ending_info["response"] = ai_ending_response
             final_response = self.chat_service._clean_response(response_to_clean)  # noqa: SLF001
-            if prioritize_user_question:
-                final_response = self.chat_service._strip_collection_prompts_for_faq(final_response)  # noqa: SLF001
-            final_response = self.chat_service._apply_field_ask_guard(user_profile, final_response)  # noqa: SLF001
-            last_response = await self.chat_service.dialogue_manager.get_last_response(account_id) or ""
-            final_response = self.chat_service._apply_dialogue_style_guard(
-                last_response,
+            final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
                 final_response,
                 user_profile,
+                collection_result,
+            )
+            final_response = self.chat_service._apply_contact_persuasion_style_policy(  # noqa: SLF001
+                final_response,
+                user_profile,
+                request.question,
+            )
+            final_response = self.chat_service._apply_contact_boundary_softening_policy(  # noqa: SLF001
+                final_response,
+                user_profile,
+                request.question,
+            )
+            final_response = self.chat_service._apply_refusal_respect_guard(  # noqa: SLF001
+                final_response,
+                user_profile,
+                request.question,
+            )
+            final_response = self.chat_service._apply_contact_action_guard(  # noqa: SLF001
+                final_response,
+                user_profile,
+                request.question,
+            )
+            if collection_result.get("divorce_confirmation_cleared"):
+                final_response = self.chat_service._build_divorce_confirmation_cleared_response(  # noqa: SLF001
+                    self.chat_service._get_post_divorce_mainline_target(  # noqa: SLF001
+                        user_profile,
+                        request.question,
+                        message_count=message_count,
+                    )
+                )
+            if collection_result.get("divorce_confirmation_pending") or self.chat_service._should_lock_divorce_confirmation(  # noqa: SLF001
+                user_profile,
+                request.question,
+            ):
+                final_response = self.chat_service._build_divorce_confirmation_response()  # noqa: SLF001
+            final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+            final_response = self.chat_service._apply_field_ask_guard(  # noqa: SLF001
+                user_profile,
+                final_response,
                 user_message=request.question,
-                tone_policy=turn_decision.tone_policy,
-            )  # noqa: SLF001
-            final_response = self.chat_service._ensure_conservative_empathy(request.question, final_response)  # noqa: SLF001
-            final_response = self.chat_service._ensure_listener_first_ack(request.question, final_response)  # noqa: SLF001
-            final_response = self.chat_service._ensure_humanlike_memory_ack(request.question, user_profile, final_response)  # noqa: SLF001
+                allow_medium_target=turn_decision.allow_medium_target,
+            )
+            final_response = self.chat_service._avoid_reasking_just_collected_field(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+                current_ask_field=turn_decision.ask_field,
+                user_message=request.question,
+                allow_medium_target=turn_decision.allow_medium_target,
+            )
+            if not self.chat_service._is_delivery_viable(final_response):  # noqa: SLF001
+                fallback_response = await self.chat_service._build_no_ai_response(  # noqa: SLF001
+                    account_id,
+                    user_profile,
+                    request.question,
+                )
+                final_response = self.chat_service._clean_response(fallback_response)  # noqa: SLF001
+                final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    collection_result,
+                )
+                if collection_result.get("divorce_confirmation_cleared"):
+                    final_response = self.chat_service._build_divorce_confirmation_cleared_response(  # noqa: SLF001
+                        self.chat_service._get_post_divorce_mainline_target(  # noqa: SLF001
+                            user_profile,
+                            request.question,
+                            message_count=message_count,
+                        )
+                    )
+                if collection_result.get("divorce_confirmation_pending") or self.chat_service._should_lock_divorce_confirmation(  # noqa: SLF001
+                    user_profile,
+                    request.question,
+                ):
+                    final_response = self.chat_service._build_divorce_confirmation_response()  # noqa: SLF001
+                final_response = self.chat_service._apply_contact_action_guard(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    request.question,
+                )
+                final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                final_response = self.chat_service._apply_refusal_respect_guard(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    request.question,
+                )
+                final_response = self.chat_service._apply_field_ask_guard(  # noqa: SLF001
+                    user_profile,
+                    final_response,
+                    user_message=request.question,
+                    allow_medium_target=turn_decision.allow_medium_target,
+                )
+                final_response = self.chat_service._avoid_reasking_just_collected_field(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    collection_result,
+                    current_ask_field=turn_decision.ask_field,
+                    user_message=request.question,
+                    allow_medium_target=turn_decision.allow_medium_target,
+                )
+            final_response = self.chat_service._apply_humanlike_turn_structure_policy(  # noqa: SLF001
+                final_response,
+                user_profile,
+                request.question,
+                allow_medium_target=turn_decision.allow_medium_target,
+            )
+            final_response = self.chat_service._enforce_natural_completion_transition(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+                user_message=request.question,
+            )
+            final_response = self.chat_service._enforce_core_mainline_followup(  # noqa: SLF001
+                final_response,
+                user_profile,
+                ask_field=turn_decision.ask_field,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+            )
+
+            # Phase 2: 应用 bridge_back 前缀（如果有）
+            if bridge_prefix:
+                # 确保桥接前缀与后续内容之间有合适的分隔
+                if final_response and not final_response.startswith(("好", "嗯", "是", "对")):
+                    final_response = f"{bridge_prefix} {final_response}"
+                else:
+                    # 如果回复以确认词开头，桥接前缀放在确认词后面
+                    first_sentence_end = final_response.find("。")
+                    if first_sentence_end > 0:
+                        final_response = (
+                            final_response[: first_sentence_end + 1]
+                            + f" {bridge_prefix} "
+                            + final_response[first_sentence_end + 1 :]
+                        )
+                    else:
+                        final_response = f"{bridge_prefix} {final_response}"
+                logger.info(f"[bridge_back] 已应用桥接前缀，最终回复长度={len(final_response)}")
+
+            delivery_ok = self.chat_service._is_delivery_viable(final_response)  # noqa: SLF001
+            if not delivery_ok:
+                final_response = self.chat_service._build_no_ai_response(  # noqa: SLF001
+                    account_id,
+                    user_profile,
+                    request.question,
+                )
+                delivery_ok = True
+
+            if delivery_ok:
+                t0 = time.perf_counter()
+                user_profile = await self.chat_service._record_delivered_contact_ask_if_needed(  # noqa: SLF001
+                    account_id,
+                    user_profile,
+                    request.question,
+                    final_response,
+                )
+                _mark("contact_ask_record", t0)
 
             field_ask_count_before = dict(user_profile.field_ask_count) if user_profile.field_ask_count else {}
             t0 = time.perf_counter()
@@ -560,12 +578,21 @@ class ProcessChatTurnUseCase:
                 request.question,
                 final_response,
                 ai_response,
-                track_asked_fields=not prioritize_user_question,
+                track_asked_fields=delivery_ok,
             )
             _mark("state_update", t0)
             t0 = time.perf_counter()
             user_profile = await self.chat_service.user_service.get_user_profile(account_id)
             _mark("profile_reload", t0)
+
+            # Phase 2: repair_mode 冷却递减（每轮结束时）
+            if user_profile.repair_mode and user_profile.ask_cooldown_turns > 0:
+                user_profile.decrement_cooldown()
+                logger.info(
+                    f"[repair_mode] 冷却递减，剩余轮数: {user_profile.ask_cooldown_turns}, "
+                    f"repair_mode: {user_profile.repair_mode}"
+                )
+                await self.chat_service.user_service.save_user_profile(account_id, user_profile)
             total_duration = time.perf_counter() - start_time
             logger.info(f"[⏱️ 性能] 请求处理完成: account_id={account_id}, 总耗时={total_duration:.3f}秒")
             route_name = "model"
@@ -576,12 +603,19 @@ class ProcessChatTurnUseCase:
                 collection_result,
                 request.dialogId,
                 field_ask_count_before,
+                response_route=route_name if route_name != "model" else None,
             )
             if infra_fail:
                 payload["meta"] = {
                     "infra_fail": True,
                     "infra_fail_reason": infra_fail_reason,
                 }
+            validation_meta = getattr(self.chat_service, "_last_validation_feedback_meta", None)
+            if validation_meta:
+                meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+                meta["validation"] = dict(validation_meta)
+                payload["meta"] = meta
+            payload = self._sync_payload_response(payload, final_response)
             payload = _attach_route_meta(payload, route_name)
             _log_turn(route_name, True)
             return payload
@@ -592,4 +626,9 @@ class ProcessChatTurnUseCase:
             from src.core.error_handler import handle_error
 
             error_response = handle_error(e, context="chat", user_id=account_id)
-            return self.chat_service._error_response(error_response.get("error", "处理失败"), request.dialogId)  # noqa: SLF001
+            return self.chat_service._error_response(  # noqa: SLF001
+                error_response.get("error", "处理失败"),
+                request.dialogId,
+                error_code=error_response.get("error_code"),
+                details=error_response.get("details"),
+            )

@@ -21,6 +21,14 @@ def init_service(service: ChatService):
     chat_service = service
 
 
+def _http_detail(error_code: str, error: str, **details: Any) -> Dict[str, Any]:
+    return {
+        "error": error,
+        "error_code": error_code,
+        "details": details,
+    }
+
+
 @router.get(
     "/api/doubao/profile/{user_id}",
     summary="获取用户资料",
@@ -68,7 +76,10 @@ def init_service(service: ChatService):
 async def get_user_profile(user_id: str) -> Dict[str, Any]:
     """获取用户资料"""
     if chat_service is None:
-        raise HTTPException(status_code=500, detail="服务未初始化")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("SERVICE_NOT_INITIALIZED", "service_not_initialized", route="user_profile"),
+        )
 
     try:
         logger.info(f"Getting profile for user: {user_id}")
@@ -80,4 +91,7 @@ async def get_user_profile(user_id: str) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Profile retrieval error: {e}")
-        raise HTTPException(status_code=500, detail="获取用户资料时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("USER_PROFILE_ERROR", "user_profile_failed", route="user_profile"),
+        )

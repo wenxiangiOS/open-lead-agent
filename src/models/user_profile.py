@@ -43,6 +43,15 @@ class UserProfile(BaseModel):
     wechat: Optional[str] = Field(None, description="微信号")
     partner_requirement: Optional[str] = Field(None, description="择偶要求（中等字段）")
 
+    # Phase 2: 择偶要求子槽细分（更精细的去重）
+    partner_pref_location: Optional[str] = Field(None, description="择偶地区偏好")
+    partner_pref_age: Optional[str] = Field(None, description="择偶年龄偏好")
+    partner_pref_height: Optional[str] = Field(None, description="择偶身高偏好")
+    partner_pref_education: Optional[str] = Field(None, description="择偶学历偏好")
+    partner_pref_personality: Optional[str] = Field(None, description="择偶性格偏好")
+    partner_pref_income: Optional[str] = Field(None, description="择偶收入偏好")
+    partner_pref_other: Optional[str] = Field(None, description="择偶其他偏好")
+
     # 收集状态跟踪
     collection_progress: Dict[str, bool] = Field(
         default_factory=lambda: {
@@ -59,6 +68,14 @@ class UserProfile(BaseModel):
             "occupation": False,
             "contact": False,
             "partner_requirement": False,
+            # Phase 2: 择偶要求子槽
+            "partner_pref_location": False,
+            "partner_pref_age": False,
+            "partner_pref_height": False,
+            "partner_pref_education": False,
+            "partner_pref_personality": False,
+            "partner_pref_income": False,
+            "partner_pref_other": False,
         },
         description="各字段收集状态"
     )
@@ -84,12 +101,17 @@ class UserProfile(BaseModel):
         default_factory=list,
         description="最近被 AI 主动追问的字段历史（按轮次）"
     )
+    active_ask_closed_fields: Dict[str, bool] = Field(
+        default_factory=dict,
+        description="字段是否已关闭主动追问；关闭后仅允许被动提取"
+    )
 
     # 联系方式收集状态（新设计）
     phone_collected: bool = Field(default=False, description="电话是否已收集")
     wechat_collected: bool = Field(default=False, description="微信是否已收集")
     phone_ask_count: int = Field(default=0, description="电话询问次数（0-2）")
     wechat_ask_count: int = Field(default=0, description="微信询问次数（0-2）")
+    last_contact_request_type: Optional[str] = Field(default=None, description="最近一次真实展示给用户的联系方式类型（phone/wechat）")
     is_hongkong_user: Optional[bool] = Field(default=None, description="是否是香港用户（缓存）")
 
     # 联系方式拒绝状态（兼容旧字段，逐步迁移）
@@ -99,11 +121,31 @@ class UserProfile(BaseModel):
     # 对话状态
     conversation_ended: bool = Field(default=False, description="对话是否已结束")
     divorce_confirmed: bool = Field(default=False, description="离异手续是否已确认办妥")
+    divorce_confirmation_pending: bool = Field(default=False, description="离异后是否仍待确认手续状态")
+    needs_bridge_back: bool = Field(default=False, description="FAQ/边界轮后是否需要桥接回主线")
+    last_side_topic_type: Optional[str] = Field(None, description="最近支线话题类型 (faq_photo/faq_contact/faq_process/boundary/complaint)")
+    complaint_cooldown_until: Optional[int] = Field(None, description="complaint cooldown 结束的消息序号")
+    last_profile_summary_turn: Optional[int] = Field(None, description="上次画像小结的消息序号")
+    recent_semantic_slots: List[str] = Field(
+        default_factory=list,
+        description="最近 5 轮收集的语义槽（用于去重，如 partner_pref_location, partner_pref_age）"
+    )
     age_under_limit: bool = Field(default=False, description="年龄是否低于服务限制（24岁以下）")
     lgbt_user: bool = Field(default=False, description="是否是LGBT用户（同性恋/百合）")
     already_married: bool = Field(default=False, description="用户是否已婚")
     proxy_user: bool = Field(default=False, description="是否是代相亲（帮别人问）")
     spam_user: bool = Field(default=False, description="是否是骚扰/广告用户")
+
+    # === 投诉修复与追问冷却状态 ===
+    repair_mode: bool = Field(default=False, description="是否处于投诉修复模式（冷却期内）")
+    repair_reason: Optional[str] = Field(None, description="进入修复模式的原因（repeat_ask/rude_tone/over_questioning）")
+    ask_cooldown_turns: int = Field(default=0, description="追问冷却剩余轮数（每轮递减，0表示可正常追问）")
+    blocked_ask_intents: List[str] = Field(
+        default_factory=list,
+        description="被禁止的追问意图类型（ask_partner_requirement/ask_matching_priority/ask_basic_profile）"
+    )
+    last_asked_field: Optional[str] = Field(None, description="上一轮 AI 明确追问的字段（用于短答槽位绑定）")
+    last_asked_turn_index: Optional[int] = Field(None, description="上一轮追问的消息序号")
 
     # 通用资料概览只统计业务关键字段；低优字段和派生展示字段不计入公共完成度。
     SUMMARY_PROGRESS_FIELDS: ClassVar[tuple[str, ...]] = (
@@ -396,17 +438,18 @@ class UserProfile(BaseModel):
         Returns:
             Optional[str]: 下一个要收集的字段名
         """
-        # 当前策略顺序：核心 -> 准核心 -> 中等 -> 低优
+        # Phase 2 调整后的策略顺序：
+        # 1. 性别 2. 年龄 3. 城市 4. 偏好轻聊(提前) 5. 学历/工作 6. 婚姻状态 7. 收入(后移) 8. 联系方式
         priority_order = [
             'sex',
             'age',
             'location',
+            'partner_requirement',  # Phase 2: 偏好提前
             'education',
             'occupation',
             'marital_status',
+            'monthly_income',  # Phase 2: 收入后移
             'contact',
-            'monthly_income',
-            'partner_requirement',
             'last_name',
             'height',
             'weight',
@@ -456,6 +499,28 @@ class UserProfile(BaseModel):
         """
         self.field_ask_count[field_name] = self.field_ask_count.get(field_name, 0) + 1
         return self.field_ask_count[field_name]
+
+    def close_active_ask(self, field_name: str) -> None:
+        """
+        关闭某个字段的主动追问资格，后续仅允许被动提取。
+
+        Args:
+            field_name: 字段名
+        """
+        if field_name:
+            self.active_ask_closed_fields[field_name] = True
+
+    def is_active_ask_closed(self, field_name: str) -> bool:
+        """
+        判断字段是否已关闭主动追问。
+
+        Args:
+            field_name: 字段名
+
+        Returns:
+            bool: 是否已关闭主动追问
+        """
+        return bool(self.active_ask_closed_fields.get(field_name, False))
 
     def mark_recent_asked_field(self, field_name: str, max_history: int = 10) -> None:
         """
@@ -522,6 +587,102 @@ class UserProfile(BaseModel):
                     result.append((field, count))
         return result
 
+    # === 投诉修复与追问冷却管理 ===
+
+    def enter_repair_mode(self, reason: str, cooldown_turns: int = 3) -> None:
+        """
+        进入投诉修复模式。
+
+        Args:
+            reason: 进入修复模式的原因（repeat_ask/rude_tone/over_questioning）
+            cooldown_turns: 冷却轮数（默认3轮）
+        """
+        self.repair_mode = True
+        self.repair_reason = reason
+        self.ask_cooldown_turns = cooldown_turns
+        # 根据原因设置被禁止的追问意图
+        if reason == "repeat_ask":
+            self.blocked_ask_intents = [
+                "ask_partner_requirement",
+                "ask_matching_priority",
+                "ask_basic_profile",
+            ]
+        elif reason == "over_questioning":
+            self.blocked_ask_intents = [
+                "ask_partner_requirement",
+                "ask_matching_priority",
+                "ask_basic_profile",
+                "ask_contact",
+            ]
+        else:
+            self.blocked_ask_intents = ["ask_partner_requirement", "ask_matching_priority"]
+        self.updated_at = datetime.now()
+
+    def decrement_cooldown(self) -> None:
+        """
+        冷却轮数递减（每轮对话结束时调用）。
+        当冷却归零时自动退出修复模式。
+        """
+        if self.ask_cooldown_turns > 0:
+            self.ask_cooldown_turns -= 1
+            if self.ask_cooldown_turns == 0:
+                self.repair_mode = False
+                self.repair_reason = None
+                self.blocked_ask_intents = []
+        self.updated_at = datetime.now()
+
+    def is_ask_intent_blocked(self, intent: str) -> bool:
+        """
+        检查某个追问意图是否被禁止。
+
+        Args:
+            intent: 追问意图（ask_partner_requirement/ask_matching_priority/ask_basic_profile）
+
+        Returns:
+            是否被禁止
+        """
+        if not self.repair_mode:
+            return False
+        return intent in self.blocked_ask_intents
+
+    def set_last_asked_field(self, field_name: str, turn_index: int) -> None:
+        """
+        记录上一轮追问的字段（用于短答槽位绑定）。
+
+        Args:
+            field_name: 字段名
+            turn_index: 消息序号
+        """
+        self.last_asked_field = field_name
+        self.last_asked_turn_index = turn_index
+        self.updated_at = datetime.now()
+
+    def clear_last_asked_field(self) -> None:
+        """清除上一轮追问字段记录。"""
+        self.last_asked_field = None
+        self.last_asked_turn_index = None
+        self.updated_at = datetime.now()
+
+    def get_expected_field_for_short_answer(self, current_turn_index: int, max_gap: int = 1) -> Optional[str]:
+        """
+        获取短答应该优先解析的字段。
+
+        如果上一轮明确在问某个字段，且距离当前轮次在 max_gap 内，
+        则返回该字段名，用于短答优先解析。
+
+        Args:
+            current_turn_index: 当前消息序号
+            max_gap: 最大允许的轮次间隔（默认1，即只看上一轮）
+
+        Returns:
+            期望的字段名，或 None
+        """
+        if not self.last_asked_field or self.last_asked_turn_index is None:
+            return None
+        if current_turn_index - self.last_asked_turn_index > max_gap:
+            return None
+        return self.last_asked_field
+
     def get_greeting(self) -> str:
         """
         根据已收集的信息生成合适的称呼
@@ -568,9 +729,11 @@ class UserProfile(BaseModel):
             "skipped_fields": self.skipped_fields,
             "field_ask_count": self.field_ask_count,
             "recent_asked_fields": self.recent_asked_fields,
+            "active_ask_closed_fields": self.active_ask_closed_fields,
             "error_count": self.error_count,
             "conversation_ended": self.conversation_ended,
             "divorce_confirmed": self.divorce_confirmed,
+            "divorce_confirmation_pending": self.divorce_confirmation_pending,
             "age_under_limit": self.age_under_limit,
             "lgbt_user": self.lgbt_user,
             "already_married": self.already_married,
@@ -581,6 +744,7 @@ class UserProfile(BaseModel):
             "wechat_collected": self.wechat_collected,
             "phone_ask_count": self.phone_ask_count,
             "wechat_ask_count": self.wechat_ask_count,
+            "last_contact_request_type": self.last_contact_request_type,
             "is_hongkong_user": self.is_hongkong_user,
             # 兼容旧字段
             "rejected_wechat": self.rejected_wechat,

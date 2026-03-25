@@ -70,6 +70,20 @@ class MessageOrchestrator:
         except Exception:
             logger.debug("[mq.metrics] incr failed", extra={"metric": name})
 
+    async def _record_validation_metrics(self, result: ProcessChatTurnResult) -> None:
+        payload = result.payload if isinstance(result.payload, dict) else {}
+        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+        validation = meta.get("validation") if isinstance(meta.get("validation"), dict) else {}
+        error_code = str(validation.get("error_code") or "").strip()
+        if not error_code:
+            return
+
+        if error_code in {"CONTACT_INVALID_FORMAT", "WECHAT_INVALID_FORMAT"}:
+            if validation.get("silent"):
+                await self._incr_metric("contact_validation_silent")
+            else:
+                await self._incr_metric("contact_validation_retry")
+
     @staticmethod
     def _to_ingest_command(payload: dict | IngestMessageCommand) -> IngestMessageCommand:
         if isinstance(payload, IngestMessageCommand):
@@ -199,6 +213,7 @@ class MessageOrchestrator:
                     timestamp=latest_ts,
                 )
             )
+            await self._record_validation_metrics(result)
             response = result.response.strip()
             now_ms = self._now_ms()
 

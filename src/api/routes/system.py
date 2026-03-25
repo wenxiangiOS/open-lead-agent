@@ -28,6 +28,14 @@ def _safe_rate(num: int, den: int) -> float:
         return 0.0
     return round(float(num) / float(den), 4)
 
+
+def _http_detail(error_code: str, error: str, **details: Any) -> Dict[str, Any]:
+    return {
+        "error": error,
+        "error_code": error_code,
+        "details": details,
+    }
+
 def init_service(service: UserService, mq_store: QueueStore | None = None):
     """Initialize user service"""
     global user_service, queue_store
@@ -66,7 +74,10 @@ def init_service(service: UserService, mq_store: QueueStore | None = None):
 async def get_statistics() -> Dict[str, Any]:
     """获取服务统计数据"""
     if user_service is None:
-        raise HTTPException(status_code=500, detail="服务未初始化")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("SERVICE_NOT_INITIALIZED", "service_not_initialized", route="stats"),
+        )
 
     try:
         logger.info("Getting service statistics")
@@ -84,7 +95,10 @@ async def get_statistics() -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Statistics retrieval error: {e}")
-        raise HTTPException(status_code=500, detail="获取统计信息时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("SYSTEM_STATS_ERROR", "stats_retrieval_failed", route="stats"),
+        )
 
 
 @router.get(
@@ -133,13 +147,19 @@ async def get_personality_profile() -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Personality retrieval error: {e}")
-        raise HTTPException(status_code=500, detail="获取人格设定时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("PERSONALITY_PROFILE_ERROR", "personality_profile_failed", route="personality"),
+        )
 
 
 @router.get("/api/doubao/mq/dashboard", summary="消息队列看板")
 async def get_message_queue_dashboard() -> Dict[str, Any]:
     if queue_store is None:
-        raise HTTPException(status_code=500, detail="消息队列未初始化")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("MQ_NOT_INITIALIZED", "message_queue_not_initialized", route="mq_dashboard"),
+        )
 
     try:
         mq = await queue_store.get_queue_metrics()
@@ -147,6 +167,9 @@ async def get_message_queue_dashboard() -> Dict[str, Any]:
         ingest_accepted = int(mq.get("ingest_accepted", 0))
         outbox_created = int(mq.get("outbox_created", 0))
         outbox_success = int(mq.get("outbox_delivery_success", 0))
+        contact_validation_retry = int(mq.get("contact_validation_retry", 0))
+        contact_validation_silent = int(mq.get("contact_validation_silent", 0))
+        contact_validation_total = contact_validation_retry + contact_validation_silent
 
         return {
             "success": True,
@@ -156,13 +179,23 @@ async def get_message_queue_dashboard() -> Dict[str, Any]:
                     "ingest_accept_rate": _safe_rate(ingest_accepted, ingest_total),
                     "delivery_success_rate": _safe_rate(outbox_success, outbox_created),
                     "turn_success_rate": _safe_rate(int(mq.get("turn_succeeded", 0)), int(mq.get("turn_started", 0))),
+                    "contact_validation_retry_share": _safe_rate(contact_validation_retry, contact_validation_total),
+                    "contact_validation_silent_share": _safe_rate(contact_validation_silent, contact_validation_total),
+                },
+                "validation": {
+                    "retry_count": contact_validation_retry,
+                    "silent_count": contact_validation_silent,
+                    "total": contact_validation_total,
                 },
             },
             "timestamp": datetime.now().isoformat(),
         }
     except Exception as e:
         logger.error(f"MQ dashboard retrieval error: {e}")
-        raise HTTPException(status_code=500, detail="获取消息队列看板时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("MQ_DASHBOARD_ERROR", "message_queue_dashboard_failed", route="mq_dashboard"),
+        )
 
 
 @router.get(
@@ -180,7 +213,10 @@ async def get_token_usage() -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"Token usage retrieval error: {e}")
-        raise HTTPException(status_code=500, detail="获取 token 用量时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("TOKEN_USAGE_ERROR", "token_usage_failed", route="token_usage"),
+        )
 
 
 @router.post(
@@ -198,7 +234,10 @@ async def reset_token_usage() -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"Token usage reset error: {e}")
-        raise HTTPException(status_code=500, detail="重置 token 用量时出错")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("TOKEN_USAGE_RESET_ERROR", "token_usage_reset_failed", route="token_usage_reset"),
+        )
 
 
 @router.get(

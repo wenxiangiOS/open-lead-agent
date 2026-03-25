@@ -24,6 +24,14 @@ def init_service(service: MessageOrchestrator) -> None:
     orchestrator = service
 
 
+def _http_detail(error_code: str, error: str, **details: Any) -> Dict[str, Any]:
+    return {
+        "error": error,
+        "error_code": error_code,
+        "details": details,
+    }
+
+
 def _build_ingest_command(payload: Dict[str, Any]) -> IngestMessageCommand:
     return IngestMessageCommand(
         account_id=str(payload.get("accountId") or "").strip(),
@@ -38,7 +46,10 @@ def _build_ingest_command(payload: Dict[str, Any]) -> IngestMessageCommand:
 @router.post("/api/xiaohongshu/messages/ingest")
 async def ingest_message(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
     if orchestrator is None:
-        raise HTTPException(status_code=500, detail="ingest service not initialized")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("INGEST_SERVICE_NOT_INITIALIZED", "ingest_service_not_initialized", route="xhs_ingest"),
+        )
 
     try:
         # Optional API key guard.
@@ -46,7 +57,10 @@ async def ingest_message(request: Request, payload: Dict[str, Any]) -> Dict[str,
         if expected_api_key:
             provided_api_key = (request.headers.get("X-API-Key") or "").strip()
             if not hmac.compare_digest(provided_api_key, expected_api_key):
-                raise HTTPException(status_code=401, detail="unauthorized")
+                raise HTTPException(
+                    status_code=401,
+                    detail=_http_detail("XHS_INGEST_UNAUTHORIZED", "unauthorized", route="xhs_ingest"),
+                )
 
         # Optional signature guard: HMAC_SHA256(secret, "<timestamp>.<raw_body>")
         signing_secret = os.getenv("XHS_INGEST_SIGNING_SECRET", "").strip()
@@ -54,16 +68,25 @@ async def ingest_message(request: Request, payload: Dict[str, Any]) -> Dict[str,
             ts = (request.headers.get("X-Timestamp") or "").strip()
             sig = (request.headers.get("X-Signature") or "").strip()
             if not ts or not sig:
-                raise HTTPException(status_code=401, detail="missing signature")
+                raise HTTPException(
+                    status_code=401,
+                    detail=_http_detail("XHS_INGEST_MISSING_SIGNATURE", "missing_signature", route="xhs_ingest"),
+                )
             try:
                 ts_int = int(ts)
             except ValueError:
-                raise HTTPException(status_code=401, detail="invalid timestamp")
+                raise HTTPException(
+                    status_code=401,
+                    detail=_http_detail("XHS_INGEST_INVALID_TIMESTAMP", "invalid_timestamp", route="xhs_ingest"),
+                )
 
             now = int(time.time())
             max_skew = int(os.getenv("XHS_INGEST_MAX_SKEW_SECONDS", "300"))
             if abs(now - ts_int) > max_skew:
-                raise HTTPException(status_code=401, detail="stale signature")
+                raise HTTPException(
+                    status_code=401,
+                    detail=_http_detail("XHS_INGEST_STALE_SIGNATURE", "stale_signature", route="xhs_ingest"),
+                )
 
             raw_body = (await request.body()) or b""
             signed = f"{ts}.".encode("utf-8") + raw_body
@@ -73,7 +96,10 @@ async def ingest_message(request: Request, payload: Dict[str, Any]) -> Dict[str,
                 hashlib.sha256,
             ).hexdigest()
             if not hmac.compare_digest(sig, expected_sig):
-                raise HTTPException(status_code=401, detail="invalid signature")
+                raise HTTPException(
+                    status_code=401,
+                    detail=_http_detail("XHS_INGEST_INVALID_SIGNATURE", "invalid_signature", route="xhs_ingest"),
+                )
 
         result = await orchestrator.ingest_command(_build_ingest_command(payload))
         return result.payload
@@ -81,7 +107,10 @@ async def ingest_message(request: Request, payload: Dict[str, Any]) -> Dict[str,
         raise
     except Exception:
         logger.exception("[ingest] failed")
-        raise HTTPException(status_code=500, detail="ingest failed")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("XHS_INGEST_FAILED", "ingest_failed", route="xhs_ingest"),
+        )
 
 
 @router.get("/api/xiaohongshu/messages/replies")
@@ -92,14 +121,20 @@ async def poll_replies(
     limit: int = Query(20, ge=1, le=100),
 ) -> Dict[str, Any]:
     if orchestrator is None:
-        raise HTTPException(status_code=500, detail="ingest service not initialized")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("INGEST_SERVICE_NOT_INITIALIZED", "ingest_service_not_initialized", route="xhs_replies"),
+        )
 
     # Reuse optional API key guard for polling.
     expected_api_key = os.getenv("XHS_INGEST_API_KEY", "").strip()
     if expected_api_key:
         provided_api_key = (request.headers.get("X-API-Key") or "").strip()
         if not hmac.compare_digest(provided_api_key, expected_api_key):
-            raise HTTPException(status_code=401, detail="unauthorized")
+            raise HTTPException(
+                status_code=401,
+                detail=_http_detail("XHS_REPLIES_UNAUTHORIZED", "unauthorized", route="xhs_replies"),
+            )
 
     replies = await orchestrator.queue_store.fetch_delivered_replies(
         account_id=accountId,

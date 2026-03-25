@@ -370,6 +370,68 @@ class ExtractionService:
 
         return None
 
+    @staticmethod
+    def _extract_partner_requirement_from_user_message(user_message: str) -> Optional[str]:
+        """从用户原话中保守提取择偶要求，优先保留否定语义，避免模型反转。"""
+        message = str(user_message or "").strip()
+        if not message:
+            return None
+
+        values: List[str] = []
+        patterns = [
+            r"(年龄不超过\d{1,2}岁)",
+            r"(不超过\d{1,2}岁)",
+            r"(\d{1,2}岁以下)",
+            r"(年龄至少\d{1,3})",
+            r"(身高至少\d{2,3})",
+            r"(身高不低于\d{2,3})",
+            r"(至少\d{2,3})",
+            r"(温柔(?:一点|些)?(?:的)?)",
+            r"(气质(?:好|佳)?(?:一点|些)?(?:的)?)",
+            r"(同城优先)",
+            r"(成熟稳重)",
+            r"(三观合拍)",
+        ]
+        for pattern in patterns:
+            matches = re.findall(pattern, message)
+            for matched in matches:
+                cleaned = str(matched).strip("，,。；; ")
+                if cleaned and cleaned not in values:
+                    values.append(cleaned)
+
+        if not values:
+            return None
+
+        normalized: List[str] = []
+        for value in values:
+            value = re.sub(r"^不超过(\d{1,2})岁$", r"年龄不超过\1岁", value)
+            value = re.sub(r"^(\d{1,2})岁以下$", r"年龄不超过\1岁", value)
+            value = re.sub(r"^至少(\d{2,3})$", r"身高至少\1", value)
+            value = re.sub(r"(温柔)(一点|些)?(?:的)?$", r"\1", value)
+            value = re.sub(r"(气质)(好|佳)?(一点|些)?(?:的)?$", r"\1", value)
+            if value not in normalized:
+                normalized.append(value)
+
+        preference_match = re.search(
+            r"(?:看中|看重|更看重|比较看重|喜欢|偏向|希望).{0,8}(?:对方|另一半)?(.{0,8}气质)",
+            message,
+        )
+        if preference_match:
+            preference_value = preference_match.group(1).strip("，,。；; ")
+            preference_value = re.sub(r"^(对方|另一半)", "", preference_value)
+            preference_value = re.sub(r"(吧|呀|呢|啊)$", "", preference_value).strip()
+            if preference_value and preference_value not in normalized:
+                normalized.append(preference_value)
+
+        return "，".join(normalized)
+
+    @staticmethod
+    def _looks_like_partner_requirement_content(value: Any) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        return bool(re.search(r"(对方|另一半|气质|眼缘|感觉|性格|成熟稳重|三观)", text))
+
     def infer_refused_fields(self, last_question: str) -> List[str]:
         """
         根据上一个问题推断用户拒绝的字段
@@ -608,11 +670,24 @@ class ExtractionService:
                         logger.info("[提取保护] sex 仅允许用户自述写入，本轮跳过 sex 更新")
                         continue
 
+                if mapped_field == "occupation":
+                    explicit_self_occupation = self._has_explicit_self_update_signal("occupation", user_message)
+                    has_preference_signal = bool(self._extract_partner_requirement_from_user_message(user_message))
+                    if not explicit_self_occupation and (
+                        has_preference_signal or self._looks_like_partner_requirement_content(value)
+                    ):
+                        logger.info("[提取保护] occupation 命中择偶偏好语境，本轮跳过职业更新")
+                        continue
+
                 is_collected = user_profile.collection_progress.get(mapped_field, False)
                 current_value = getattr(user_profile, mapped_field, None)
 
                 # 特殊处理：择偶要求字段需要累积而不是覆盖
                 if mapped_field == "partner_requirement":
+                    user_message_preferred_value = self._extract_partner_requirement_from_user_message(user_message)
+                    if user_message_preferred_value:
+                        value = user_message_preferred_value
+
                     # 有价值的内容关键词（即使包含结束信号，也要收集这些内容）
                     valuable_keywords = ['看感觉', '随缘', '看眼缘', '看缘分', '顺其自然', '都可以', '不限']
 

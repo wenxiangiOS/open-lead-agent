@@ -1,6 +1,7 @@
 """Health check routes"""
 
 import logging
+from typing import Any, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -29,6 +30,14 @@ def init_services(ai: AIService, user: UserService, chat: ChatService):
     chat_service = chat
 
 
+def _http_detail(error_code: str, error: str, **details: Any) -> Dict[str, Any]:
+    return {
+        "error": error,
+        "error_code": error_code,
+        "details": details,
+    }
+
+
 @router.get(
     "/health",
     summary="服务健康检查",
@@ -47,7 +56,10 @@ def init_services(ai: AIService, user: UserService, chat: ChatService):
 async def health_check() -> HealthCheckResponse:
     """健康检查端点，返回服务状态"""
     if ai_service is None:
-        raise HTTPException(status_code=500, detail="服务未初始化")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("SERVICE_NOT_INITIALIZED", "service_not_initialized", route="health"),
+        )
 
     try:
         # Check AI service health
@@ -76,7 +88,10 @@ async def health_check() -> HealthCheckResponse:
 
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        raise HTTPException(status_code=500, detail="服务健康检查失败")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("HEALTH_CHECK_ERROR", "health_check_failed", route="health"),
+        )
 
 
 @router.get(
@@ -103,7 +118,10 @@ async def get_welcome_message():
         return {"welcome_message": SYSTEM_WELCOME_MESSAGE}
     except Exception as e:
         logger.error(f"Failed to get welcome message: {e}")
-        raise HTTPException(status_code=500, detail="获取欢迎消息失败")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("WELCOME_CONFIG_ERROR", "welcome_config_failed", route="config_welcome"),
+        )
 
 
 @router.get(
@@ -144,4 +162,7 @@ async def concurrency_health_check():
 
     except Exception as e:
         logger.error(f"Concurrency health check failed: {e}")
-        raise HTTPException(status_code=500, detail="并发健康检查失败")
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("CONCURRENCY_HEALTH_ERROR", "concurrency_health_failed", route="health_concurrency"),
+        )

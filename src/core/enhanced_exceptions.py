@@ -30,8 +30,8 @@ class EnhancedException(Exception):
     # 是否需要告警
     requires_alert: bool = False
 
-    # 用户友好的错误消息（子类可覆盖）
-    user_message: str = "服务暂时不可用，请稍后重试"
+    # 结构化错误键（子类可覆盖）
+    user_message: str = "service_temporarily_unavailable"
 
     # 是否应该降级处理
     fallback_available: bool = False
@@ -154,7 +154,7 @@ class CriticalException(EnhancedException):
     severity = ErrorSeverity.CRITICAL
     retryable = False
     requires_alert = True
-    user_message = "系统严重错误，请稍后重试或联系客服"
+    user_message = "critical_system_error"
 
 
 class HighSeverityException(EnhancedException):
@@ -165,7 +165,7 @@ class HighSeverityException(EnhancedException):
     retry_delay = 2.0
     requires_alert = True
     fallback_available = True
-    user_message = "服务暂时不可用，请稍后重试"
+    user_message = "service_temporarily_unavailable"
 
 
 class MediumSeverityException(EnhancedException):
@@ -175,7 +175,7 @@ class MediumSeverityException(EnhancedException):
     max_retries = 3
     retry_delay = 1.0
     fallback_available = True
-    user_message = "操作失败，请重试"
+    user_message = "operation_failed"
 
 
 class LowSeverityException(EnhancedException):
@@ -184,7 +184,7 @@ class LowSeverityException(EnhancedException):
     retryable = True
     max_retries = 1
     retry_delay = 0.5
-    user_message = "请求参数有误，请检查后重试"
+    user_message = "request_invalid"
 
 
 # ============================================================================
@@ -209,7 +209,7 @@ class StorageException(HighSeverityException):
 class RedisException(StorageException):
     """Redis 异常"""
     fallback_available = True
-    user_message = "缓存服务暂时不可用"
+    user_message = "redis_temporarily_unavailable"
 
     def __init__(self, message: str = "Redis 操作失败", **kwargs):
         super().__init__(
@@ -221,7 +221,7 @@ class RedisException(StorageException):
 
 class AIServiceException(HighSeverityException):
     """AI 服务异常"""
-    user_message = "AI 服务暂时不可用，请稍后重试"
+    user_message = "ai_service_unavailable"
 
     def __init__(self, message: str = "AI 服务调用失败", model: Optional[str] = None, timeout: Optional[float] = None, **kwargs):
         details = kwargs.pop('details', {})
@@ -241,7 +241,7 @@ class AITimeoutException(AIServiceException):
     """AI 服务超时"""
     retryable = True
     max_retries = 2
-    user_message = "AI 响应超时，请重试"
+    user_message = "ai_timeout"
 
     def __init__(self, message: str = "AI 服务响应超时", timeout: Optional[float] = None, **kwargs):
         details = kwargs.pop('details', {})
@@ -257,7 +257,7 @@ class ValidationException(LowSeverityException):
     """数据验证异常"""
     severity = ErrorSeverity.LOW
     retryable = False
-    user_message = "输入数据格式不正确"
+    user_message = "validation_error"
 
     def __init__(self, message: str = "数据验证失败", field: Optional[str] = None, **kwargs):
         details = kwargs.pop('details', {})
@@ -277,7 +277,7 @@ class AuthenticationException(MediumSeverityException):
     severity = ErrorSeverity.HIGH
     retryable = False
     requires_alert = True
-    user_message = "认证失败，请重新登录"
+    user_message = "authentication_failed"
 
     def __init__(self, message: str = "认证失败", **kwargs):
         super().__init__(
@@ -292,7 +292,7 @@ class RateLimitException(MediumSeverityException):
     """限流异常"""
     severity = ErrorSeverity.MEDIUM
     retryable = False
-    user_message = "请求过于频繁，请稍后再试"
+    user_message = "rate_limit_exceeded"
 
     def __init__(
         self,
@@ -317,7 +317,7 @@ class RateLimitException(MediumSeverityException):
 
 class ConfigurationException(CriticalException):
     """配置异常"""
-    user_message = "系统配置错误，请联系管理员"
+    user_message = "configuration_error"
 
     def __init__(self, message: str = "配置错误", config_key: Optional[str] = None, **kwargs):
         details = kwargs.pop('details', {})
@@ -335,7 +335,7 @@ class CircuitBreakerOpenException(HighSeverityException):
     """断路器开启异常"""
     retryable = False
     requires_alert = True
-    user_message = "服务暂时不可用，正在恢复中"
+    user_message = "service_recovering"
 
     def __init__(self, service: str, retry_after: int = 60, **kwargs):
         details = kwargs.pop('details', {})
@@ -356,7 +356,7 @@ class RefusalException(EnhancedException):
     severity = ErrorSeverity.LOW
     retryable = False
     requires_alert = False
-    user_message = "已了解您的选择"
+    user_message = "refusal_acknowledged"
     status_code = 200
 
     def __init__(self, message: str = "用户拒绝继续", **kwargs):

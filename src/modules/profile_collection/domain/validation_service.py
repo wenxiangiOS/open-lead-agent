@@ -33,13 +33,30 @@ class ValidationService:
         """初始化验证服务"""
         pass
 
+    @staticmethod
+    def _build_validation_error(
+        *,
+        code: str,
+        field: str,
+        detail: Optional[str] = None,
+        attempt: Optional[int] = None,
+        silent: bool = False,
+    ) -> Dict[str, Any]:
+        return {
+            "code": code,
+            "field": field,
+            "detail": detail,
+            "attempt": attempt,
+            "silent": silent,
+        }
+
     async def validate_contact(
         self,
         contact: str,
         user_profile: UserProfile,
         account_id: str,
         user_service = None
-    ) -> Tuple[bool, Optional[str], Optional[str]]:
+    ) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
         """
         验证联系方式
 
@@ -50,8 +67,8 @@ class ValidationService:
             user_service: 用户服务（可选，用于保持状态一致性）
 
         Returns:
-            Tuple[bool, Optional[str], Optional[str]]:
-                (是否有效, 错误消息, 成功消息)
+            Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
+                (是否有效, 结构化错误信息, 成功消息)
         """
         # 如果没有传入user_service，创建新的实例
         if user_service is None:
@@ -62,7 +79,17 @@ class ValidationService:
 
         # 检查是否是手机号或微信标识
         if contact in ['phone', 'wechat']:
-            return (False, None, None)
+            return (
+                False,
+                self._build_validation_error(
+                    code="CONTACT_PLACEHOLDER_TOKEN",
+                    field="contact",
+                    detail="placeholder_token",
+                    attempt=user_state.get_contact_error_count(),
+                    silent=False,
+                ),
+                None,
+            )
 
         # 使用统一验证器
         is_valid, contact_type, error_msg = ContactValidator.is_valid_contact(contact)
@@ -72,21 +99,20 @@ class ValidationService:
             error_count = user_state.increment_contact_error()
             await user_service.save_user_state(account_id, user_state)
 
-            # 根据用户性别选择称呼
-            call_name = user_profile.get_greeting() if user_profile else "亲"
-
-            # 根据错误次数给出不同提示
-            if error_count == 1:
-                # 第1次错误：提示手机号格式问题（添加称呼前缀）
-                return (False, f"{call_name}，{error_msg}", None)
-            elif error_count == 2:
-                # 第2次错误：提示微信也可以
-                return (False, f"嗯嗯，{call_name}不方便留手机号的话，微信号也可以呀～方便留个微信号吗呀", None)
-            else:
-                # 第3次及以上：委婉结束话题
+            if error_count >= 3:
                 user_profile.skipped_fields['contact'] = True
                 await user_service.save_user_profile(account_id, user_profile)
-                return (False, "", None)  # 返回空消息，不回复
+            return (
+                False,
+                self._build_validation_error(
+                    code="CONTACT_INVALID_FORMAT",
+                    field="contact",
+                    detail=error_msg,
+                    attempt=error_count,
+                    silent=error_count >= 3,
+                ),
+                None,
+            )
 
         # 验证通过，重置错误计数
         user_state.reset_contact_error_count()
@@ -113,7 +139,13 @@ class ValidationService:
         """
         return PhoneValidator.is_valid(phone)
 
-    def validate_wechat(self, wechat: str) -> Tuple[bool, Optional[str]]:
+    async def validate_wechat(
+        self,
+        wechat: str,
+        user_profile: UserProfile,
+        account_id: str,
+        user_service = None
+    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
         验证微信号格式
 
@@ -121,9 +153,35 @@ class ValidationService:
             wechat: 微信号
 
         Returns:
-            Tuple[bool, Optional[str]]: (是否有效, 错误消息)
+            Tuple[bool, Optional[Dict[str, Any]]]: (是否有效, 结构化错误信息)
         """
-        return WechatValidator.is_valid(wechat)
+        if user_service is None:
+            from src.services.data.user_service import UserService
+            user_service = UserService()
+
+        user_state = await user_service.get_user_state(account_id)
+        is_valid, error_msg = WechatValidator.is_valid(wechat)
+        if is_valid:
+            user_state.reset_contact_error_count()
+            await user_service.save_user_state(account_id, user_state)
+            return True, None
+
+        error_count = user_state.increment_contact_error()
+        await user_service.save_user_state(account_id, user_state)
+        if error_count >= 3:
+            user_profile.skipped_fields['contact'] = True
+            await user_service.save_user_profile(account_id, user_profile)
+
+        return (
+            False,
+            self._build_validation_error(
+                code="WECHAT_INVALID_FORMAT",
+                field="wechat",
+                detail=error_msg,
+                attempt=error_count,
+                silent=error_count >= 3,
+            ),
+        )
 
     def validate_age(self, age) -> Tuple[bool, Optional[str]]:
         """

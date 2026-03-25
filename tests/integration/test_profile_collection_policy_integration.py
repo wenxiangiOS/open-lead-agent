@@ -214,6 +214,23 @@ class TestProfileCollectionPolicyIntegration:
     def _run(self, coro):
         return asyncio.run(coro)
 
+    @staticmethod
+    def _blank_extract_block() -> str:
+        fields = [
+            "称呼", "性别", "所在地", "年龄", "身高", "体重", "学历", "职业",
+            "月收入", "婚况", "联系方式", "微信", "择偶要求"
+        ]
+        return "<extract>\n" + "\n".join(f"{field}:null" for field in fields) + "\n</extract>"
+
+    async def _seed_profile_fields(self, account_id: str, **field_values):
+        profile = await self.user_service.get_user_profile(account_id)
+        for field, value in field_values.items():
+            setattr(profile, field, value)
+            if field in profile.collection_progress:
+                profile.collection_progress[field] = bool(value)
+        await self.user_service.save_user_profile(account_id, profile)
+        return profile
+
     def test_real_ai_avoids_low_priority_fields_before_core_ready(self):
         """资料未成熟时，AI 不应主动追问低优字段或过早问联系方式"""
         account_id = f"policy_low_priority_{uuid.uuid4().hex[:8]}"
@@ -583,6 +600,362 @@ class TestProfileCollectionPolicyIntegration:
                 "记下", "第一时间", "同城", "性格稳定", "合适的"
             ]
         ), response_1
+
+    def test_medium_field_active_once_then_never_reasks_even_if_model_repeats(self, monkeypatch):
+        """择偶要求一旦真实问过一次，后续即使模型继续问，也要被流程拦掉。"""
+        account_id = f"policy_medium_once_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+        self._run(
+            self._seed_profile_fields(
+                account_id,
+                sex="男",
+                age=30,
+                location="深圳",
+                education="本科",
+            )
+        )
+
+        responses = iter(
+            [
+                f"你这边对另一半有什么比较在意的点吗？\n{self._blank_extract_block()}",
+                f"你这边对另一半有什么比较在意的点吗？\n{self._blank_extract_block()}",
+            ]
+        )
+
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+            return next(responses)
+
+        monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
+
+        response_1, profile_1 = self._run(self._send_message(account_id, "我这边先继续往下聊吧", sex="男"))
+        assert "另一半" in response_1
+        assert profile_1.is_active_ask_closed("partner_requirement") is True
+        assert profile_1.get_ask_count("partner_requirement") == 1
+
+        response_2, profile_2 = self._run(self._send_message(account_id, "这个我先不展开，你继续", sex="男"))
+        assert "另一半" not in response_2
+        assert "在意的点" not in response_2
+        assert profile_2.get_ask_count("partner_requirement") == 1
+
+    def test_resume_profile_collection_turn_blocks_monthly_income_reask(self, monkeypatch):
+        """恢复主线轮次里，即使模型想问月薪，也不能主动出现。"""
+        account_id = f"policy_resume_medium_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+        self._run(
+            self._seed_profile_fields(
+                account_id,
+                sex="女",
+                age=29,
+                location="杭州",
+                education="本科",
+            )
+        )
+
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+            return f"如果你方便的话，我再轻问一句，你月收入大概在哪个区间？\n{self._blank_extract_block()}"
+
+        monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
+
+        response, _ = self._run(self._send_message(account_id, "你不问其他了？", sex="女"))
+
+        assert "月收入" not in response
+        assert "收入大概" not in response
+        assert "月薪" not in response
+
+    def test_contact_flow_strips_medium_field_even_if_model_inserts_it(self, monkeypatch):
+        """联系方式阶段即使模型夹带择偶要求，也必须被守卫删除。"""
+        account_id = f"policy_contact_medium_isolation_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+        self._run(
+            self._seed_profile_fields(
+                account_id,
+                sex="男",
+                age=31,
+                location="深圳",
+                education="本科",
+                occupation="程序员",
+                marital_status="单身",
+            )
+        )
+
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+            return (
+                "要是你愿意，留个电话也行。"
+                "你这边对另一半有什么比较在意的点吗？\n"
+                f"{self._blank_extract_block()}"
+            )
+
+        monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
+
+        response, profile = self._run(self._send_message(account_id, "没有其他要求了", sex="男"))
+
+        assert any(keyword in response for keyword in ["电话", "联系方式"])
+        assert "另一半" not in response
+        assert "在意的点" not in response
+        assert profile.get_ask_count("partner_requirement") == 0
+
+    def test_faq_reentry_turn_blocks_medium_fields_but_keeps_contact_mainline(self, monkeypatch):
+        """FAQ 回答后的承接轮次不能跳去中等字段，但允许继续联系方式主线。"""
+        account_id = f"policy_faq_reentry_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+        self._run(
+            self._seed_profile_fields(
+                account_id,
+                sex="男",
+                age=31,
+                location="深圳",
+                education="本科",
+                occupation="程序员",
+                marital_status="单身",
+            )
+        )
+        self._run(
+            self.chat_service.dialogue_manager.update_recent_responses(
+                account_id,
+                "联系方式只是为了后续有合适的人选时方便联系你，我们也会注意隐私，不会随便打扰。",
+            )
+        )
+
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+            return (
+                "如果你方便的话，我再轻问一句，你月收入大概在哪个区间？"
+                "要是你愿意，留个电话也行。\n"
+                f"{self._blank_extract_block()}"
+            )
+
+        monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
+
+        response, _ = self._run(self._send_message(account_id, "知道了", sex="男"))
+
+        assert any(keyword in response for keyword in ["电话", "联系方式"])
+        assert "月收入" not in response
+        assert "收入大概" not in response
+        assert "另一半" not in response
+
+    def test_passive_only_partner_requirement_still_extracts_from_user_message(self):
+        """择偶要求进入 PASSIVE_ONLY 后，用户主动表达时仍然要能入档。"""
+        account_id = f"policy_passive_partner_extract_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+
+        async def _seed_passive_only_partner_requirement():
+            profile = await self._seed_profile_fields(
+                account_id,
+                sex="男",
+                age=31,
+                location="深圳",
+                education="本科",
+            )
+            profile.close_active_ask("partner_requirement")
+            await self.user_service.save_user_profile(account_id, profile)
+
+        self._run(_seed_passive_only_partner_requirement())
+
+        _, profile = self._run(self._send_message(account_id, "我想找成熟稳重的，同城优先", sex="男"))
+
+        assert profile.partner_requirement is not None
+        assert "成熟稳重" in profile.partner_requirement
+        assert "同城优先" in profile.partner_requirement
+        assert profile.is_active_ask_closed("partner_requirement") is True
+
+    def test_passive_only_monthly_income_still_extracts_from_user_message(self):
+        """月收入进入 PASSIVE_ONLY 后，用户主动表达时仍然要能入档。"""
+        account_id = f"policy_passive_income_extract_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+
+        async def _seed_passive_only_monthly_income():
+            profile = await self._seed_profile_fields(
+                account_id,
+                sex="女",
+                age=29,
+                location="杭州",
+                education="本科",
+            )
+            profile.close_active_ask("monthly_income")
+            await self.user_service.save_user_profile(account_id, profile)
+
+        self._run(_seed_passive_only_monthly_income())
+
+        _, profile = self._run(self._send_message(account_id, "我现在税前15k左右", sex="女"))
+
+        assert profile.monthly_income == "税前15k左右"
+        assert profile.is_active_ask_closed("monthly_income") is True
+
+    def test_contact_repair_turn_still_blocks_medium_fields(self, monkeypatch):
+        """联系方式纠错轮次里，即使模型夹带中等字段，也必须被流程剥掉。"""
+        account_id = f"policy_contact_repair_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+        self._run(
+            self._seed_profile_fields(
+                account_id,
+                sex="男",
+                age=31,
+                location="深圳",
+                education="本科",
+                occupation="程序员",
+                marital_status="单身",
+            )
+        )
+        self._run(
+            self.chat_service.dialogue_manager.update_recent_responses(
+                account_id,
+                "电话这块你要是方便就留一个，不方便的话我们先继续聊也行。",
+            )
+        )
+
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+            return (
+                "对，刚刚问的是电话。"
+                "如果你方便的话，我再轻问一句，你月收入大概在哪个区间？"
+                "电话这块你先不用急，我们继续聊也行。\n"
+                f"{self._blank_extract_block()}"
+            )
+
+        monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
+
+        response, _ = self._run(self._send_message(account_id, "不是问的电话吗？", sex="男"))
+
+        assert "电话" in response
+        assert "月收入" not in response
+        assert "收入大概" not in response
+        assert "另一半" not in response
+
+    def test_faq_repeat_followup_reentry_still_blocks_medium_fields(self, monkeypatch):
+        """FAQ 连续追问后的恢复轮次，也不能跳去中等字段。"""
+        account_id = f"policy_faq_repeat_reentry_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+        self._run(
+            self._seed_profile_fields(
+                account_id,
+                sex="女",
+                age=29,
+                location="杭州",
+                education="本科",
+                occupation="运营",
+                marital_status="单身",
+            )
+        )
+        self._run(
+            self.chat_service.dialogue_manager.update_recent_responses(
+                account_id,
+                "收费这块基础匹配是免费的，你可以先放心。",
+            )
+        )
+        self._run(
+            self.chat_service.dialogue_manager.update_recent_responses(
+                account_id,
+                "我理解你会反复确认，这很正常。你更担心价格、流程，还是隐私安全？",
+            )
+        )
+
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+            return (
+                "你这边对另一半有什么比较在意的点吗？"
+                "要是你愿意，留个电话也行。\n"
+                f"{self._blank_extract_block()}"
+            )
+
+        monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
+
+        response, _ = self._run(self._send_message(account_id, "知道了", sex="女"))
+
+        assert any(keyword in response for keyword in ["电话", "联系方式"])
+        assert "另一半" not in response
+        assert "在意的点" not in response
+
+    def test_contact_misroute_correction_chain_blocks_medium_and_low_priority_fields(self, monkeypatch):
+        """电话/微信误切后的连续纠错轮次里，中等字段和低优字段都不能插入。"""
+        account_id = f"policy_contact_misroute_chain_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+        self._run(
+            self._seed_profile_fields(
+                account_id,
+                sex="男",
+                age=31,
+                location="深圳",
+                education="本科",
+                occupation="程序员",
+                marital_status="单身",
+            )
+        )
+        self._run(
+            self.chat_service.dialogue_manager.update_recent_responses(
+                account_id,
+                "我知道你现在对微信这块还有顾虑。你要是愿意，留一个也行，不想留我们就先往下聊。",
+            )
+        )
+
+        scripted_responses = iter(
+            [
+                (
+                    "对，刚刚本来是在说电话。"
+                    "如果你方便的话，我再轻问一句，你月收入大概在哪个区间？"
+                    "身高大概多少也可以顺便说下。"
+                    "电话这块你先不用急。\n"
+                    f"{self._blank_extract_block()}"
+                ),
+                (
+                    "抱歉，刚刚那句接乱了。"
+                    "你这边对另一半有什么比较在意的点吗？"
+                    "怎么称呼你会更方便？"
+                    "电话这块我们先不往下逼。\n"
+                    f"{self._blank_extract_block()}"
+                ),
+            ]
+        )
+
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+            return next(scripted_responses)
+
+        monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
+
+        response_1, _ = self._run(self._send_message(account_id, "不是问的电话吗？", sex="男"))
+        assert "电话" in response_1
+        for keyword in ["月收入", "收入大概", "另一半", "身高", "体重", "怎么称呼", "叫什么"]:
+            assert keyword not in response_1, f"联系方式纠错轮不应插入其它字段: {keyword}, response={response_1}"
+
+        response_2, _ = self._run(self._send_message(account_id, "你已经糊涂了", sex="男"))
+        assert any(keyword in response_2 for keyword in ["电话", "抱歉", "先不往下", "继续聊"]), response_2
+        for keyword in ["月收入", "收入大概", "另一半", "在意的点", "身高", "体重", "怎么称呼", "叫什么"]:
+            assert keyword not in response_2, f"不满纠错轮不应插入其它字段: {keyword}, response={response_2}"
+
+    def test_contact_repair_after_wechat_redirect_still_blocks_all_non_contact_fields(self, monkeypatch):
+        """从电话切到微信后的澄清轮次，只允许承接联系方式，不允许中等或低优字段插入。"""
+        account_id = f"policy_contact_wechat_redirect_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+        self._run(
+            self._seed_profile_fields(
+                account_id,
+                sex="女",
+                age=29,
+                location="杭州",
+                education="本科",
+                occupation="运营",
+                marital_status="单身",
+            )
+        )
+        self._run(
+            self.chat_service.dialogue_manager.update_recent_responses(
+                account_id,
+                "电话不方便的话，微信也可以。",
+            )
+        )
+
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+            return (
+                "对，刚刚是从电话转到微信这条。"
+                "你这边对另一半有什么比较在意的点吗？"
+                "体重这块方便说下吗？"
+                "微信这块你不想留也没关系。\n"
+                f"{self._blank_extract_block()}"
+            )
+
+        monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
+
+        response, _ = self._run(self._send_message(account_id, "刚刚不是在说微信吗？", sex="女"))
+
+        assert "微信" in response
+        for keyword in ["另一半", "在意的点", "月收入", "收入大概", "身高", "体重", "怎么称呼", "叫什么"]:
+            assert keyword not in response, f"微信纠错轮不应插入非联系方式字段: {keyword}, response={response}"
 
 
 if __name__ == "__main__":

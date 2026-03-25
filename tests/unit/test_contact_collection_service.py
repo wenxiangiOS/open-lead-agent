@@ -142,17 +142,24 @@ class TestContactCollectionService:
         profile.phone_ask_count = 1
         assert self.service.get_next_action(profile, "电话不方便，留微信可以吗") == NextAction.ASK_WECHAT
 
-    def test_get_next_action_soft_ack_after_phone_flow_switches_to_wechat(self):
-        """下一步动作 - 非香港用户低信息确认后不继续追问电话"""
+    def test_get_next_action_after_phone_attempt_keeps_persuade_phone_for_non_hk(self):
+        """下一步动作 - 非香港用户电话首次询问后，继续第二次电话追问"""
         profile = UserProfile(account_id="test", location="北京")
         profile.phone_ask_count = 1
-        assert self.service.get_next_action(profile, "嗯") == NextAction.ASK_WECHAT
+        assert self.service.get_next_action(profile) == NextAction.PERSUADE_PHONE
 
-    def test_get_next_action_soft_ack_does_not_switch_hk_phone_flow(self):
-        """下一步动作 - 香港用户仍保持电话优先"""
+    def test_get_next_action_after_both_contact_attempts_continues_wechat_persuasion(self):
+        """下一步动作 - 双渠道都推进过后，仍按状态机继续微信流程"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+        profile.wechat_ask_count = 1
+        assert self.service.get_next_action(profile) == NextAction.PERSUADE_WECHAT
+
+    def test_get_next_action_hk_phone_flow_keeps_persuade_phone(self):
+        """下一步动作 - 香港用户电话流程保持电话优先"""
         profile = UserProfile(account_id="test", location="香港")
         profile.phone_ask_count = 1
-        assert self.service.get_next_action(profile, "嗯") == NextAction.PERSUADE_PHONE
+        assert self.service.get_next_action(profile) == NextAction.PERSUADE_PHONE
 
     def test_get_flow_state_phone_requested(self):
         """显式流程状态 - 首次询问电话"""
@@ -214,6 +221,16 @@ class TestContactCollectionService:
         assert "微信" in instruction
         assert "电话" not in instruction
 
+    def test_build_instruction_after_phone_attempt_keeps_phone_prompt(self):
+        """构建指令 - 电话首次推进后，仍应继续电话追问而不是提前切微信"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+
+        instruction, action = self.service.build_instruction(profile, "好的")
+
+        assert action == NextAction.PERSUADE_PHONE
+        assert "电话" in instruction
+
     # ==================== detect_refusal 测试 ====================
 
     def test_detect_refusal_explicit_phone(self):
@@ -264,6 +281,46 @@ class TestContactCollectionService:
         assert result is not None
         assert result.contact_type == 'wechat'
 
+    def test_detect_refusal_general_prefers_current_phone_action_over_last_response(self):
+        """拒绝检测 - 当前动作问电话时，通用拒绝优先记电话"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.wechat = "wx_123456"
+        profile.wechat_collected = True
+        result = self.service.detect_refusal(
+            "不方便呢",
+            profile,
+            "微信这块你要是愿意就留一个，不想留我们先往下聊也行。",
+        )
+        assert result is not None
+        assert result.contact_type == 'phone'
+
+    def test_detect_refusal_general_prefers_last_delivered_request_type_over_shifted_action(self):
+        """拒绝检测 - 优先按最近一次真实展示给用户的联系方式类型归因。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+        profile.last_contact_request_type = "phone"
+
+        result = self.service.detect_refusal(
+            "不留",
+            profile,
+            "我知道你现在对微信这块还有顾虑。你要是愿意，留一个也行，不想留我们就先往下聊。",
+        )
+
+        assert result is not None
+        assert result.contact_type == 'phone'
+
+    def test_detect_refusal_general_prefers_current_wechat_action_over_last_response(self):
+        """拒绝检测 - 当前动作问微信时，通用拒绝优先记微信"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.rejected_phone = True
+        result = self.service.detect_refusal(
+            "不方便呢",
+            profile,
+            "方便留个电话吗？",
+        )
+        assert result is not None
+        assert result.contact_type == 'wechat'
+
     def test_detect_refusal_no_refusal(self):
         """拒绝检测 - 无拒绝"""
         profile = UserProfile(account_id="test", location="北京")
@@ -271,14 +328,14 @@ class TestContactCollectionService:
         assert result is None
 
     def test_detect_refusal_updates_ask_count(self):
-        """拒绝检测 - 拒绝时递增询问次数"""
+        """拒绝检测 - 拒绝时不重复递增已展示的询问次数"""
         profile = UserProfile(account_id="test", location="北京")
-        profile.phone_ask_count = 0
+        profile.phone_ask_count = 1
         result = self.service.detect_refusal("不留电话", profile, None)
-        # 拒绝后，计数器应该递增
         assert profile.phone_ask_count == 1
         assert result is not None
         assert result.is_refusal == True
+        assert result.is_final == False
 
     def test_detect_refusal_marks_final_rejection(self):
         """拒绝检测 - 标记最终拒绝"""
@@ -287,6 +344,32 @@ class TestContactCollectionService:
         result = self.service.detect_refusal("不留电话", profile, None)
         assert result.is_final == True
         assert profile.rejected_phone == True
+
+    def test_first_phone_refusal_keeps_phone_flow_until_second_attempt(self):
+        """首次拒绝电话后，仍应保持电话流程，直到第二次电话询问后才终拒"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+
+        result = self.service.detect_refusal("不留电话", profile, None)
+
+        assert result is not None
+        assert result.contact_type == "phone"
+        assert result.is_final is False
+        assert profile.rejected_phone is False
+        assert self.service.get_next_action(profile) == NextAction.PERSUADE_PHONE
+
+    def test_second_phone_refusal_switches_to_wechat(self):
+        """第二次电话询问后再次拒绝，才进入微信流程"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 2
+
+        result = self.service.detect_refusal("不留电话", profile, None)
+
+        assert result is not None
+        assert result.contact_type == "phone"
+        assert result.is_final is True
+        assert profile.rejected_phone is True
+        assert self.service.get_next_action(profile) == NextAction.ASK_WECHAT
 
     # ==================== get_status_display 测试 ====================
 
