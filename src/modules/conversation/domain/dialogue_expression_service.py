@@ -26,9 +26,9 @@ class DialogueExpressionService:
             "你现在是在什么城市？",
         ),
         "education": (
-            "你学历这块大概是什么背景呀？",
-            "你这边大概是什么学历呀？",
-            "学历这块你方便说下吗？",
+            "你大概是什么学历呀？",
+            "方便说下你的学历吗？",
+            "你的学历背景大概是怎样的？",
         ),
         "occupation": (
             "你现在主要做哪方面工作呀？",
@@ -66,7 +66,7 @@ class DialogueExpressionService:
         if field == "partner_requirement":
             return "你对另一半大概有什么要求呀？比如年龄、城市、性格这些，你会更在意哪方面？"
         if field == "marital_status":
-            return "我再确认一下，你现在是单身、未婚，还是离异呢？"
+            return "我顺手确认一下，你现在是单身状态吗？"
         if field == "monthly_income":
             return "如果你方便的话，我再轻问一句，你月收入大概在哪个区间？不方便说也没关系。"
         prompts = self.CORE_FIELD_PROMPTS.get(field)

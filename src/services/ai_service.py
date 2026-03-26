@@ -45,31 +45,12 @@ class AIService:
 
     def _create_async_openai_client(self) -> AsyncOpenAI:
         """创建新的异步 OpenAI 客户端，用于初始化和超时后重建。"""
-        import httpx
-
-        limits = httpx.Limits(
-            max_connections=settings.http_connections,
-            max_keepalive_connections=settings.http_max_keepalive,
-            keepalive_expiry=float(os.getenv("AI_HTTP_KEEPALIVE_EXPIRY_SECONDS", "15")),
-        )
-        timeout = httpx.Timeout(
-            connect=float(os.getenv("AI_HTTP_CONNECT_TIMEOUT_SECONDS", str(self.CONNECT_TIMEOUT))),
-            read=float(os.getenv("AI_HTTP_READ_TIMEOUT_SECONDS", "25")),
-            write=float(os.getenv("AI_HTTP_WRITE_TIMEOUT_SECONDS", "10")),
-            pool=float(os.getenv("AI_HTTP_POOL_TIMEOUT_SECONDS", "5")),
-        )
-
+        timeout = float(os.getenv("AI_HTTP_TOTAL_TIMEOUT_SECONDS", str(self.DEFAULT_TIMEOUT)))
         return AsyncOpenAI(
             base_url=settings.base_url,
             api_key=settings.api_key,
             timeout=timeout,
             max_retries=0,
-            http_client=httpx.AsyncClient(
-                limits=limits,
-                timeout=timeout,
-                verify=True,
-                proxy=None,
-            ),
         )
 
     async def _reset_client(self, reason: str) -> None:

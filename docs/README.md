@@ -149,6 +149,11 @@ python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verb
 - `docs/ai_dialog_policy.md`
 - `docs/contact_collection_cheatsheet.md`
 
+补充说明：
+
+- `docs/ai_dialog_policy.md` 是资料收集主策略真相，负责字段覆盖、画像充分度、轮次节奏与成本控制。
+- `docs/contact_collection.md` 是联系方式流程真相，负责电话/微信状态机与“上游 gate 通过后如何进入联系方式”。
+
 ## 3. 运维与测试
 
 1. `docs/real_ai_policy_regression.md`

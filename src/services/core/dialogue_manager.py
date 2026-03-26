@@ -6,6 +6,7 @@
 
 import logging
 import os
+import re
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from src.models.user_profile import UserProfile
@@ -72,6 +73,84 @@ class DialogueManager:
         clean_response = re.sub(r'<extract>.*?</extract>', '', str(response or ""), flags=re.DOTALL).strip()
         clean_response = re.sub(r"\s+", " ", clean_response).strip()
         return clean_response
+
+    @staticmethod
+    def build_prompt_signature(response: str) -> str:
+        text = DialogueManager.normalize_assistant_response(response)
+        if not text:
+            return ""
+
+        markers = []
+        opening_patterns = (
+            "你好呀",
+            "对了",
+            "想问下",
+            "方便说下",
+            "我再确认一下",
+            "顺带问一句",
+            "学历这块",
+            "婚况这块",
+        )
+        for pattern in opening_patterns:
+            if pattern in text:
+                markers.append(pattern)
+
+        field_patterns = (
+            ("sex", ("男生还是女生", "男生吗还是女生", "性别")),
+            ("age", ("多大", "年龄段", "年龄")),
+            ("location", ("哪个城市", "什么城市", "在哪边", "在哪个城市")),
+            ("education", ("学历",)),
+            ("occupation", ("工作", "职业", "哪方面工作")),
+            ("marital", ("单身状态", "婚况", "离异")),
+            ("contact", ("手机号", "微信", "联系方式")),
+        )
+        for label, patterns in field_patterns:
+            if any(pattern in text for pattern in patterns):
+                markers.append(label)
+                break
+
+        if not markers:
+            return text[:24]
+        return "|".join(dict.fromkeys(markers))
+
+    @staticmethod
+    def build_recent_style_instruction(
+        recent_responses: List[str],
+        recent_prompt_signatures: List[str],
+    ) -> str:
+        snippets = [
+            DialogueManager._compact_prompt_text(item, 28)
+            for item in (recent_responses or [])[-2:]
+            if str(item or "").strip()
+        ]
+        signatures = [str(item or "").strip() for item in (recent_prompt_signatures or [])[-3:] if str(item or "").strip()]
+
+        lines: List[str] = []
+        if snippets:
+            lines.append(f"最近两轮你说过：{' / '.join(snippets)}")
+            lines.append("这一轮不要沿用同样开头，也不要照着上一轮句式改两个词继续问。")
+        if signatures:
+            lines.append(f"近期高频骨架：{'；'.join(signatures)}")
+        lines.append("优先换开头、换句式、换提问落点，但核心意图不要跑偏。")
+        lines.append("如果要问婚况，只确认现在是不是单身状态，不要并列枚举未婚和离异。")
+        return "\n".join(f"- {line}" for line in lines)
+
+    async def update_prompt_style_memory(self, account_id: str, response: str, max_length: int = 5) -> None:
+        signature = self.build_prompt_signature(response)
+        if not signature:
+            return
+
+        context = await self.get_conversation_context(account_id)
+        if not isinstance(context, dict):
+            return
+        preferences = context.get("preferences") or {}
+        if not isinstance(preferences, dict):
+            return
+        recent = list(preferences.get("recent_prompt_signatures") or [])
+        recent.append(signature)
+        if len(recent) > max_length:
+            recent = recent[-max_length:]
+        await self.user_service.update_user_preference(account_id, "recent_prompt_signatures", recent)
 
     async def get_conversation_context(self, account_id: str) -> Dict[str, Any]:
         """
@@ -193,7 +272,7 @@ class DialogueManager:
             prioritize_user_question=prioritize_user_question,
             primary_move=primary_move,
         )
-        prompt_can_enter_contact = policy_decision.can_enter_contact and allow_contact_target
+        prompt_can_enter_contact = policy_decision.allow_contact_push
 
         # 显式禁止切联系方式时，直接压制联系方式提示，避免主线轮次被旧提示带偏。
         if not allow_contact_target:
@@ -202,7 +281,14 @@ class DialogueManager:
         # 未到联系方式进入时机时，压制联系方式主动提示，避免旧逻辑抢跑
         elif not self.collection_policy.should_allow_contact_instruction(user_profile, next_action_enum.name):
             contact_instruction = ""
-            logger.info("[联系方式指令] 当前资料不足，暂不进入联系方式逻辑")
+            logger.info(
+                "[联系方式指令] 暂不进入联系方式逻辑: "
+                f"reason={policy_decision.reason}, "
+                f"unresolved_core={policy_decision.unresolved_core_fields}, "
+                f"unresolved_medium={policy_decision.unresolved_medium_fields}, "
+                f"profile_sufficient={policy_decision.profile_sufficient}, "
+                f"engagement_mode={policy_decision.engagement_mode}"
+            )
 
         question_priority_instruction = ""
         if self.collection_policy.has_divorce_confirmation_pending(user_profile):
@@ -267,6 +353,42 @@ class DialogueManager:
 - 句子尽量短，别像登记表
 """
 
+        if policy_decision.next_mode == "open_profile_repair":
+            contact_instruction = ""
+            ask_count_instruction = ""
+            move_instruction += """
+
+【开放式补画像】
+当前已完成字段覆盖，但核心画像仍偏薄。
+- 这轮不要按字段表单式追问
+- 不要索要联系方式
+- 用一个开放式、自然的问题让用户自由展开近况或生活状态
+- 目标是顺手补到更多画像信息，而不是逐项盘问
+"""
+        elif policy_decision.next_mode in {"low_pressure_chat", "terminate_conversion"}:
+            contact_instruction = ""
+            ask_count_instruction = ""
+            move_instruction += """
+
+【低压收住】
+当前不再主动推进资料或联系方式。
+- 先自然承接用户这句话
+- 回复保持简短
+- 不主动追问资料
+- 不主动索要联系方式
+- 更像轻聊天或礼貌收住
+"""
+        elif policy_decision.next_mode == "contact_hold":
+            contact_instruction = ""
+            move_instruction += """
+
+【联系方式缓一轮】
+当前资料和画像已基本足够，但这一轮不适合直接切联系方式。
+- 先顺着用户当前表达接一句
+- 不要这轮马上索要电话或微信
+- 允许轻轻收一下，下一轮再判断是否进入联系方式
+"""
+
         # 构建主提示词
         # 首轮判定以用户消息轮次为准，避免因预填sex导致首轮承接被跳过
         is_first_chat = message_count == 0
@@ -322,6 +444,14 @@ class DialogueManager:
                 gender_instruction=gender_instruction,
             )
         else:
+            recent_prompt_signatures = (
+                (conversation_context.get("preferences") or {}).get("recent_prompt_signatures")
+                or []
+            )
+            recent_style_instruction = self.build_recent_style_instruction(
+                conversation_context.get("recent_responses") or [],
+                recent_prompt_signatures,
+            )
             turn_plan_instruction = (
                 "\n【本轮计划】\n"
                 f"- 主目标：{field_name_map.get(policy_decision.main_target, policy_decision.main_target or '无')}\n"
@@ -344,6 +474,7 @@ class DialogueManager:
                 can_enter_contact=prompt_can_enter_contact,
                 turn_plan_instruction=turn_plan_instruction,
                 move_instruction=move_instruction,
+                recent_style_instruction=recent_style_instruction,
             )
 
         # 获取上一轮 AI 回复（用于上下文感知提取）

@@ -23,6 +23,10 @@
 python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose
 ```
 
+
+# 方式二：使用真实 AI（联系方式收集 - 真实 AI 自动化测试） 
+python tests/integration/test_contact_collection_integration.py --real-ai
+
 质量上限门禁（一键，先跑金标长链再跑全覆盖 strict gate）：
 
 ```bash
@@ -267,8 +271,7 @@ python3 scripts/run_real_ai_regression.py --stop-on-failure
 # 方式一：使用 FakeAI（默认，快速，离线，适合 CI/CD）
 python -m pytest tests/integration/test_contact_collection_integration.py -v
 
-# 方式二：使用真实 AI（慢，需要联网，消耗 token，适合验证实际对话效果）
-python tests/integration/test_contact_collection_integration.py --real-ai
+
 
 # 方式三：运行指定场景
 python tests/integration/test_contact_collection_integration.py --scenario 1.1 --real-ai

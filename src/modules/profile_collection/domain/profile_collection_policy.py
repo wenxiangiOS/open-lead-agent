@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 import os
 from typing import Dict, List, Optional
 
@@ -24,6 +24,17 @@ class PolicyDecision:
     user_type: str
     can_enter_contact: bool
     missing_fields: List[str]
+    coverage_passed: bool = False
+    profile_sufficient: bool = False
+    turn_quality_passed: bool = False
+    engagement_mode: str = "full"
+    next_mode: str = "collect_core"
+    unresolved_core_fields: List[str] = dataclass_field(default_factory=list)
+    unresolved_medium_fields: List[str] = dataclass_field(default_factory=list)
+    forced_cover_target: Optional[str] = None
+    core_success_count: int = 0
+    allow_contact_push: bool = False
+    reason: str = ""
 
 
 class ProfileCollectionPolicy:
@@ -33,6 +44,9 @@ class ProfileCollectionPolicy:
     QUASI_CORE_FIELDS = ["marital_status"]
     MEDIUM_FIELDS = ["monthly_income", "partner_requirement"]
     LOW_PRIORITY_FIELDS = ["height", "last_name", "weight"]
+    CORE_CONTACT_FIELDS = ["sex", "age", "education", "occupation", "location"]
+    MEDIUM_COVERAGE_FIELDS = ["marital_status", "partner_requirement", "monthly_income"]
+    MEDIUM_PRIORITY_ORDER = ["marital_status", "partner_requirement", "monthly_income"]
 
     PRIORITY_ORDER = [
         "sex",
@@ -40,6 +54,7 @@ class ProfileCollectionPolicy:
         "location",
         "education",
         "occupation",
+        "marital_status",
         "contact",
     ]
 
@@ -143,8 +158,35 @@ class ProfileCollectionPolicy:
                 user_type=user_type,
                 can_enter_contact=False,
                 missing_fields=["marital_status"],
+                reason="divorce_confirmation_pending",
             )
-        can_enter_contact = self.can_enter_contact(profile)
+        coverage_passed = self.is_coverage_complete(profile)
+        core_success_count = self.get_core_success_count(profile)
+        profile_sufficient = self.is_profile_sufficient_for_contact(profile)
+        turn_quality_passed = self.is_turn_ready_for_contact(
+            profile,
+            prioritize_user_question=prioritize_user_question,
+            primary_move=primary_move,
+            allow_contact_target=allow_contact_target,
+        )
+        engagement_mode = self.get_engagement_mode(profile, message_count=message_count)
+        unresolved_core_fields = self.get_uncovered_core_fields(profile)
+        unresolved_medium_fields = self.get_uncovered_medium_fields(profile)
+        ongoing_contact_flow = self.has_ongoing_contact_flow(profile)
+        can_enter_contact = ongoing_contact_flow or (coverage_passed and profile_sufficient)
+        allow_contact_push = (
+            allow_contact_target
+            and can_enter_contact
+            and (ongoing_contact_flow or turn_quality_passed)
+            and engagement_mode in {"full", "compact"}
+        )
+        next_mode = self.get_next_mode(
+            coverage_passed=coverage_passed,
+            profile_sufficient=profile_sufficient,
+            turn_quality_passed=turn_quality_passed,
+            engagement_mode=engagement_mode,
+            profile=profile,
+        )
         effective_allow_medium_target = allow_medium_target and not self.should_block_medium_fields_for_turn(
             profile,
             user_message=user_message,
@@ -153,19 +195,33 @@ class ProfileCollectionPolicy:
             primary_move=primary_move,
             resume_profile_collection=resume_profile_collection,
         )
+        if next_mode in {"open_profile_repair", "low_pressure_chat", "terminate_conversion", "contact_hold"}:
+            effective_allow_medium_target = False
         missing_fields = self.get_missing_fields(
             profile,
             can_enter_contact,
             allow_contact_target,
             include_medium_fields=effective_allow_medium_target,
         )
-        main_target = self.get_main_target(profile, can_enter_contact, allow_contact_target)
-        side_target = self.get_side_target(
-            profile,
-            main_target,
-            user_message,
-            allow_medium_target=effective_allow_medium_target,
-        )
+        main_target: Optional[str] = None
+        forced_cover_target: Optional[str] = None
+        if next_mode == "collect_core":
+            main_target = self.get_main_target(profile, can_enter_contact=False, allow_contact_target=False)
+        elif next_mode == "collect_medium":
+            forced_cover_target = self.get_forced_cover_target(profile)
+            main_target = forced_cover_target
+        elif next_mode == "contact_flow" and allow_contact_push:
+            main_target = "contact"
+
+        side_target = None
+        if next_mode == "collect_core":
+            side_target = self.get_side_target(
+                profile,
+                main_target,
+                user_message,
+                message_count=message_count,
+                allow_medium_target=effective_allow_medium_target,
+            )
 
         return PolicyDecision(
             main_target=main_target,
@@ -173,6 +229,24 @@ class ProfileCollectionPolicy:
             user_type=user_type,
             can_enter_contact=can_enter_contact,
             missing_fields=missing_fields,
+            coverage_passed=coverage_passed,
+            profile_sufficient=profile_sufficient,
+            turn_quality_passed=turn_quality_passed,
+            engagement_mode=engagement_mode,
+            next_mode=next_mode,
+            unresolved_core_fields=unresolved_core_fields,
+            unresolved_medium_fields=unresolved_medium_fields,
+            forced_cover_target=forced_cover_target,
+            core_success_count=core_success_count,
+            allow_contact_push=allow_contact_push,
+            reason=self.get_decision_reason(
+                coverage_passed=coverage_passed,
+                profile_sufficient=profile_sufficient,
+                turn_quality_passed=turn_quality_passed,
+                engagement_mode=engagement_mode,
+                unresolved_core_fields=unresolved_core_fields,
+                unresolved_medium_fields=unresolved_medium_fields,
+            ),
         )
 
     def get_main_target(
@@ -188,6 +262,8 @@ class ProfileCollectionPolicy:
             if field == "contact":
                 if not allow_contact_target or not can_enter_contact:
                     continue
+            if field not in {"contact"} and self.is_field_covered(profile, field):
+                continue
             if self.can_actively_ask(profile, field):
                 return field
         return None
@@ -197,6 +273,7 @@ class ProfileCollectionPolicy:
         profile: UserProfile,
         main_target: Optional[str],
         user_message: str = "",
+        message_count: int = 0,
         allow_medium_target: bool = True,
     ) -> Optional[str]:
         """获取顺带字段。
@@ -207,22 +284,20 @@ class ProfileCollectionPolicy:
             return None
         if main_target == "contact":
             return None
+        if message_count and message_count <= 4:
+            return None
 
         if self.can_actively_ask(profile, "partner_requirement"):
             if any(keyword in user_message for keyword in self.PARTNER_REQUIREMENT_TRIGGER_KEYWORDS):
-                return "partner_requirement"
-            if main_target in {"education", "occupation"}:
                 return "partner_requirement"
 
         if self.can_actively_ask(profile, "marital_status"):
             if any(keyword in user_message for keyword in self.MARITAL_STATUS_TRIGGER_KEYWORDS):
                 return "marital_status"
-            if main_target == "occupation":
-                return "marital_status"
 
         # 职业语境下可低压顺带问一次月薪。
         if self.can_use_as_side_target(profile, "monthly_income"):
-            if main_target == "occupation":
+            if main_target == "occupation" and (message_count == 0 or message_count >= 7):
                 return "monthly_income"
             if any(keyword in user_message for keyword in self.INCOME_TRIGGER_KEYWORDS):
                 return "monthly_income"
@@ -243,20 +318,151 @@ class ProfileCollectionPolicy:
         for field in self.PRIORITY_ORDER:
             if field == "contact" and (not can_enter_contact or not allow_contact_target):
                 continue
-            if self.is_missing(profile, field):
+            if field == "contact":
+                if not self.is_collected(profile, field):
+                    fields.append(field)
+                continue
+            if not self.is_field_covered(profile, field):
                 fields.append(field)
-
-        if not self.is_collected(profile, "contact"):
-            return fields
 
         if not include_medium_fields:
             return fields
 
-        for field in self.MEDIUM_FIELDS:
-            if self.is_missing(profile, field):
+        for field in self.MEDIUM_COVERAGE_FIELDS:
+            if field in fields:
+                continue
+            if not self.is_field_covered(profile, field):
                 fields.append(field)
 
         return fields
+
+    def get_core_success_count(self, profile: UserProfile) -> int:
+        return sum(1 for field in self.CORE_CONTACT_FIELDS if self.is_collected(profile, field))
+
+    def is_core_field_covered(self, profile: UserProfile, field: str) -> bool:
+        if profile.skipped_fields.get(field, False) or profile.is_active_ask_closed(field):
+            return True
+        return self.is_collected(profile, field) or profile.get_ask_count(field) >= 2
+
+    def is_medium_field_covered(self, profile: UserProfile, field: str) -> bool:
+        if profile.skipped_fields.get(field, False) or profile.is_active_ask_closed(field):
+            return True
+        return self.is_collected(profile, field) or profile.get_ask_count(field) >= 1
+
+    def is_field_covered(self, profile: UserProfile, field: str) -> bool:
+        if field in self.CORE_CONTACT_FIELDS:
+            return self.is_core_field_covered(profile, field)
+        if field in self.MEDIUM_COVERAGE_FIELDS:
+            return self.is_medium_field_covered(profile, field)
+        if field == "contact":
+            return self.is_collected(profile, "contact")
+        return self.is_collected(profile, field) or profile.skipped_fields.get(field, False)
+
+    def get_uncovered_core_fields(self, profile: UserProfile) -> List[str]:
+        return [field for field in self.CORE_CONTACT_FIELDS if not self.is_core_field_covered(profile, field)]
+
+    def get_uncovered_medium_fields(self, profile: UserProfile) -> List[str]:
+        return [field for field in self.MEDIUM_PRIORITY_ORDER if not self.is_medium_field_covered(profile, field)]
+
+    def is_coverage_complete(self, profile: UserProfile) -> bool:
+        return not self.get_uncovered_core_fields(profile) and not self.get_uncovered_medium_fields(profile)
+
+    def is_profile_sufficient_for_contact(self, profile: UserProfile) -> bool:
+        if self.is_collected(profile, "contact"):
+            return True
+        return self.get_core_success_count(profile) >= 3
+
+    def is_turn_ready_for_contact(
+        self,
+        profile: UserProfile,
+        *,
+        prioritize_user_question: bool = False,
+        primary_move: str = "ack_and_ask",
+        allow_contact_target: bool = True,
+    ) -> bool:
+        if not allow_contact_target:
+            return False
+        if prioritize_user_question:
+            return False
+        if profile.repair_mode and profile.ask_cooldown_turns > 0:
+            return False
+        if self.has_divorce_confirmation_pending(profile):
+            return False
+        if primary_move in {"answer_then_pause", "soft_hold", "confirm_status_only", "repair_and_release", "ack_only"}:
+            return False
+        return True
+
+    def get_engagement_mode(self, profile: UserProfile, *, message_count: int = 0) -> str:
+        if getattr(profile, "conversation_ended", False):
+            return "close"
+        if getattr(profile, "non_cooperation_turns", 0) >= 4 or getattr(profile, "off_topic_turns", 0) >= 4:
+            return "close"
+        if (
+            getattr(profile, "non_cooperation_turns", 0) >= 3
+            or getattr(profile, "off_topic_turns", 0) >= 3
+            or getattr(profile, "open_profile_attempts", 0) >= 2
+        ):
+            return "light"
+        if message_count >= 6:
+            return "compact"
+        return "full"
+
+    def get_forced_cover_target(self, profile: UserProfile) -> Optional[str]:
+        if self.get_uncovered_core_fields(profile):
+            return None
+        for field in self.MEDIUM_PRIORITY_ORDER:
+            if not self.is_medium_field_covered(profile, field) and self.can_actively_ask(profile, field):
+                return field
+        return None
+
+    def get_next_mode(
+        self,
+        *,
+        coverage_passed: bool,
+        profile_sufficient: bool,
+        turn_quality_passed: bool,
+        engagement_mode: str,
+        profile: UserProfile,
+    ) -> str:
+        if engagement_mode == "close":
+            return "terminate_conversion"
+        if engagement_mode == "light":
+            return "low_pressure_chat"
+        if self.has_ongoing_contact_flow(profile):
+            return "contact_flow"
+        if not coverage_passed:
+            return "collect_core" if self.get_uncovered_core_fields(profile) else "collect_medium"
+        if not profile_sufficient:
+            return "open_profile_repair" if getattr(profile, "open_profile_attempts", 0) < 2 else "low_pressure_chat"
+        if not turn_quality_passed:
+            return "contact_hold"
+        return "contact_flow"
+
+    @staticmethod
+    def get_decision_reason(
+        *,
+        coverage_passed: bool,
+        profile_sufficient: bool,
+        turn_quality_passed: bool,
+        engagement_mode: str,
+        unresolved_core_fields: List[str],
+        unresolved_medium_fields: List[str],
+    ) -> str:
+        if engagement_mode == "close":
+            return "cost_control_close"
+        if engagement_mode == "light":
+            return "cost_control_light"
+        if unresolved_core_fields:
+            return "core_fields_not_covered"
+        if unresolved_medium_fields:
+            return "medium_fields_not_covered"
+        if not coverage_passed:
+            return "coverage_not_passed"
+        if not profile_sufficient:
+            return "profile_not_sufficient"
+        if not turn_quality_passed:
+            return "turn_not_suitable_for_contact"
+        return "contact_ready"
 
     def has_ongoing_contact_flow(self, profile: UserProfile) -> bool:
         """判断当前是否处于联系方式阶段或联系方式处理中。"""
@@ -318,29 +524,7 @@ class ProfileCollectionPolicy:
         """判断当前是否适合进入联系方式逻辑"""
         if self.has_divorce_confirmation_pending(profile):
             return False
-        if self.is_collected(profile, "contact"):
-            return True
-
-        core_quasi_collected = sum(
-            1 for field in (self.CORE_FIELDS[:-1] + self.QUASI_CORE_FIELDS)
-            if self.is_collected(profile, field)
-        )
-
-        has_sex = self.is_collected(profile, "sex")
-        has_age = self.is_collected(profile, "age")
-        has_location = self.is_collected(profile, "location")
-        has_occupation = self.is_collected(profile, "occupation")
-        has_education = self.is_collected(profile, "education")
-        has_partner_requirement = self.is_collected(profile, "partner_requirement")
-        # 联系方式是核心字段，但应后置到基础核心画像足够后再进入。
-        if not (has_sex and has_age and has_location and has_education and has_occupation):
-            return False
-        # 联系方式应在基础画像完成且用户表达过择偶方向后再进入，避免首轮信息一上来就索要联系方式。
-        if not has_partner_requirement:
-            return False
-
-        # 不再要求婚况作为联系方式前置条件；核心字段成功率优先。
-        return core_quasi_collected >= 5
+        return self.is_coverage_complete(profile) and self.is_profile_sufficient_for_contact(profile)
 
     def has_serviceable_profile(self, profile: UserProfile) -> bool:
         """判断资料是否足够进入收尾/后续处理"""

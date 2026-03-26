@@ -146,6 +146,10 @@ class UserProfile(BaseModel):
     )
     last_asked_field: Optional[str] = Field(None, description="上一轮 AI 明确追问的字段（用于短答槽位绑定）")
     last_asked_turn_index: Optional[int] = Field(None, description="上一轮追问的消息序号")
+    non_cooperation_turns: int = Field(default=0, description="连续不配合主流程的轮数")
+    off_topic_turns: int = Field(default=0, description="连续偏离主流程的轮数")
+    open_profile_attempts: int = Field(default=0, description="开放式补画像尝试次数")
+    last_engagement_mode: Optional[str] = Field(None, description="最近一轮投入模式（full/compact/light/close）")
 
     # 通用资料概览只统计业务关键字段；低优字段和派生展示字段不计入公共完成度。
     SUMMARY_PROGRESS_FIELDS: ClassVar[tuple[str, ...]] = (
@@ -586,6 +590,27 @@ class UserProfile(BaseModel):
                 if not is_collected and not is_skipped:
                     result.append((field, count))
         return result
+
+    def mark_non_cooperation(self) -> int:
+        self.non_cooperation_turns += 1
+        return self.non_cooperation_turns
+
+    def reset_non_cooperation(self) -> None:
+        self.non_cooperation_turns = 0
+
+    def mark_off_topic(self) -> int:
+        self.off_topic_turns += 1
+        return self.off_topic_turns
+
+    def reset_off_topic(self) -> None:
+        self.off_topic_turns = 0
+
+    def mark_open_profile_attempt(self) -> int:
+        self.open_profile_attempts += 1
+        return self.open_profile_attempts
+
+    def reset_open_profile_attempts(self) -> None:
+        self.open_profile_attempts = 0
 
     # === 投诉修复与追问冷却管理 ===
 

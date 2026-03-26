@@ -68,6 +68,32 @@ class UserProfile:
 
 ## 四、业务规则
 
+### 4.0 上下游边界（新增）
+
+`ContactCollectionService` 只负责：
+
+- 电话 / 微信流程状态机
+- 联系方式拒绝检测
+- 联系方式下一步动作（`ASK_PHONE / ASK_WECHAT / PERSUADE_* / END_CONVERSATION / NONE`）
+
+它**不单独决定**“这一轮是否真的允许切到联系方式”。
+
+真正的进入时机由上游资料收集策略控制，统一经过：
+
+- Coverage Gate
+- Profile Sufficiency Gate
+- Turn Quality Gate
+- Cost Control Gate
+
+所以必须区分两件事：
+
+- `next_action = ASK_PHONE`
+  只表示联系方式服务认为“下一步如果进入联系方式流程，应先问电话”
+- `allow_contact_push = true`
+  才表示上游策略允许这轮真正切到联系方式
+
+如果上游 gate 未通过，即使 `next_action` 已经是 `ASK_PHONE`，提示词层也必须继续压制联系方式提示。
+
 ### 4.1 询问次数上限
 
 | 用户类型 | 场景 | 电话上限 | 微信上限 |
@@ -108,6 +134,46 @@ def is_hongkong_user(location: str) -> bool:
     location_lower = location.lower()
     return '香港' in location_lower or 'hk' in location_lower
 ```
+
+### 4.4 联系方式进入前置条件（新增）
+
+联系方式不再要求“前序字段全部收集成功”。
+
+当前统一口径：
+
+#### Coverage Gate
+
+- 核心字段 `sex/age/education/occupation/location`
+  - 收集成功，或已主动问满 2 次，即视为已覆盖
+- 准核心/中等字段 `marital_status/partner_requirement/monthly_income`
+  - 收集成功，或已主动问过 1 次，即视为已覆盖
+- 只有全部已覆盖，才有资格进入联系方式判断
+
+#### Profile Sufficiency Gate
+
+- 核心字段成功收集数至少 3 个，才允许进入联系方式
+
+#### Turn Quality Gate
+
+- 当前轮不是答疑优先 / 投诉修复 / 边界收口时，才适合切联系方式
+
+#### Cost Control Gate
+
+- 连续不配合、连续跑题、开放式补画像多次失败、或成本已偏高时，不再继续主动切联系方式
+
+#### 进入联系方式的最终条件
+
+只有同时满足下面 4 条，才允许真正展示联系方式提示：
+
+- Coverage Gate = 通过
+- Profile Sufficiency Gate = 通过
+- Turn Quality Gate = 通过
+- Cost Control Gate 允许继续推进
+
+补充说明：
+
+- `partner_requirement` 平时应自然穿插问，不抢主线
+- 但如果核心字段都已覆盖、联系方式仍被中等字段卡住，则可临时升级为兜底覆盖目标，先问 1 次，再回到联系方式判断
 
 ---
 
@@ -204,11 +270,17 @@ ChatService.process_chat_request()
     │       ├─ 判断显式拒绝 / 上下文拒绝
     │       └─ 更新 ask_count / rejected 标志
     │
+    ├─ 上游资料收集策略先判断:
+    │   ├─ Coverage / Profile / Turn / Cost gate
+    │   └─ 决定本轮是否 allow_contact_push
+    │
     ├─ DialogueManager.build_main_dialogue_prompt()  # 构建提示词
     │   │
     │   └─ ContactCollectionService.build_instruction()
     │       ├─ get_next_action() → 决定下一步动作
     │       └─ 返回 (instruction, next_action)
+    │
+    │   ※ 若 allow_contact_push=False，则联系方式指令会被提示词层压制
     │
     └─ AI 生成回复
 ```

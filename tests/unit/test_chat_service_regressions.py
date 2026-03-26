@@ -493,6 +493,16 @@ def test_divorce_confirmation_response_only_asks_about_formality():
     assert "确认清楚" not in response
 
 
+def test_build_dual_contact_ack_stays_in_continue_mode():
+    chat_service = _build_chat_service()
+
+    response = chat_service._build_dual_contact_ack()
+
+    assert "电话和微信" in response
+    assert "其他要求" in response or "继续说" in response
+    assert "方便留个" not in response
+
+
 def test_is_divorce_status_complete_message_accepts_natural_confirmation_variants():
     chat_service = _build_chat_service()
 
@@ -907,7 +917,7 @@ async def test_build_no_ai_response_interleaves_after_core_streak():
 
     response = await chat_service._build_no_ai_response("u_no_ai_interleave", profile, "本科")
 
-    assert any(token in response for token in ["偏好", "看重", "另一半", "匹配条件"])
+    assert any(token in response for token in ["工作", "收入", "区间"])
     assert "电话" not in response
 
 
@@ -1849,6 +1859,18 @@ def test_infer_contact_attempt_from_context_does_not_treat_wechat_intent_as_wech
     assert contact_type is None
 
 
+def test_infer_contact_attempt_from_context_does_not_treat_profile_digits_as_phone():
+    chat_service = _build_chat_service()
+
+    value, contact_type = chat_service._infer_contact_attempt_from_context(
+        "我叫小张，男的，30岁，175cm，70kg，深圳，本科，IT，2万，单身",
+        "ask_phone",
+    )
+
+    assert value is None
+    assert contact_type is None
+
+
 def test_apply_extraction_guards_prioritizes_sex_answer_in_sex_question_context():
     chat_service = _build_chat_service()
     extracted = {"partner_requirement": "找男性"}
@@ -2532,7 +2554,130 @@ def test_apply_humanlike_turn_structure_policy_interleaves_side_target_at_educat
     )
 
     assert "学历" in response
-    assert any(token in response for token in ["另一半", "看重", "婚况"])
+    assert any(token in response for token in ["学历", "大概", "背景"])
+
+
+def test_profile_collection_policy_blocks_side_target_in_opening_stage():
+    policy = ProfileCollectionPolicy()
+    profile = UserProfile(account_id="u_policy_opening")
+    profile.sex = "男"
+    profile.collection_progress["sex"] = True
+
+    side_target = policy.get_side_target(
+        profile,
+        main_target="age",
+        user_message="男的",
+        message_count=2,
+        allow_medium_target=True,
+    )
+
+    assert side_target is None
+
+
+def test_needs_style_retry_for_fixed_template_phrases():
+    chat_service = _build_chat_service()
+
+    assert chat_service._needs_style_retry("你好呀～对了，想问下你是男生还是女生呀？")
+    assert chat_service._needs_style_retry("好，你是男生啦。 对了，你方便说下自己的年龄吗？")
+
+
+def test_build_main_dialogue_prompt_includes_recent_style_avoidance():
+    chat_service = _build_chat_service()
+    manager = chat_service.dialogue_manager
+    profile = UserProfile(account_id="u_prompt_style")
+    context = {
+        "message_count": 1,
+        "recent_responses": ["你好呀～对了，想问下你是男生还是女生呀？"],
+        "preferences": {"recent_prompt_signatures": ["你好呀|对了|想问下|sex"]},
+    }
+
+    prompt = manager.build_main_dialogue_prompt(
+        "男的",
+        profile,
+        context,
+        primary_move="light_followup",
+        allow_contact_target=False,
+        allow_medium_target=False,
+    )
+
+    assert "最近两轮你说过" in prompt
+    assert "不要沿用同样开头" in prompt
+    assert "不要并列枚举未婚和离异" in prompt
+
+
+def test_build_lightweight_field_ack_from_message_bridges_location_naturally():
+    chat_service = _build_chat_service()
+
+    response = chat_service._build_lightweight_field_ack_from_message("深圳")
+
+    assert "深圳" in response
+    assert any(token in response for token in ["知道了", "是吧", "这边"])
+
+
+def test_ensure_short_answer_ack_transition_prefixes_ack_before_question():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_short_answer_bridge")
+
+    response = chat_service._ensure_short_answer_ack_transition(
+        "你大概是什么学历呀？",
+        user_message="深圳",
+        user_profile=profile,
+    )
+
+    assert response.startswith(("深圳呀", "在深圳", "深圳我"))
+    assert "学历" in response
+
+
+def test_profile_collection_policy_does_not_repeat_partner_requirement_side_target_after_first_ask():
+    policy = ProfileCollectionPolicy()
+    profile = UserProfile(account_id="u_policy_pref_cooldown")
+    profile.sex = "男"
+    profile.age = 36
+    profile.location = "深圳"
+    profile.collection_progress.update({"sex": True, "age": True, "location": True})
+    profile.field_ask_count["partner_requirement"] = 1
+
+    side_target = policy.get_side_target(
+        profile,
+        main_target="education",
+        user_message="深圳",
+        message_count=6,
+        allow_medium_target=True,
+    )
+
+    assert side_target is None
+
+
+def test_profile_collection_policy_prioritizes_marital_status_after_core_fields():
+    policy = ProfileCollectionPolicy()
+    profile = UserProfile(account_id="u_policy_marital_main")
+    profile.sex = "男"
+    profile.age = 36
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "IT"
+    profile.collection_progress.update(
+        {"sex": True, "age": True, "location": True, "education": True, "occupation": True}
+    )
+
+    main_target = policy.get_main_target(profile, allow_contact_target=True)
+
+    assert main_target == "marital_status"
+
+
+def test_profile_collection_policy_can_enter_contact_without_partner_requirement_once_core_ready():
+    policy = ProfileCollectionPolicy()
+    profile = UserProfile(account_id="u_policy_contact_ready")
+    profile.sex = "男"
+    profile.age = 36
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "IT"
+    profile.collection_progress.update(
+        {"sex": True, "age": True, "location": True, "education": True, "occupation": True}
+    )
+
+    assert policy.can_enter_contact(profile) is True
 
 
 def test_enforce_core_mainline_followup_allows_approved_side_target_interleave():
@@ -2553,8 +2698,33 @@ def test_enforce_core_mainline_followup_allows_approved_side_target_interleave()
         primary_move="light_followup",
     )
 
-    assert any(token in response for token in ["另一半", "看重"])
+    assert any(token in response for token in ["学历", "大概", "背景"])
     assert "学历" in response
+
+
+def test_collapse_duplicate_ack_segments_removes_double_confirmation():
+    chat_service = _build_chat_service()
+
+    response = chat_service._collapse_duplicate_ack_segments(
+        "男生，明白了。 好嘞，你是男生啦。 你今年多大呀？"
+    )
+
+    assert "你今年多大呀？" in response
+    assert response.count("男生") <= 1
+
+
+def test_enforce_contact_outcome_policy_keeps_model_written_phone_prompt_when_action_matches():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_contact_model_prompt")
+
+    response = chat_service._enforce_contact_outcome_policy(
+        "你要是愿意的话，留个常用电话给我，后面沟通也方便一点。",
+        profile,
+        collection_result={},
+        user_message="好的",
+    )
+
+    assert response == "你要是愿意的话，留个常用电话给我，后面沟通也方便一点。"
 
 
 def test_enforce_core_mainline_followup_moves_past_just_collected_location():

@@ -51,3 +51,30 @@ def test_render_contact_question_can_follow_short_answer_naturally():
 
     assert "手机号" in response
     assert "方便联系" in response
+
+
+def test_render_field_question_for_marital_status_only_confirms_single_status():
+    service = DialogueExpressionService()
+
+    response = service.render_field_question("marital_status")
+
+    assert "单身状态" in response
+    assert "未婚" not in response
+    assert "离异" not in response
+
+
+def test_main_prompt_allows_low_frequency_reason_for_sensitive_fields():
+    from src.services.prompts.prompts import get_main_dialogue
+
+    prompt = get_main_dialogue(
+        collected_info="性别:男",
+        missing_fields="学历、收入、婚况",
+        gender_instruction="正常称呼即可",
+        is_first_chat=False,
+        current_main_target="学历",
+        current_side_target="无",
+        can_enter_contact=False,
+    )
+
+    assert "稍敏感的问题" in prompt
+    assert "偶尔补半句简短解释" in prompt

@@ -369,6 +369,23 @@ class ProcessChatTurnUseCase:
                 t0 = time.perf_counter()
                 ai_response = await self.chat_service._build_no_ai_response(account_id, user_profile, request.question)  # noqa: SLF001
                 _mark("no_ai_fallback", t0)
+            elif turn_decision.response_channel == "model":
+                t0 = time.perf_counter()
+                ai_response = await self.chat_service._stabilize_style_response(  # noqa: SLF001
+                    ai_response,
+                    account_id=account_id,
+                    user_message=request.question,
+                    conversation_context=conversation_context,
+                    ask_field=turn_decision.ask_field,
+                )
+                _mark("style_stabilize", t0)
+                t0 = time.perf_counter()
+                ai_response = self.chat_service._ensure_short_answer_ack_transition(  # noqa: SLF001
+                    ai_response,
+                    user_message=request.question,
+                    user_profile=user_profile,
+                )
+                _mark("short_answer_bridge", t0)
 
             t0 = time.perf_counter()
             if infra_fail:
@@ -464,6 +481,22 @@ class ProcessChatTurnUseCase:
                 user_profile,
                 request.question,
             )
+            final_response = self.chat_service._apply_contact_context_field_guard(  # noqa: SLF001
+                final_response,
+                user_profile,
+                request.question,
+            )
+            final_response = self.chat_service._enforce_contact_outcome_policy(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+                request.question,
+            )
+            final_response = self.chat_service._apply_contact_context_field_guard(  # noqa: SLF001
+                final_response,
+                user_profile,
+                request.question,
+            )
             if collection_result.get("divorce_confirmation_cleared"):
                 final_response = self.chat_service._build_divorce_confirmation_cleared_response(  # noqa: SLF001
                     self.chat_service._get_post_divorce_mainline_target(  # noqa: SLF001
@@ -504,6 +537,17 @@ class ProcessChatTurnUseCase:
                     user_profile,
                     collection_result,
                 )
+                final_response = self.chat_service._apply_contact_context_field_guard(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    request.question,
+                )
+                final_response = self.chat_service._enforce_contact_outcome_policy(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    collection_result,
+                    request.question,
+                )
                 if collection_result.get("divorce_confirmation_cleared"):
                     final_response = self.chat_service._build_divorce_confirmation_cleared_response(  # noqa: SLF001
                         self.chat_service._get_post_divorce_mainline_target(  # noqa: SLF001
@@ -518,6 +562,11 @@ class ProcessChatTurnUseCase:
                 ):
                     final_response = self.chat_service._build_divorce_confirmation_response()  # noqa: SLF001
                 final_response = self.chat_service._apply_contact_action_guard(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    request.question,
+                )
+                final_response = self.chat_service._apply_contact_context_field_guard(  # noqa: SLF001
                     final_response,
                     user_profile,
                     request.question,
@@ -568,10 +617,38 @@ class ProcessChatTurnUseCase:
                 response_channel=turn_decision.response_channel,
                 primary_move=turn_decision.primary_move,
             )
+            final_response = self.chat_service._enforce_active_target_followup(  # noqa: SLF001
+                final_response,
+                user_profile,
+                ask_field=turn_decision.ask_field,
+                collection_result=collection_result,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+            )
             final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
                 final_response,
                 user_profile,
                 collection_result,
+            )
+            final_response = self.chat_service._collapse_duplicate_ack_segments(  # noqa: SLF001
+                final_response,
+            )
+            final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+            )
+            final_response = self.chat_service._enforce_contact_outcome_policy(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+                request.question,
+            )
+            final_response = self.chat_service._apply_contact_context_field_guard(  # noqa: SLF001
+                final_response,
+                user_profile,
+                request.question,
             )
 
             # Phase 2: 应用 bridge_back 前缀（如果有）
@@ -624,6 +701,17 @@ class ProcessChatTurnUseCase:
             t0 = time.perf_counter()
             user_profile = await self.chat_service.user_service.get_user_profile(account_id)
             _mark("profile_reload", t0)
+
+            t0 = time.perf_counter()
+            user_profile = await self.chat_service._update_progress_runtime_counters(  # noqa: SLF001
+                account_id,
+                user_profile,
+                user_message=request.question,
+                collection_result=collection_result,
+                turn_decision=turn_decision,
+                message_count=message_count,
+            )
+            _mark("progress_counters", t0)
 
             final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
                 final_response,

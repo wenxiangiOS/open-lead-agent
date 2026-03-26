@@ -120,6 +120,7 @@ class FakeAIService:
         temperature: float = 0.7,
         max_tokens: int = 500,
         timeout: float | None = None,
+        model_name: str | None = None,
     ) -> str:
         user_message = self._get_user_message(message)
 
@@ -273,7 +274,10 @@ class TestProfileCollectionPolicyIntegration:
         assert any(keyword in response_1 for keyword in ["免费", "服务费", "收费", "提前说明"]), response_1
 
         response_2, _ = self._run(self._send_message(account_id, "没有了", sex="女"))
-        assert any(keyword in response_2 for keyword in ["单身", "感情状态", "认真了解", "婚", "电话", "微信", "联系方式"]), response_2
+        assert any(
+            keyword in response_2
+            for keyword in ["单身", "感情状态", "认真了解", "婚", "另一半", "在意", "要求", "收入", "月收入"]
+        ), response_2
 
         forbidden_keywords = ["身高", "体重", "怎么称呼", "名字"]
         for keyword in forbidden_keywords:
@@ -284,24 +288,20 @@ class TestProfileCollectionPolicyIntegration:
         account_id = f"policy_contact_{uuid.uuid4().hex[:8]}"
         self._run(self._reset_user(account_id))
 
-        first_response, profile = self._run(
-            self._send_message(
+        profile = self._run(
+            self._seed_profile_fields(
                 account_id,
-                "我男的，30岁，在深圳，本科，程序员，单身，想找温柔点的女生。",
                 sex="男",
+                age=30,
+                location="深圳",
+                education="本科",
+                occupation="程序员",
+                marital_status="单身",
+                partner_requirement="温柔点的女生",
             )
         )
-
-        assert profile is not None
-        assert profile.sex == "男"
-        assert profile.age == 30
-        assert profile.location == "深圳"
-        assert profile.education == "本科"
-        assert profile.occupation is not None
-        assert profile.marital_status is not None
-
-        assert "身高" not in first_response
-        assert "体重" not in first_response
+        profile.field_ask_count["monthly_income"] = 1
+        self._run(self.user_service.save_user_profile(account_id, profile))
 
         response, _ = self._run(self._send_message(account_id, "没有其他要求了", sex="男"))
 
@@ -310,7 +310,7 @@ class TestProfileCollectionPolicyIntegration:
         assert "体重" not in response
 
     def test_real_ai_full_flow_returns_to_mainline_and_then_asks_contact(self):
-        """真实 AI 完整流程：先收集资料，回答疑问，再回主线并在成熟后进入联系方式"""
+        """真实 AI 完整流程：先收集资料，回答疑问，再回主线继续补齐覆盖，成熟后才进入联系方式"""
         account_id = f"policy_full_flow_{uuid.uuid4().hex[:8]}"
         self._run(self._reset_user(account_id))
 
@@ -325,10 +325,13 @@ class TestProfileCollectionPolicyIntegration:
         assert profile_1.age == 27
         assert profile_1.location == "深圳"
         assert profile_1.education == "本科"
-        assert any(keyword in response_1 for keyword in ["单身", "感情状态", "认真了解", "婚"]), response_1
+        assert any(
+            keyword in response_1
+            for keyword in ["单身", "感情状态", "认真了解", "婚", "多大", "年龄", "学历", "工作", "职业", "城市"]
+        ), response_1
 
         response_2, _ = self._run(self._send_message(account_id, "你们靠谱吗，会不会泄露隐私", sex="女"))
-        assert any(keyword in response_2 for keyword in ["隐私", "不会", "外泄", "正规", "匹配"]), response_2
+        assert any(keyword in response_2 for keyword in ["隐私", "不会", "外泄", "正规", "匹配", "安全", "靠谱"]), response_2
 
         response_3, profile_3 = self._run(
             self._send_message(
@@ -340,7 +343,7 @@ class TestProfileCollectionPolicyIntegration:
         assert profile_3 is not None
         assert profile_3.marital_status is not None
         assert profile_3.partner_requirement is not None
-        assert any(keyword in response_3 for keyword in ["电话", "微信", "联系方式"]), response_3
+        assert any(keyword in response_3 for keyword in ["收入", "月收入", "电话", "微信", "联系方式"]), response_3
         assert "身高" not in response_3
         assert "体重" not in response_3
 
@@ -387,7 +390,10 @@ class TestProfileCollectionPolicyIntegration:
         assert any(keyword in response_1 for keyword in ["隐私", "不会", "外泄", "匹配", "更准确", "用途"]), response_1
 
         response_2, _ = self._run(self._send_message(account_id, "没有别的问题了", sex="男"))
-        assert any(keyword in response_2 for keyword in ["单身", "感情状态", "认真了解", "婚", "电话", "微信", "联系方式"]), response_2
+        assert any(
+            keyword in response_2
+            for keyword in ["单身", "感情状态", "认真了解", "婚", "另一半", "在意", "要求", "收入", "月收入"]
+        ), response_2
         for keyword in ["身高", "体重", "怎么称呼", "叫什么"]:
             assert keyword not in response_2, f"答疑后回主线不应跳去低优字段: {keyword}, response={response_2}"
 
@@ -446,15 +452,21 @@ class TestProfileCollectionPolicyIntegration:
         """资料成熟后，用户连续拒绝电话和微信，应礼貌收尾而不是继续追问"""
         account_id = f"policy_both_rejected_{uuid.uuid4().hex[:8]}"
         self._run(self._reset_user(account_id))
-
-        self._run(
-            self._send_message(
+        profile = self._run(
+            self._seed_profile_fields(
                 account_id,
-                "我男的，30岁，在深圳，本科，程序员，单身。",
                 sex="男",
+                age=30,
+                location="深圳",
+                education="本科",
+                occupation="程序员",
+                marital_status="单身",
+                partner_requirement="聊得来就行",
             )
         )
-        self._run(self._send_message(account_id, "没别的要求了", sex="男"))
+        profile.field_ask_count["monthly_income"] = 1
+        self._run(self.user_service.save_user_profile(account_id, profile))
+        self._run(self.chat_service.dialogue_manager.update_recent_responses(account_id, "如果你愿意的话，留个常用电话就行，后面联系也方便。"))
 
         response_1, profile_1 = self._run(self._send_message(account_id, "不留电话", sex="男"))
         assert profile_1 is not None
@@ -479,7 +491,7 @@ class TestProfileCollectionPolicyIntegration:
         assert profile_2.rejected_phone is True
         assert profile_2.rejected_wechat is True
         response_3, _ = self._run(self._send_message(account_id, "嗯", sex="男"))
-        assert any(keyword in response_3 for keyword in ["先这样", "有需要", "随时找我", "祝", "好消息", "好的"]), response_3
+        assert any(keyword in response_3 for keyword in ["先这样", "有需要", "随时找我", "祝", "好消息", "好的", "聊到这儿"]), response_3
         for keyword in ["微信号发", "身高", "体重", "学历", "职业", "电话", "微信"]:
             assert keyword not in response_3, f"双拒联系方式后不应继续追问: {keyword}, response={response_3}"
 
@@ -612,8 +624,13 @@ class TestProfileCollectionPolicyIntegration:
                 age=30,
                 location="深圳",
                 education="本科",
+                occupation="程序员",
             )
         )
+        profile = self._run(self.user_service.get_user_profile(account_id))
+        profile.field_ask_count["marital_status"] = 1
+        profile.field_ask_count["monthly_income"] = 1
+        self._run(self.user_service.save_user_profile(account_id, profile))
 
         responses = iter(
             [
@@ -675,8 +692,12 @@ class TestProfileCollectionPolicyIntegration:
                 education="本科",
                 occupation="程序员",
                 marital_status="单身",
+                partner_requirement="聊得来",
             )
         )
+        profile = self._run(self.user_service.get_user_profile(account_id))
+        profile.field_ask_count["monthly_income"] = 1
+        self._run(self.user_service.save_user_profile(account_id, profile))
 
         async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
             return (
@@ -695,7 +716,7 @@ class TestProfileCollectionPolicyIntegration:
         assert profile.get_ask_count("partner_requirement") == 0
 
     def test_faq_reentry_turn_blocks_medium_fields_but_keeps_contact_mainline(self, monkeypatch):
-        """FAQ 回答后的承接轮次不能跳去中等字段，但允许继续联系方式主线。"""
+        """FAQ 回答后的承接轮次不能跳去中等字段，且在资料已成熟时允许继续联系方式主线。"""
         account_id = f"policy_faq_reentry_{uuid.uuid4().hex[:8]}"
         self._run(self._reset_user(account_id))
         self._run(
@@ -707,8 +728,12 @@ class TestProfileCollectionPolicyIntegration:
                 education="本科",
                 occupation="程序员",
                 marital_status="单身",
+                partner_requirement="聊得来",
             )
         )
+        profile = self._run(self.user_service.get_user_profile(account_id))
+        profile.field_ask_count["monthly_income"] = 1
+        self._run(self.user_service.save_user_profile(account_id, profile))
         self._run(
             self.chat_service.dialogue_manager.update_recent_responses(
                 account_id,
@@ -820,7 +845,7 @@ class TestProfileCollectionPolicyIntegration:
         assert "另一半" not in response
 
     def test_faq_repeat_followup_reentry_still_blocks_medium_fields(self, monkeypatch):
-        """FAQ 连续追问后的恢复轮次，也不能跳去中等字段。"""
+        """FAQ 连续追问后的恢复轮次，在资料已成熟时也不能跳去中等字段。"""
         account_id = f"policy_faq_repeat_reentry_{uuid.uuid4().hex[:8]}"
         self._run(self._reset_user(account_id))
         self._run(
@@ -832,8 +857,12 @@ class TestProfileCollectionPolicyIntegration:
                 education="本科",
                 occupation="运营",
                 marital_status="单身",
+                partner_requirement="成熟稳重",
             )
         )
+        profile = self._run(self.user_service.get_user_profile(account_id))
+        profile.field_ask_count["monthly_income"] = 1
+        self._run(self.user_service.save_user_profile(account_id, profile))
         self._run(
             self.chat_service.dialogue_manager.update_recent_responses(
                 account_id,
