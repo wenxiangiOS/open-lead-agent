@@ -130,6 +130,35 @@ class ProcessChatTurnUseCase:
                 await self.chat_service.user_service.save_user_profile(account_id, user_profile)
                 _mark("new_session_reset", t0)
 
+            if user_profile.conversation_ended and not is_new_user_session:
+                final_response = self.chat_service.ending_service.get_ending_response("already_ended") or "行，那先聊到这儿。"
+                final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                route_name = "already_ended"
+                response_channel = "model"
+                t0 = time.perf_counter()
+                await self.chat_service._update_conversation_state(  # noqa: SLF001
+                    account_id,
+                    request.question,
+                    final_response,
+                    final_response,
+                    track_asked_fields=False,
+                )
+                _mark("state_update", t0)
+                t0 = time.perf_counter()
+                user_profile = await self.chat_service.user_service.get_user_profile(account_id)
+                _mark("profile_reload", t0)
+
+                response_payload = {
+                    "response": final_response,
+                    "final_response": final_response,
+                    "profile": user_profile.to_dict(),
+                    "meta": {"route": "already_ended"},
+                    "user_profile": user_profile.to_dict(),
+                }
+                response_payload = _attach_route_meta(response_payload, route_name)
+                _log_turn(route_name, ok=True)
+                return response_payload
+
             t0 = time.perf_counter()
             _mark("rule_check", t0)
 
@@ -513,6 +542,11 @@ class ProcessChatTurnUseCase:
                     user_message=request.question,
                     allow_medium_target=turn_decision.allow_medium_target,
                 )
+                final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    collection_result,
+                )
             final_response = self.chat_service._apply_humanlike_turn_structure_policy(  # noqa: SLF001
                 final_response,
                 user_profile,
@@ -529,9 +563,15 @@ class ProcessChatTurnUseCase:
                 final_response,
                 user_profile,
                 ask_field=turn_decision.ask_field,
+                collection_result=collection_result,
                 user_message=request.question,
                 response_channel=turn_decision.response_channel,
                 primary_move=turn_decision.primary_move,
+            )
+            final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
             )
 
             # Phase 2: 应用 bridge_back 前缀（如果有）
@@ -585,6 +625,12 @@ class ProcessChatTurnUseCase:
             user_profile = await self.chat_service.user_service.get_user_profile(account_id)
             _mark("profile_reload", t0)
 
+            final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+            )
+
             # Phase 2: repair_mode 冷却递减（每轮结束时）
             if user_profile.repair_mode and user_profile.ask_cooldown_turns > 0:
                 user_profile.decrement_cooldown()
@@ -615,6 +661,11 @@ class ProcessChatTurnUseCase:
                 meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
                 meta["validation"] = dict(validation_meta)
                 payload["meta"] = meta
+
+            ending_info = collection_result.get("ending_info") if isinstance(collection_result, dict) else None
+            if isinstance(ending_info, dict) and ending_info.get("scenario") == "both_rejected":
+                final_response = "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
+
             payload = self._sync_payload_response(payload, final_response)
             payload = _attach_route_meta(payload, route_name)
             _log_turn(route_name, True)

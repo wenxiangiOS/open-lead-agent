@@ -659,8 +659,12 @@ class ExtractionService:
                 # 检查字段是否需要更新
                 if mapped_field == "sex":
                     # 只在用户明确自述性别时写入 sex，避免由“找男/找女”等择偶偏好误推断污染主档。
+                    # 兼容“我叫小张，男的，30岁”这类常见自我介绍格式。
                     explicit_self_sex = re.search(
-                        r"(我是|本人|我)\s*(男生|女生|男的|女的|男|女)",
+                        r"(?:我是|本人|我)\s*(男生|女生|男的|女的|男|女)",
+                        user_message or "",
+                    ) or re.search(
+                        r"我叫[^，,。！？!\s]{1,8}\s*[，,、 ]\s*(男生|女生|男的|女的|男|女)",
                         user_message or "",
                     ) or re.search(
                         r"^\s*(男生|女生|男的|女的|男|女)\s*(呀|呢|哈|哦|啊)?\s*$",

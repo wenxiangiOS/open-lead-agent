@@ -1,0 +1,680 @@
+{
+  "scenarios": [
+    {
+      "id": "policy_core_field_priority_over_quasi",
+      "category": "policy_priority",
+      "tags": ["critical", "field_priority", "smoke"],
+      "description": "核心字段优先：未收完核心字段前，不应让准核心和中等字段抢主线。",
+      "messages": [
+        "找对象"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["婚况", "离异", "月薪", "收入", "择偶要求"] }
+      ]
+    },
+    {
+      "id": "policy_core_field_priority_sequence",
+      "category": "policy_priority",
+      "tags": ["critical", "field_priority"],
+      "description": "核心字段优先顺序：性别/年龄/工作地 → 学历/职业。",
+      "messages": [
+        "找对象",
+        "女",
+        "28岁"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "sex", "expected": "女" },
+        { "type": "profile_field_truthy", "field": "age" },
+        { "type": "response_contains_any", "turn": 3, "values": ["城市", "在哪", "工作地", "学历", "职业"] }
+      ]
+    },
+    {
+      "id": "policy_quasi_core_marital_status_once_only",
+      "category": "policy_ask_limit",
+      "tags": ["critical", "marital_status", "ask_limit"],
+      "description": "婚况最多1次主动问，一次未拿到即转被动提取。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，想找男生",
+        "不方便说婚况",
+        "还是不方便说"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 3, "values": ["婚况", "结婚", "离异", "单身"] }
+      ]
+    },
+    {
+      "id": "policy_core_field_twice_max",
+      "category": "policy_ask_limit",
+      "tags": ["critical", "ask_limit", "core_field"],
+      "description": "核心字段最多2次主动问，第3次不能追问。",
+      "messages": [
+        "找对象",
+        "不想说年龄",
+        "还是不想说",
+        "真的不想说"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 4, "values": ["年龄", "多大了", "今年"] }
+      ]
+    },
+    {
+      "id": "policy_medium_field_once_max",
+      "category": "policy_ask_limit",
+      "tags": ["critical", "ask_limit", "medium_field"],
+      "description": "中等字段（月薪）最多1次主动问，第2次不能追问。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身",
+        "收入不方便说",
+        "还是不方便"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 3, "values": ["收入", "月薪", "工资", "待遇"] }
+      ]
+    },
+    {
+      "id": "policy_low_priority_never_ask_height",
+      "category": "policy_ask_limit",
+      "tags": ["critical", "low_priority", "never_ask"],
+      "description": "低优字段（身高）永不主动问。",
+      "messages": [
+        "找对象"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["身高", "多高", "cm"] }
+      ]
+    },
+    {
+      "id": "policy_low_priority_never_ask_name",
+      "category": "policy_ask_limit",
+      "tags": ["critical", "low_priority", "never_ask"],
+      "description": "低优字段（姓名）永不主动问。",
+      "messages": [
+        "找对象"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["叫什么名字", "怎么称呼", "你姓什么"] }
+      ]
+    },
+    {
+      "id": "policy_low_priority_never_ask_weight",
+      "category": "policy_ask_limit",
+      "tags": ["critical", "low_priority", "never_ask"],
+      "description": "低优字段（体重）永不主动问。",
+      "messages": [
+        "找对象"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["体重", "多少斤", "多重"] }
+      ]
+    },
+    {
+      "id": "policy_multi_field_extract_single_sentence",
+      "category": "policy_extraction",
+      "tags": ["critical", "multi_extract"],
+      "description": "一句话多个字段，一次性全部提取。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，做运营，单身"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "sex", "expected": "女" },
+        { "type": "profile_field_truthy", "field": "age" },
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳" },
+        { "type": "profile_field_equals", "field": "education", "expected": "本科" },
+        { "type": "profile_field_truthy", "field": "occupation" }
+      ]
+    },
+    {
+      "id": "policy_contact_trigger_insufficient_fields",
+      "category": "policy_contact",
+      "tags": ["critical", "contact_trigger"],
+      "description": "联系方式触发条件：只拿到1-2个基础字段时，不进入联系方式逻辑。",
+      "messages": [
+        "我是女生"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["电话", "微信", "联系方式"] }
+      ]
+    },
+    {
+      "id": "policy_contact_trigger_sufficient_fields",
+      "category": "policy_contact",
+      "tags": ["critical", "contact_trigger"],
+      "description": "联系方式触发条件：拿到4个及以上核心/准核心字段后，可进入联系方式逻辑。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身，想找男生"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["电话", "微信", "联系"] }
+      ]
+    },
+    {
+      "id": "policy_contact_trigger_age_location_occupation",
+      "category": "policy_contact",
+      "tags": ["critical", "contact_trigger"],
+      "description": "联系方式触发条件：已拿到年龄+工作地+职业/学历之一+婚况后，可进入联系方式。",
+      "messages": [
+        "我是女生，28岁，深圳，运营，单身"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "age" },
+        { "type": "profile_field_truthy", "field": "location" },
+        { "type": "profile_field_truthy", "field": "occupation" }
+      ]
+    },
+    {
+      "id": "policy_faq_answer_then_resume",
+      "category": "policy_faq",
+      "tags": ["critical", "faq_resume"],
+      "description": "回答疑问后回主线：用户疑问 > 字段收集。",
+      "messages": [
+        "找对象",
+        "怎么收费",
+        "好的，我是女生，90后，深圳"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["免费", "收费", "定制"] },
+        { "type": "profile_field_equals", "field": "sex", "expected": "女" }
+      ]
+    },
+    {
+      "id": "policy_reception_before_ask",
+      "category": "policy_humanlike",
+      "tags": ["critical", "reception", "humanlike"],
+      "description": "承接规则：每次提问前，优先做承接，不要直接硬问。",
+      "messages": [
+        "我是女生，28岁"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 1, "values": ["28", "女生", "好", "收到", "了解", "记下"] }
+      ]
+    },
+    {
+      "id": "policy_transition_between_fields",
+      "category": "policy_humanlike",
+      "tags": ["critical", "transition", "humanlike"],
+      "description": "转场规则：从一个字段切到另一个字段时，必须经过转场。",
+      "messages": [
+        "我是女生，28岁",
+        "在深圳"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["你学历是什么你职业是什么"] }
+      ]
+    },
+    {
+      "id": "policy_first_turn_greeting_ack",
+      "category": "policy_first_turn",
+      "tags": ["critical", "first_turn", "greeting"],
+      "description": "首轮体验：用户第一句是纯问候时，必须先做自然承接，不得直接抛字段问题。",
+      "messages": [
+        "你好"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["年龄多少", "学历", "职业", "电话"] }
+      ]
+    },
+    {
+      "id": "policy_first_turn_hi_ack",
+      "category": "policy_first_turn",
+      "tags": ["critical", "first_turn", "greeting"],
+      "description": "首轮体验：用户说hi时，必须先做自然承接。",
+      "messages": [
+        "hi"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["请告诉我年龄", "请告诉我学历"] }
+      ]
+    },
+    {
+      "id": "policy_first_turn_greeting_with_sex",
+      "category": "policy_first_turn",
+      "tags": ["critical", "first_turn"],
+      "description": "首轮体验：即使已有sex资料，首轮纯问候也要承接。",
+      "messages": [
+        "在吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 1, "values": ["在", "好", "你好", "嗯"] }
+      ]
+    },
+    {
+      "id": "policy_cooldown_no_consecutive_same_field",
+      "category": "policy_cooldown",
+      "tags": ["critical", "cooldown"],
+      "description": "连续追问限制：同一字段不能连续两轮都问。",
+      "messages": [
+        "找对象",
+        "嗯"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["年龄年龄", "多大了你多大了"] }
+      ]
+    },
+    {
+      "id": "policy_income_soft_ask",
+      "category": "policy_income",
+      "tags": ["critical", "income", "soft_ask"],
+      "description": "月薪降压问法：必须带不方便说也没关系的语气。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身，想找男生"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "occupation" }
+      ]
+    },
+    {
+      "id": "policy_partner_requirement_continuous_extract",
+      "category": "policy_extraction",
+      "tags": ["critical", "partner_requirement"],
+      "description": "择偶要求问一次即可，后续持续提取。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身",
+        "想找个成熟稳重的",
+        "最好是深圳的"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "partner_requirement" }
+      ]
+    },
+    {
+      "id": "policy_user_type_cooperative_faster",
+      "category": "policy_user_type",
+      "tags": ["user_type", "cooperative"],
+      "description": "配合型用户回答直接信息量高，推进稍快，允许1主+1顺带。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身，想找男生"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "sex", "expected": "女" },
+        { "type": "profile_field_truthy", "field": "location" },
+        { "type": "profile_field_truthy", "field": "education" }
+      ]
+    },
+    {
+      "id": "policy_user_type_conservative_gentle",
+      "category": "policy_user_type",
+      "tags": ["user_type", "conservative"],
+      "description": "保守型用户对敏感问题回避时，应多解释、少压迫、少追问。",
+      "messages": [
+        "找对象",
+        "这个不方便说"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["没关系", "理解", "方便", "保密"] }
+      ]
+    },
+    {
+      "id": "policy_user_type_evasive_slow_down",
+      "category": "policy_user_type",
+      "tags": ["user_type", "evasive"],
+      "description": "敷衍型用户应放慢推进，更多被动提取。",
+      "messages": [
+        "找对象",
+        "还行吧",
+        "再说吧"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 3, "values": ["必须", "一定", "赶紧"] }
+      ]
+    },
+    {
+      "id": "policy_user_type_conversational_extract",
+      "category": "policy_user_type",
+      "tags": ["user_type", "conversational"],
+      "description": "话题型用户愿意展开讲时，应先顺着聊，再从中提取字段。",
+      "messages": [
+        "找对象",
+        "我之前谈过两个，一个太花心一个太粘人，现在想找个踏实的"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["踏实", "经历", "理解"] }
+      ]
+    },
+    {
+      "id": "policy_emotion_hesitant_buffer",
+      "category": "policy_emotion",
+      "tags": ["emotion", "hesitant"],
+      "description": "情绪识别-犹豫：先缓冲，再降低门槛。",
+      "messages": [
+        "我是女生，90后，深圳，本科",
+        "这个也要说吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["没关系", "方便", "保密", "不用"] }
+      ]
+    },
+    {
+      "id": "policy_emotion_defensive_explain",
+      "category": "policy_emotion",
+      "tags": ["emotion", "defensive"],
+      "description": "情绪识别-防备：先解释用途/隐私，再推进。",
+      "messages": [
+        "找对象",
+        "你们靠谱吗，干嘛问这个"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["靠谱", "安全", "放心", "正规", "专业"] }
+      ]
+    },
+    {
+      "id": "policy_emotion_joking_light_ack",
+      "category": "policy_emotion",
+      "tags": ["emotion", "joking"],
+      "description": "情绪识别-调侃/玩笑：轻接一句，再回主线。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营",
+        "你查户口呢问这么细"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["请配合", "必须回答"] }
+      ]
+    },
+    {
+      "id": "policy_memory_reuse_location",
+      "category": "policy_memory",
+      "tags": ["memory", "reuse"],
+      "description": "记忆回用：AI应记住用户已说过的地区信息并在后续回复中自然回用。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营",
+        "那边有什么好的相亲资源吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["深圳", "那边"] }
+      ]
+    },
+    {
+      "id": "policy_memory_reuse_preference",
+      "category": "policy_memory",
+      "tags": ["memory", "reuse"],
+      "description": "记忆回用：AI应记住用户的择偶偏好并在后续回复中体现。",
+      "messages": [
+        "我是女生，90后，深圳，想找个成熟稳重的",
+        "有什么推荐吗"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["成熟", "稳重", "合拍", "推荐"] }
+      ]
+    },
+    {
+      "id": "policy_memory_no_large_repeat",
+      "category": "policy_memory",
+      "tags": ["memory", "no_repeat"],
+      "description": "记忆回用要短，不要像复读资料或数据库回显。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营",
+        "好的"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["你是女生，90后，在深圳，本科学历，运营工作"] }
+      ]
+    },
+    {
+      "id": "policy_no_overpromise_contact",
+      "category": "policy_boundary",
+      "tags": ["critical", "no_overpromise"],
+      "description": "联系方式用途不能承诺发资料、具体时效或介绍详情。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身，想找男生",
+        "为什么要留电话"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["第一时间联系", "有合适的人选", "发资料", "1到8小时"] }
+      ]
+    },
+    {
+      "id": "policy_no_overpromise_store",
+      "category": "policy_boundary",
+      "tags": ["no_overpromise"],
+      "description": "门店询问不能承诺发具体定位或安排线下。",
+      "messages": [
+        "找对象",
+        "有线下门店吗"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["发具体定位", "发具体地址", "马上发定位"] }
+      ]
+    },
+    {
+      "id": "policy_no_overpromise_photo",
+      "category": "policy_boundary",
+      "tags": ["no_overpromise"],
+      "description": "照片询问不能承诺互换照片或发照片。",
+      "messages": [
+        "找对象",
+        "能先看照片吗"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["互换照片", "发照片", "先把照片发你"] }
+      ]
+    },
+    {
+      "id": "policy_low_info_okay_not_misjudge",
+      "category": "policy_low_info",
+      "tags": ["critical", "low_info"],
+      "description": "低信息回复（好/嗯/行/可以）不应误判为已提供联系方式。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身，想找男生",
+        "好"
+      ],
+      "assertions": [
+        { "type": "profile_field_falsey", "field": "phone" }
+      ]
+    },
+    {
+      "id": "policy_low_info_huitouzaishuo_pause",
+      "category": "policy_low_info",
+      "tags": ["critical", "low_info"],
+      "description": "回头再说应降压，不应继续硬推联系方式。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身，想找男生",
+        "回头再说"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["必须留电话", "赶紧留"] }
+      ]
+    },
+    {
+      "id": "policy_faq_no_resume_same_turn",
+      "category": "policy_faq",
+      "tags": ["critical", "faq"],
+      "description": "FAQ轮不要顺手切回资料收集。",
+      "messages": [
+        "找对象",
+        "怎么收费"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["电话", "微信", "学历", "年龄"] }
+      ]
+    },
+    {
+      "id": "policy_identity_not_exposed_ai",
+      "category": "policy_identity",
+      "tags": ["critical", "identity"],
+      "description": "用户问你是AI吗时，不应暴露AI身份。",
+      "messages": [
+        "找对象",
+        "你是AI吗"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["AI", "人工智能", "大模型", "机器人", "ChatGPT", "GPT"] }
+      ]
+    },
+    {
+      "id": "policy_identity_not_exposed_robot",
+      "category": "policy_identity",
+      "tags": ["critical", "identity"],
+      "description": "用户问你是真人还是机器人时，不应承认机器人身份。",
+      "messages": [
+        "找对象",
+        "你是真人还是机器人"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["机器人", "AI", "人工智能", "大模型"] }
+      ]
+    },
+    {
+      "id": "policy_divorce_incomplete_end",
+      "category": "policy_ending",
+      "tags": ["critical", "ending", "divorce"],
+      "description": "离异手续未办妥时，应结束当前服务流程。",
+      "messages": [
+        "我离异，手续还在办"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true }
+      ]
+    },
+    {
+      "id": "policy_separation_end",
+      "category": "policy_ending",
+      "tags": ["critical", "ending", "separation"],
+      "description": "用户处于分居状态时，应直接结束服务流程。",
+      "messages": [
+        "我现在还在分居中"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true }
+      ]
+    },
+    {
+      "id": "policy_divorce_confirmed_continue",
+      "category": "policy_ending",
+      "tags": ["critical", "ending", "divorce"],
+      "description": "离异但手续已办妥时，不应结束，应该继续收集。",
+      "messages": [
+        "我离异",
+        "已经办妥了"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": false }
+      ]
+    },
+    {
+      "id": "policy_both_contact_refused_end",
+      "category": "policy_ending",
+      "tags": ["critical", "ending", "contact"],
+      "description": "电话和微信都被拒绝后，应进入收尾状态。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身，想找男生",
+        "不留电话",
+        "还是不留电话",
+        "微信也不留",
+        "还是不留微信"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true }
+      ]
+    },
+    {
+      "id": "policy_age_under_limit_end",
+      "category": "policy_ending",
+      "tags": ["critical", "ending", "age_limit"],
+      "description": "用户年龄低于24岁时，应结束当前服务流程。",
+      "messages": [
+        "我22岁，想找对象"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true }
+      ]
+    },
+    {
+      "id": "policy_already_married_end",
+      "category": "policy_ending",
+      "tags": ["ending", "married"],
+      "description": "用户明确已婚时，应结束当前服务流程。",
+      "messages": [
+        "我已经结婚了"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true }
+      ]
+    },
+    {
+      "id": "policy_light_interaction_after_fields",
+      "category": "policy_interaction",
+      "tags": ["light_interaction"],
+      "description": "每收集2-3个有效字段后，可插入1轮轻互动。",
+      "messages": [
+        "我是女生，90后，深圳，本科，运营，单身"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["好的请告诉我你的职业请告诉我你的学历请告诉我你的年龄"] }
+      ]
+    },
+    {
+      "id": "policy_light_interaction_short_only",
+      "category": "policy_interaction",
+      "tags": ["light_interaction"],
+      "description": "轻互动只做短反馈，不长聊。",
+      "messages": [
+        "我是女生，90后，深圳",
+        "我想找个成熟稳重的男生"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 2, "values": ["我建议你应该", "让我给你一些建议", "根据我的经验"] }
+      ]
+    },
+    {
+      "id": "policy_main_plus_side_field",
+      "category": "policy_schedule",
+      "tags": ["schedule"],
+      "description": "每轮1个主目标字段，最多1个顺带字段。",
+      "messages": [
+        "找对象"
+      ],
+      "assertions": [
+        { "type": "response_not_contains_any", "turn": 1, "values": ["年龄学历职业城市一起告诉我"] }
+      ]
+    },
+    {
+      "id": "policy_passive_extract_low_priority",
+      "category": "policy_extraction",
+      "tags": ["extraction", "low_priority"],
+      "description": "低优字段只提取，不反向触发追问。",
+      "messages": [
+        "我身高168cm，想找对象"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "height" }
+      ]
+    },
+    {
+      "id": "policy_burst_message_last_preference",
+      "category": "policy_burst",
+      "tags": ["burst", "preference"],
+      "description": "连发后最后一句是偏好时，最终回复应优先承接刚刚那条偏好。",
+      "messages": [
+        "我找对象",
+        "我是男的",
+        "喜欢深圳女生"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["深圳", "女生", "偏向", "同城"] }
+      ]
+    },
+    {
+      "id": "policy_mixed_answer_and_faq",
+      "category": "policy_mixed",
+      "tags": ["critical", "mixed", "faq"],
+      "description": "用户同句给资料并问收费时，回复应同时接住资料和收费问题。",
+      "messages": [
+        "男的，怎么收费"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["男生", "收费", "免费", "定制"] }
+      ]
+    },
+    {
+      "id": "policy_mixed_location_and_boundary",
+      "category": "policy_mixed",
+      "tags": ["mixed", "boundary"],
+      "description": "用户同句给出字段并表达边界时，应先接住已给字段，再尊重边界。",
+      "messages": [
+        "本科，不过这个先不太方便说"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["本科", "不太想展开", "不方便", "先不追问"] }
+      ]
+    }
+  ]
+}

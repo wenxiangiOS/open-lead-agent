@@ -392,13 +392,8 @@ class ContactCollectionService:
         is_hk = self.is_hongkong_user(profile)
 
         if action == NextAction.END_CONVERSATION:
-            # 收尾逻辑统一由 prompts.py 的【收尾话术】处理
-            # 这里不再返回额外指令，避免与 prompts.py 冲突
-            # prompts.py 会根据"已留联系"状态自动区分：
-            # - 有联系方式 → "那你等好消息啦，祝你早日脱单"
-            # - 无联系方式 → "有需要随时找我呀"
-            instruction = ""
-            logger.info(f"[联系方式指令] 双方都被拒绝，收尾由 prompts.py 统一处理")
+            instruction = self.PROMPT_END_CONVERSATION
+            logger.info("[联系方式指令] 双方都被拒绝，进入显式收尾提示")
 
         elif action == NextAction.ASK_PHONE:
             # 判断是否是微信被拒后询问电话
@@ -588,9 +583,25 @@ class ContactCollectionService:
 
         if phone_refusal:
             logger.info("[拒绝检测] 检测到显式电话拒绝")
+            if (
+                not user_mentions_wechat
+                and not wechat_collected
+                and not profile.rejected_wechat
+                and (last_requested_type == 'wechat' or is_about_wechat)
+            ):
+                logger.info("[拒绝检测] 用户主动切回电话分支，清理未兑现的微信询问计数")
+                profile.wechat_ask_count = 0
             result = self._handle_refusal(profile, 'phone', True)
         elif wechat_refusal:
             logger.info("[拒绝检测] 检测到显式微信拒绝")
+            if (
+                not user_mentions_phone
+                and not phone_collected
+                and not profile.rejected_phone
+                and (last_requested_type == 'phone' or is_about_phone)
+            ):
+                logger.info("[拒绝检测] 用户主动切回微信分支，清理未兑现的电话询问计数")
+                profile.phone_ask_count = 0
             result = self._handle_refusal(profile, 'wechat', True)
         elif general_refusal:
             if user_mentions_wechat:
@@ -702,9 +713,14 @@ class ContactCollectionService:
 
         询问次数在“真实展示给用户”时由 record_ask 记录。
         这里不重复递增，避免一次询问 + 一次拒绝被双重计数。
+        但如果用户在系统尚未明确询问前就主动显式拒绝某种联系方式，
+        该拒绝视为该联系方式流程的第一次拒绝。
         """
         if contact_type == 'phone':
             new_count = profile.phone_ask_count
+            if is_explicit and new_count == 0:
+                new_count = 1
+                profile.phone_ask_count = 1
             max_asks = self.get_max_asks(profile, 'phone')
 
             # 判断是否达到上限
@@ -725,6 +741,9 @@ class ContactCollectionService:
                 )
         else:  # wechat
             new_count = profile.wechat_ask_count
+            if is_explicit and new_count == 0:
+                new_count = 1
+                profile.wechat_ask_count = 1
             max_asks = self.get_max_asks(profile, 'wechat')
 
             # 判断是否达到上限

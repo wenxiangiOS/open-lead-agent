@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""
+运行 AI 对话策略回归测试
+
+基于 docs/ai_dialog_policy.md 中定义的策略，使用真实 AI 验证策略是否被正确实现。
+
+策略覆盖：
+1. 字段分级与收集顺序
+2. 首轮体验（承接优先）
+3. 拟人化承接与转场
+4. 用户类型适配
+5. FAQ 处理
+6. 情绪识别与承接
+7. 联系方式触发
+8. 收尾处理
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SCENARIOS_DIR = PROJECT_ROOT / "tests" / "real_ai" / "scenarios"
+
+
+# 策略 -> 场景文件映射
+POLICY_SCENARIO_MAP = {
+    "field_collection": [
+        "field_collection_regression.json",
+    ],
+    "first_turn": [
+        "humanlike_listener_first_regression.json",
+    ],
+    "humanlike": [
+        "humanlike_regression.json",
+        "humanlike_mainline_recovery_regression.json",
+    ],
+    "faq": [
+        "faq_regression.json",
+    ],
+    "emotion": [
+        "humanlike_regression.json",  # 包含情绪识别场景
+    ],
+    "contact": [
+        "contact_regression.json",
+    ],
+    "ending": [
+        "ending_regression.json",
+    ],
+    "robustness": [
+        "robustness_advanced_regression.json",
+        "robustness_safety_regression.json",
+        "abuse_robustness_regression.json",
+    ],
+    "matchmaker": [
+        "matchmaker_boundary_regression.json",
+        "matchmaker_consulting_regression.json",
+        "matchmaker_mixed_intent_regression.json",
+        "matchmaker_preference_regression.json",
+    ],
+}
+
+# 所有策略
+ALL_POLICIES = list(POLICY_SCENARIO_MAP.keys())
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="运行 AI 对话策略回归测试（基于 ai_dialog_policy.md）"
+    )
+    parser.add_argument(
+        "--policy",
+        choices=ALL_POLICIES + ["all"],
+        default="all",
+        help=f"指定要测试的策略: {', '.join(ALL_POLICIES)}, 或 all（默认）",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="显示详细输出",
+    )
+    parser.add_argument(
+        "--stop-on-failure",
+        action="store_true",
+        help="遇到失败就停止",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="列出所有策略和对应场景",
+    )
+    parser.add_argument(
+        "--report-dir",
+        default=str(PROJECT_ROOT / "reports" / "real_ai"),
+        help="报告输出目录",
+    )
+    return parser.parse_args()
+
+
+def list_policies() -> None:
+    """列出所有策略和对应场景"""
+    print("=" * 70)
+    print("AI 对话策略回归测试（基于 docs/ai_dialog_policy.md）")
+    print("=" * 70)
+    print()
+
+    total_scenarios = 0
+    for policy, scenarios in POLICY_SCENARIO_MAP.items():
+        print(f"【{policy}】")
+        for scenario_file in scenarios:
+            scenario_path = SCENARIOS_DIR / scenario_file
+            if scenario_path.exists():
+                # 读取场景数量
+                import json
+                with open(scenario_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    count = len(data.get("scenarios", []))
+                    total_scenarios += count
+                print(f"  - {scenario_file} ({count} 场景)")
+            else:
+                print(f"  - {scenario_file} (不存在)")
+        print()
+
+    print("=" * 70)
+    print(f"总计: {len(ALL_POLICIES)} 策略, {total_scenarios} 场景")
+    print()
+    print("运行命令示例：")
+    print("  python scripts/run_dialog_policy_regression.py --policy contact")
+    print("  python scripts/run_dialog_policy_regression.py --policy all --verbose")
+    print("=" * 70)
+
+
+def get_scenario_files(policy: str) -> list[str]:
+    """获取策略对应的场景文件"""
+    if policy == "all":
+        files = set()
+        for scenario_list in POLICY_SCENARIO_MAP.values():
+            files.update(scenario_list)
+        return sorted(files)
+    return POLICY_SCENARIO_MAP.get(policy, [])
+
+
+def run_regression(args: argparse.Namespace) -> int:
+    """运行回归测试"""
+    scenario_files = get_scenario_files(args.policy)
+
+    if not scenario_files:
+        print(f"错误: 未找到策略 '{args.policy}' 对应的场景文件")
+        return 1
+
+    print(f"运行策略: {args.policy}")
+    print(f"场景文件: {len(scenario_files)} 个")
+    print()
+
+    # 构建命令
+    cmd = [
+        sys.executable,
+        str(PROJECT_ROOT / "scripts" / "run_real_ai_regression.py"),
+        "--report-dir", args.report_dir,
+    ]
+
+    for scenario_file in scenario_files:
+        scenario_path = SCENARIOS_DIR / scenario_file
+        if scenario_path.exists():
+            cmd.extend(["--scenario-file", str(scenario_path)])
+
+    if args.verbose:
+        cmd.append("--verbose")
+
+    if args.stop_on_failure:
+        cmd.append("--stop-on-failure")
+
+    print(f"执行: {' '.join(cmd[:5])}...")
+    print()
+
+    return subprocess.run(cmd).returncode
+
+
+def main() -> int:
+    args = parse_args()
+
+    if args.list:
+        list_policies()
+        return 0
+
+    return run_regression(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

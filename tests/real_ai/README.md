@@ -246,3 +246,90 @@ python3 scripts/run_real_ai_regression.py --stop-on-failure
 2. `ending`：分居、离异手续未办妥、双拒绝收尾
 3. `field_collection`：多字段提取、模糊表达、占位词污染保护
 4. `faq`：收费、门店、牵线、照片、联系方式疑问
+
+---
+
+## 联系方式收集专项测试
+
+位于 `tests/integration/test_contact_collection_integration.py`，覆盖 21 个联系方式收集场景。
+
+### 场景列表
+
+| 场景组 | 场景 ID | 描述 |
+|-------|---------|------|
+| 场景一：用户主动拒绝联系方式 | 1.1 - 1.9 | 拒绝电话、拒绝微信、双拒绝、香港用户拒绝等 |
+| 场景二：用户主动提供联系方式 | 2.1 - 2.4 | 主动给电话、主动给微信、同时给等 |
+| 场景三：AI 主动询问联系方式 | 3.1 - 3.8 | 先问电话、先问微信、顺序询问等 |
+
+### 运行命令
+
+```bash
+# 方式一：使用 FakeAI（默认，快速，离线，适合 CI/CD）
+python -m pytest tests/integration/test_contact_collection_integration.py -v
+
+# 方式二：使用真实 AI（慢，需要联网，消耗 token，适合验证实际对话效果）
+python tests/integration/test_contact_collection_integration.py --real-ai
+
+# 方式三：运行指定场景
+python tests/integration/test_contact_collection_integration.py --scenario 1.1 --real-ai
+python tests/integration/test_contact_collection_integration.py --scenario 3.5 --real-ai
+
+# 列出所有可用场景
+python tests/integration/test_contact_collection_integration.py --list
+```
+
+### 两种模式对比
+
+| 模式 | FakeAI（默认） | 真实 AI |
+|------|---------------|--------|
+| 速度 | 快（~0.1秒/场景） | 慢（~10秒/场景） |
+| 网络 | 不需要 | 需要联网 |
+| Token 消耗 | 0 | 消耗 token |
+| 适用场景 | CI/CD、逻辑验证 | 验证实际对话效果 |
+| AI 调用耗时 | 0.001秒 | 3-10秒 |
+
+---
+
+## AI 对话策略回归测试（基于 ai_dialog_policy.md）
+
+基于 `docs/ai_dialog_policy.md` 文档定义的策略，使用真实 AI 验证策略是否被正确实现。
+
+### 策略覆盖
+
+| 策略 | 描述 | 场景数 |
+|------|------|--------|
+| field_collection | 字段分级与收集顺序 | 38 |
+| first_turn | 首轮体验（承接优先） | 14 |
+| humanlike | 拟人化承接与转场 | 28 |
+| faq | FAQ 处理 | 19 |
+| contact | 联系方式触发 | 41 |
+| ending | 收尾处理 | 17 |
+| robustness | 鲁棒性与安全 | 15 |
+| matchmaker | 红娘咨询边界 | 29 |
+
+### 运行命令
+
+```bash
+# 列出所有策略和场景
+python scripts/run_dialog_policy_regression.py --list
+
+# 运行指定策略（使用真实 AI）
+python scripts/run_dialog_policy_regression.py --policy contact
+python scripts/run_dialog_policy_regression.py --policy faq
+python scripts/run_dialog_policy_regression.py --policy humanlike
+
+# 运行全部策略
+python scripts/run_dialog_policy_regression.py --policy all --verbose
+
+# 遇到失败就停止
+python scripts/run_dialog_policy_regression.py --policy contact --stop-on-failure
+```
+
+### 两种模式对比
+
+| 模式 | FakeAI | 真实 AI（--real-ai） |
+|------|--------|---------------------|
+| 速度 | 快 | 慢（3-10秒/轮） |
+| 网络需求 | 不需要 | 需要联网 |
+| Token 消耗 | 0 | 消耗 token |
+| 适用场景 | CI/CD、逻辑验证 | 验证实际对话效果 |

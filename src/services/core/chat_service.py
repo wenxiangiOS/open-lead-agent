@@ -931,6 +931,14 @@ class ChatService:
             current_ask_field,
             next_field,
         )
+        if next_field in {"education", "occupation"} and decision.side_target and allow_medium_target:
+            return self._build_interleaving_followup(
+                user_profile,
+                user_message,
+                main_target=next_field,
+                preferred_side_target=decision.side_target,
+                allow_medium_target=allow_medium_target,
+            )
         return self._build_policy_field_prompt(next_field, user_profile, user_message=user_message)
 
     def _ensure_humanlike_memory_ack(self, user_message: str, user_profile: UserProfile, response: str) -> str:
@@ -1545,6 +1553,24 @@ class ChatService:
         # 如果只收集到微信（没有电话），尝试争取电话
         if contact_value is None and collected_wechat:
             has_phone_already = bool(user_profile.phone_collected and user_profile.phone)
+            user_message_text = str(user_message or "")
+            mentions_phone = any(marker in user_message_text for marker in ("电话", "手机", "手机号", "号码"))
+
+            # 用户主动先给微信时，上一轮可能已经预问过电话。
+            # 这里重置未兑现的电话询问计数，避免“首次拒绝电话”被误判为最终拒绝。
+            if (
+                not has_phone_already
+                and not user_profile.rejected_phone
+                and user_profile.phone_ask_count > 0
+                and not mentions_phone
+            ):
+                logger.info(
+                    f"[微信收集] 用户主动先给微信，重置未兑现的电话询问计数: phone_ask_count={user_profile.phone_ask_count}"
+                )
+                user_profile.phone_ask_count = 0
+                await self.user_service.save_user_profile(account_id, user_profile)
+
+            next_action = self.contact_service.get_next_action(user_profile)
             # 微信已在上面的代码中处理（设置 wechat_collected=True）
             # 检查是否可以收尾
             contact_collected = (
@@ -1553,29 +1579,35 @@ class ChatService:
             )
             profile_ready_for_service = self.collection_policy.has_serviceable_profile(user_profile)
 
-            # === 新增：争取电话号码 ===
-            # 如果用户没有提供电话，且还没争取过电话，则再问一次电话
-            # 注意：不在这里设置 phone_ask_count，让 _handle_refusal 在用户拒绝时递增
-            # 这样用户第一次拒绝后还有一次争取机会
-            if not has_phone_already and not user_profile.rejected_phone and user_profile.phone_ask_count < 1:
-                logger.info(f"[微信收集] 尝试争取电话号码，优先保留 AI 原回复")
-                return ai_response
+            if next_action.value in {"ask_phone", "persuade_phone"}:
+                logger.info(f"[微信收集] 按状态机继续电话流程: next_action={next_action.value}")
+                return self._build_contact_followup_response(next_action.value, "wechat")
 
-            # 已经争取过电话，用户还是只留微信，检查是否可以收尾
-            if profile_ready_for_service and contact_collected:
-                logger.info(f"[微信收集] 核心字段全部收集完成，进入统一收尾链")
+            # 电话链路已结束且当前资料已可服务，统一收尾
+            if profile_ready_for_service and contact_collected and next_action.value in {"none", "end"}:
+                logger.info(f"[微信收集] 联系方式流程已结束，进入统一收尾链: next_action={next_action.value}")
                 await self._mark_remaining_fields_as_skipped(account_id, user_profile)
                 collection_result['ending_info'] = self.ending_service.build_ending_info('normal_complete', user_profile)
                 await self.user_service.save_user_profile(account_id, user_profile)
-                return ai_response
-            else:
-                # === 资料未达到可服务阈值，继续收集重要字段 ===
-                decision = self.collection_policy.decide(
-                    user_profile,
-                    allow_contact_target=False,
-                )
-                logger.info(f"[微信收集] 资料未完成，继续推进字段: {decision.main_target}")
-                return self._build_contact_collection_ack("wechat")
+
+                if user_profile.rejected_phone or user_profile.rejected_wechat:
+                    ending_response = "好的，信息我先记下了。那先这样，有需要再联系我。"
+                    collection_result['ending_info']['use_ai'] = False
+                    collection_result['ending_info']['response'] = ending_response
+                    return ending_response
+
+                terminal_response = self._build_terminal_response(collection_result.get('ending_info'), user_profile)
+                return terminal_response or ai_response
+
+            # === 资料未达到可服务阈值，继续收集重要字段 ===
+            decision = self.collection_policy.decide(
+                user_profile,
+                allow_contact_target=False,
+            )
+            logger.info(
+                f"[微信收集] 不进入电话追问，继续推进字段: next_action={next_action.value}, target={decision.main_target}"
+            )
+            return self._build_contact_collection_ack("wechat")
 
         # 验证电话号码
         logger.info(f"[联系方式验证] 开始验证电话: {contact_value}")
@@ -1613,7 +1645,7 @@ class ChatService:
                 # 需要询问微信
                 logger.info(f"[联系方式验证] 电话已收集，需要询问微信，wechat_ask_count={user_profile.wechat_ask_count}")
                 # 询问次数在用户明确拒绝时由拒绝检测统一递增，这里只发起询问，不提前计数。
-                return ai_response
+                return self._build_contact_followup_response(next_action.value, "phone")
 
             # === 核心字段完成度检查 ===
             # 检查核心字段是否全部收集（联系方式：电话或微信有一个即可）
@@ -1784,6 +1816,22 @@ class ChatService:
             return "好，微信我看到了。我们接着聊你的情况就行。"
         return "好，电话我收到了。我们接着聊你的情况就行。"
 
+    @staticmethod
+    def _build_contact_followup_response(next_action_value: str, collected_type: str) -> str:
+        """基于最新联系方式状态生成稳定后续回复，避免沿用旧状态下的 AI 回复。"""
+        if collected_type == "phone":
+            if next_action_value == "ask_wechat":
+                return "好，电话我收到了。方便留个微信吗？后面沟通会方便些。"
+            if next_action_value == "persuade_wechat":
+                return "好，电话我收到了。你要是方便的话，留个微信也行，后面沟通会顺一点。"
+            return "好，电话我收到了。我们接着聊你的情况就行。"
+
+        if next_action_value == "ask_phone":
+            return "好，微信我看到了。方便留个电话吗？后面沟通会方便些。"
+        if next_action_value == "persuade_phone":
+            return "好，微信我看到了。你要是方便的话，留个手机号也行，后面沟通会顺一点。"
+        return "好，微信我看到了。我们接着聊你的情况就行。"
+
     def _build_terminal_response(
         self,
         ending_info: Optional[Dict[str, Any]],
@@ -1796,12 +1844,15 @@ class ChatService:
             return preset_response
 
         if scenario == "both_rejected":
-            return "明白，那我们先聊到这儿。你之后要是想继续了解，再来找我就好。"
+            return "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
         if scenario == "already_ended":
-            return self.ending_service.get_ending_response("already_ended") or "行，那先聊到这儿。"
+            return self.ending_service.get_ending_response("already_ended") or "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
+
+        if self.contact_service.should_end_conversation(user_profile):
+            return "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
 
         if user_profile.conversation_ended and user_profile.rejected_phone and user_profile.rejected_wechat:
-            return "明白，那我们先聊到这儿。你之后要是想继续了解，再来找我就好。"
+            return "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
         return None
 
     @staticmethod
@@ -1889,12 +1940,6 @@ class ChatService:
             action_value = getattr(next_action, "value", str(next_action))
         except Exception:
             return response
-
-        if action_value == "persuade_wechat":
-            return "好，那微信这块我先不往下问了，我们先聊别的。"
-
-        if action_value == "persuade_phone":
-            return "行，那电话这块先放一放，我们先聊别的。"
 
         if action_value == "ask_wechat" and (user_profile.rejected_phone or user_profile.phone_ask_count >= 1):
             return "好，微信这块你要是现在也不想留，我们就先不碰联系方式。"
@@ -2630,7 +2675,7 @@ class ChatService:
             return self._build_interleaving_followup(
                 user_profile,
                 user_message,
-                main_target=None,
+                main_target=policy_decision.main_target,
                 preferred_side_target=policy_decision.side_target,
                 allow_medium_target=allow_medium_target,
             )
@@ -2703,6 +2748,7 @@ class ChatService:
         user_profile: UserProfile,
         *,
         ask_field: Optional[str],
+        collection_result: Optional[Dict[str, Any]] = None,
         user_message: str = "",
         response_channel: str = "model",
         primary_move: str = "ack_and_ask",
@@ -2730,23 +2776,38 @@ class ChatService:
             if action_value in {"ask_phone", "persuade_phone", "ask_wechat", "persuade_wechat"}:
                 return text
 
-        asked_fields = self._detect_asked_fields_in_response(text)
-        if ask_field in asked_fields:
-            return text
-
         policy_decision = self.collection_policy.decide(
             user_profile,
             user_message=user_message,
             allow_contact_target=False,
             allow_medium_target=True,
         )
+        collected_fields = {
+            str(item.get("field") or "").strip()
+            for item in (collection_result or {}).get("all_fields", [])
+            if isinstance(item, dict)
+        }
+        effective_ask_field = ask_field
+        if ask_field in collected_fields and policy_decision.main_target:
+            effective_ask_field = policy_decision.main_target
+
+        asked_fields = self._detect_asked_fields_in_response(text)
+        if effective_ask_field in asked_fields:
+            return text
+
         approved_side_target = policy_decision.side_target
         if (
-            ask_field in {"education", "occupation"}
+            effective_ask_field in {"education", "occupation"}
             and approved_side_target
             and approved_side_target in asked_fields
         ):
-            return text
+            return self._build_interleaving_followup(
+                user_profile,
+                user_message,
+                main_target=effective_ask_field,
+                preferred_side_target=approved_side_target,
+                allow_medium_target=True,
+            )
 
         fallback_hold_markers = (
             "你接着说就行",
@@ -2756,16 +2817,24 @@ class ChatService:
             "我顺着听",
             "我顺着往下了解",
         )
-        asks_wrong_field = bool(asked_fields) and ask_field not in asked_fields
+        asks_wrong_field = bool(asked_fields) and effective_ask_field not in asked_fields
         is_empty_hold = any(marker in text for marker in fallback_hold_markers)
 
         if self.collection_policy.has_divorce_confirmation_pending(user_profile):
             return text
-        if ask_field == "marital_status" and self._should_lock_divorce_confirmation(user_profile, user_message):
+        if effective_ask_field == "marital_status" and self._should_lock_divorce_confirmation(user_profile, user_message):
             return self._build_divorce_confirmation_response()
 
         if asks_wrong_field or is_empty_hold or not asked_fields:
-            return self._build_policy_field_prompt(ask_field, user_profile, user_message=user_message)
+            if effective_ask_field in {"education", "occupation"} and approved_side_target:
+                return self._build_interleaving_followup(
+                    user_profile,
+                    user_message,
+                    main_target=effective_ask_field,
+                    preferred_side_target=approved_side_target,
+                    allow_medium_target=True,
+                )
+            return self._build_policy_field_prompt(effective_ask_field, user_profile, user_message=user_message)
         return text
 
     def _enforce_natural_completion_transition(
@@ -3199,8 +3268,9 @@ class ChatService:
         text = re.sub(r"我知道了来你是", "我知道了，你是", text)
         text = re.sub(r"我知道了你是", "你是", text)
         text = re.sub(r"(好的|好呀|好哒)，?你是", r"\1，你是", text)
-        text = re.sub(r"^好[，,\s]*你是(男生|女生)啦[。.]?\s*", "", text)
+        text = re.sub(r"^好[，,\s]*你是(男生|女生)(?:啦|呀|哈|啊)?[。.]?\s*", "", text)
         text = re.sub(r"^好[，,\s]*(男生|女生)是吧[。.]?\s*", "", text)
+        text = re.sub(r"^(你是|是)(男生|女生)(?:啦|呀|哈|啊)?[。.]?\s*", "", text)
         text = re.sub(r"^你在[^。！？!?]{0,20}是吧[。.]?\s*", "", text)
 
         blacklist_patterns = [

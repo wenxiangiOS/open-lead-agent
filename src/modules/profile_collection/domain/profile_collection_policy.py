@@ -331,8 +331,12 @@ class ProfileCollectionPolicy:
         has_location = self.is_collected(profile, "location")
         has_occupation = self.is_collected(profile, "occupation")
         has_education = self.is_collected(profile, "education")
+        has_partner_requirement = self.is_collected(profile, "partner_requirement")
         # 联系方式是核心字段，但应后置到基础核心画像足够后再进入。
         if not (has_sex and has_age and has_location and has_education and has_occupation):
+            return False
+        # 联系方式应在基础画像完成且用户表达过择偶方向后再进入，避免首轮信息一上来就索要联系方式。
+        if not has_partner_requirement:
             return False
 
         # 不再要求婚况作为联系方式前置条件；核心字段成功率优先。

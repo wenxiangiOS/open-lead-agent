@@ -2531,7 +2531,7 @@ def test_apply_humanlike_turn_structure_policy_interleaves_side_target_at_educat
         allow_medium_target=True,
     )
 
-    assert "学历" not in response
+    assert "学历" in response
     assert any(token in response for token in ["另一半", "看重", "婚况"])
 
 
@@ -2547,13 +2547,42 @@ def test_enforce_core_mainline_followup_allows_approved_side_target_interleave()
         "你对另一半大概有什么要求呀？比如年龄、城市、性格这些。",
         profile,
         ask_field="education",
+        collection_result=None,
         user_message="深圳",
         response_channel="model",
         primary_move="light_followup",
     )
 
-    assert "另一半" in response
-    assert "学历" not in response
+    assert any(token in response for token in ["另一半", "看重"])
+    assert "学历" in response
+
+
+def test_enforce_core_mainline_followup_moves_past_just_collected_location():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_after_location")
+    profile.sex = "男"
+    profile.age = 36
+    profile.location = "深圳"
+    profile.collection_progress.update({"sex": True, "age": True, "location": True})
+
+    response = chat_service._enforce_core_mainline_followup(
+        "那，你现在是在什么城市？",
+        profile,
+        ask_field="location",
+        collection_result={"all_fields": [{"field": "location", "value": "深圳"}]},
+        user_message="深圳",
+        response_channel="model",
+        primary_move="light_followup",
+    )
+
+    assert "城市" not in response
+    assert any(token in response for token in ["学历", "另一半", "看重"])
+
+
+def test_sanitize_robotic_tone_removes_sex_confirmation_prefix():
+    cleaned = ChatService._sanitize_robotic_tone("好，你是男生啦。 方便说下你今年多大吗？")
+    assert "男生啦" not in cleaned
+    assert "多大" in cleaned
 
 
 def test_format_fast_path_ack_skips_sex_confirmation():
