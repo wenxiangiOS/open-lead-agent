@@ -150,6 +150,14 @@ class UserProfile(BaseModel):
     off_topic_turns: int = Field(default=0, description="连续偏离主流程的轮数")
     open_profile_attempts: int = Field(default=0, description="开放式补画像尝试次数")
     last_engagement_mode: Optional[str] = Field(None, description="最近一轮投入模式（full/compact/light/close）")
+    resume_profile_mode: Optional[str] = Field(default=None, description="答疑/顾虑轮后待恢复的资料收集模式")
+    resume_profile_target: Optional[str] = Field(default=None, description="答疑/顾虑轮后待恢复的主目标字段")
+    last_user_concern_type: Optional[str] = Field(default=None, description="最近一次用户疑问/顾虑类型")
+    field_miss_streak: Dict[str, int] = Field(
+        default_factory=dict,
+        description="字段被错位回答的连续次数，用于第一次错位不计 ask_count",
+    )
+    last_effective_progress: bool = Field(default=False, description="最近一轮是否产生有效推进")
 
     # 通用资料概览只统计业务关键字段；低优字段和派生展示字段不计入公共完成度。
     SUMMARY_PROGRESS_FIELDS: ClassVar[tuple[str, ...]] = (
@@ -504,6 +512,18 @@ class UserProfile(BaseModel):
         self.field_ask_count[field_name] = self.field_ask_count.get(field_name, 0) + 1
         return self.field_ask_count[field_name]
 
+    def decrement_ask_count(self, field_name: str) -> int:
+        """
+        回退字段追问计数。
+
+        用于用户首次错位回答时，不把上一轮字段追问视作一次有效覆盖尝试。
+        """
+        current = self.field_ask_count.get(field_name, 0)
+        if current <= 0:
+            return 0
+        self.field_ask_count[field_name] = current - 1
+        return self.field_ask_count[field_name]
+
     def close_active_ask(self, field_name: str) -> None:
         """
         关闭某个字段的主动追问资格，后续仅允许被动提取。
@@ -558,6 +578,7 @@ class UserProfile(BaseModel):
         """
         if field_name in self.field_ask_count:
             self.field_ask_count[field_name] = 0
+        self.clear_field_miss_streak(field_name)
 
     def get_ask_count(self, field_name: str) -> int:
         """
@@ -570,6 +591,34 @@ class UserProfile(BaseModel):
             int: 追问次数
         """
         return self.field_ask_count.get(field_name, 0)
+
+    def mark_field_miss(self, field_name: str) -> int:
+        self.field_miss_streak[field_name] = self.field_miss_streak.get(field_name, 0) + 1
+        return self.field_miss_streak[field_name]
+
+    def clear_field_miss_streak(self, field_name: str) -> None:
+        if field_name in self.field_miss_streak:
+            self.field_miss_streak.pop(field_name, None)
+
+    def get_field_miss_streak(self, field_name: str) -> int:
+        return self.field_miss_streak.get(field_name, 0)
+
+    def set_resume_profile_target(
+        self,
+        mode: Optional[str],
+        field_name: Optional[str],
+        concern_type: Optional[str] = None,
+    ) -> None:
+        self.resume_profile_mode = mode
+        self.resume_profile_target = field_name
+        self.last_user_concern_type = concern_type
+        self.updated_at = datetime.now()
+
+    def clear_resume_profile_target(self) -> None:
+        self.resume_profile_mode = None
+        self.resume_profile_target = None
+        self.last_user_concern_type = None
+        self.updated_at = datetime.now()
 
     def get_fields_asked_multiple_times(self, min_times: int = 2) -> list:
         """
@@ -771,6 +820,11 @@ class UserProfile(BaseModel):
             "wechat_ask_count": self.wechat_ask_count,
             "last_contact_request_type": self.last_contact_request_type,
             "is_hongkong_user": self.is_hongkong_user,
+            "resume_profile_mode": self.resume_profile_mode,
+            "resume_profile_target": self.resume_profile_target,
+            "last_user_concern_type": self.last_user_concern_type,
+            "field_miss_streak": self.field_miss_streak,
+            "last_effective_progress": self.last_effective_progress,
             # 兼容旧字段
             "rejected_wechat": self.rejected_wechat,
             "rejected_phone": self.rejected_phone,

@@ -25,6 +25,20 @@ class TestProfileCollectionPolicy:
         assert decision.next_mode == "collect_core"
         assert decision.can_enter_contact is False
 
+    def test_core_main_order_allows_small_variation_after_sex(self):
+        profile_a = UserProfile(account_id="u_a")
+        profile_b = UserProfile(account_id="u_b")
+        profile_a.collection_progress["sex"] = True
+        profile_b.collection_progress["sex"] = True
+        profile_a.sex = "男"
+        profile_b.sex = "男"
+
+        target_a = self.policy.get_main_target(profile_a, can_enter_contact=False, allow_contact_target=False)
+        target_b = self.policy.get_main_target(profile_b, can_enter_contact=False, allow_contact_target=False)
+
+        assert target_a in {"age", "location", "education"}
+        assert target_b in {"age", "location", "education"}
+
     def test_core_field_is_covered_after_two_attempts_even_if_not_collected(self):
         profile = UserProfile(account_id="u1")
         profile.field_ask_count["age"] = 2
@@ -108,6 +122,51 @@ class TestProfileCollectionPolicy:
 
         assert self.policy.should_allow_contact_instruction(profile, "ASK_PHONE") is False
 
+    def test_opening_with_location_and_occupation_prefers_low_pressure_missing_core(self):
+        profile = UserProfile(account_id="u_opening_profile")
+
+        decision = self.policy.decide(
+            profile,
+            user_message="我是深圳的，我做IT",
+            message_count=0,
+        )
+
+        assert decision.main_target in {"age", "education", "sex"}
+
+    def test_opening_with_location_prefers_occupation_and_can_attach_income_side_target(self):
+        profile = UserProfile(account_id="u_opening_location")
+
+        decision = self.policy.decide(
+            profile,
+            user_message="我是深圳的",
+            message_count=0,
+        )
+
+        assert decision.main_target == "occupation"
+        assert decision.side_target == "monthly_income"
+
+    def test_latest_location_cue_on_followup_prefers_occupation_over_global_order(self):
+        profile = UserProfile(account_id="u_latest_location")
+
+        decision = self.policy.decide(
+            profile,
+            user_message="男的呢，在深圳",
+            message_count=2,
+        )
+
+        assert decision.main_target == "occupation"
+
+    def test_latest_location_and_occupation_opening_prefers_low_pressure_core(self):
+        profile = UserProfile(account_id="u_latest_location_occupation")
+
+        decision = self.policy.decide(
+            profile,
+            user_message="90后，深圳，做IT",
+            message_count=0,
+        )
+
+        assert decision.main_target in {"age", "education", "sex"}
+
     def test_cost_control_light_mode_after_repeated_non_cooperation(self):
         profile = UserProfile(account_id="u1")
         profile.non_cooperation_turns = 3
@@ -138,3 +197,16 @@ class TestProfileCollectionPolicy:
         assert decision.turn_quality_passed is False
         assert decision.allow_contact_push is False
         assert decision.next_mode == "contact_hold"
+
+    def test_ongoing_contact_flow_freezes_profile_collection(self):
+        profile = UserProfile(account_id="u1")
+        self._mark_collected(profile, "sex", "age", "location", "education", "occupation")
+        profile.field_ask_count["marital_status"] = 1
+        profile.phone_ask_count = 1
+
+        decision = self.policy.decide(profile, user_message="嗯", message_count=8)
+
+        assert decision.next_mode == "contact_flow"
+        assert decision.main_target == "contact"
+        assert decision.forced_cover_target is None
+        assert decision.reason == "ongoing_contact_flow_freeze_profile_collection"

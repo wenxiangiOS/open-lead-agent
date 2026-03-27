@@ -301,7 +301,7 @@ curl "http://127.0.0.1:8000/api/xiaohongshu/messages/replies?accountId=user_1000
 - 异步轮询示例：
   - `examples/xhs_replies_example.py`
 - 设计与运行手册：
-  - `docs/message_queue_design.md`
+  - `docs/07_MESSAGE_QUEUE_DESIGN.md`
   - `docs/message_queue_runbook.md`
 
 ## 10. 常见接入方案建议

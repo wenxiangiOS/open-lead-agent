@@ -12,6 +12,24 @@ def test_render_field_question_for_education_is_natural():
     assert "平时你是什么学历背景" not in response
 
 
+def test_render_field_question_for_sex_is_not_overly_hard_on_opening():
+    service = DialogueExpressionService()
+
+    response = service.render_field_question("sex", user_message="你好")
+
+    assert "男生还是女生" in response
+    assert all(token not in response for token in ["最基础", "先简单认识下"])
+
+
+def test_render_field_question_for_sex_can_offer_open_self_intro_after_matchmaking_intent():
+    service = DialogueExpressionService()
+
+    response = service.render_field_question("sex", user_message="找对象")
+
+    assert "介绍下自己" in response or "简单说说自己" in response
+    assert "男生还是女生" in response
+
+
 def test_render_field_question_for_contact_is_short_and_natural():
     service = DialogueExpressionService()
     profile = UserProfile(account_id="u_expr_contact")
@@ -36,7 +54,34 @@ def test_render_field_question_for_education_can_follow_short_answer_naturally()
     )
 
     assert "学历" in response
-    assert response.startswith(("那，", "对了，", "顺着聊到这儿，", "方便的话，"))
+    assert response.startswith(("好呀，", "那我再了解下，", "顺着聊到这儿，"))
+
+
+def test_render_field_question_for_occupation_can_follow_location_context_naturally():
+    service = DialogueExpressionService()
+
+    response = service.render_field_question("occupation", user_message="在深圳")
+
+    assert "深圳" in response
+    assert "工作" in response or "做什么" in response
+
+
+def test_render_field_question_for_age_can_optionally_add_light_reason():
+    service = DialogueExpressionService()
+
+    first = service.render_field_question("age")
+
+    assert "多大" in first or "年龄段" in first
+    assert any(token in first for token in ["更有数", "更好往合适的方向聊"])
+
+
+def test_render_field_question_for_location_can_optionally_add_same_city_reason():
+    service = DialogueExpressionService()
+
+    first = service.render_field_question("location")
+
+    assert "城市" in first or "哪边生活" in first
+    assert any(token in first for token in ["同城", "先看同城"])
 
 
 def test_render_contact_question_can_follow_short_answer_naturally():
@@ -51,6 +96,15 @@ def test_render_contact_question_can_follow_short_answer_naturally():
 
     assert "手机号" in response
     assert "方便联系" in response
+
+
+def test_render_field_question_for_partner_requirement_uses_more_natural_preference_wording():
+    service = DialogueExpressionService()
+
+    response = service.render_field_question("partner_requirement")
+
+    assert "看重" in response
+    assert "哪方面" in response
 
 
 def test_render_field_question_for_marital_status_only_confirms_single_status():
@@ -78,3 +132,54 @@ def test_main_prompt_allows_low_frequency_reason_for_sensitive_fields():
 
     assert "稍敏感的问题" in prompt
     assert "偶尔补半句简短解释" in prompt
+
+
+def test_main_prompt_mentions_low_frequency_reason_for_age_and_location():
+    from src.services.prompts.prompts import get_main_dialogue
+
+    prompt = get_main_dialogue(
+        collected_info="性别:男",
+        missing_fields="年龄、所在地",
+        gender_instruction="正常称呼即可",
+        is_first_chat=False,
+        current_main_target="年龄",
+        current_side_target="无",
+        can_enter_contact=False,
+    )
+
+    assert "年龄、城市这类基础信息也可以低频补半句自然解释" in prompt
+    assert "优先留意同城" in prompt
+
+
+def test_main_prompt_mentions_light_praise_and_contact_rephrase():
+    from src.services.prompts.prompts import get_main_dialogue
+
+    prompt = get_main_dialogue(
+        collected_info="职业:IT",
+        missing_fields="月收入、联系方式",
+        gender_instruction="正常称呼即可",
+        is_first_chat=False,
+        current_main_target="月收入",
+        current_side_target="无",
+        can_enter_contact=False,
+    )
+
+    assert "可以顺手轻轻认可半句" in prompt
+    assert "不要重复“我再轻问一次”这类固定句式" in prompt
+
+
+def test_main_prompt_mentions_opening_clarify_before_field_collection():
+    from src.services.prompts.prompts import get_main_dialogue
+
+    prompt = get_main_dialogue(
+        collected_info="无",
+        missing_fields="性别、年龄、所在地",
+        gender_instruction="正常称呼即可",
+        is_first_chat=True,
+        current_main_target="性别",
+        current_side_target="无",
+        can_enter_contact=False,
+    )
+
+    assert "首轮，且用户输入像错字、乱码、打字异常" in prompt
+    assert "不要直接切 `sex / age / location`" in prompt

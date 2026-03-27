@@ -1,6 +1,176 @@
 {
   "scenarios": [
     {
+      "id": "listener_first_greeting_probe_intent",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "greeting"],
+      "description": "用户纯打招呼时，应先建立连接并轻问来意，不应直接切字段。",
+      "messages": [
+        "你好"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["找对象", "了解下", "聊聊", "情况"] },
+        { "type": "final_response_not_contains_any", "values": ["你今年多大", "你在哪个城市", "你做什么工作", "你是什么学历"] }
+      ]
+    },
+    {
+      "id": "listener_first_zaima_probe_intent",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "greeting"],
+      "description": "用户首轮问在吗时，应先连接并探测来意，不应直接采字段。",
+      "messages": [
+        "在吗"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["在呢", "在呀", "找对象", "了解下"] },
+        { "type": "final_response_not_contains_any", "values": ["你今年多大", "你在哪个城市", "你是什么学历"] }
+      ]
+    },
+    {
+      "id": "listener_first_unstable_opening_clarify_probe_intent",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "opening_clarify"],
+      "description": "用户首轮输入疑似乱码或无法稳定理解时，应先轻澄清并回到来意分流，不应直接切字段。",
+      "messages": [
+        "佃�好"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["没看懂", "没太接住", "没看明白", "没反应过来"] },
+        { "type": "final_response_contains_any", "values": ["找对象", "了解下", "看看情况", "问问情况"] },
+        { "type": "final_response_not_contains_any", "values": ["男生还是女生", "你今年多大", "你在哪个城市", "你是什么学历"] }
+      ]
+    },
+    {
+      "id": "listener_first_opening_clarify_then_soft_intent_self_intro",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "opening_clarify", "open_self_intro"],
+      "description": "开场轻澄清后，用户若回应“先了解下”这类软意图，下一轮应给开放自述入口，而不是直接切性别年龄。",
+      "messages": [
+        "佃�好",
+        "先了解下"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 1, "values": ["没看懂", "没太接住", "没看明白", "没反应过来"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["介绍下自己", "简单说说自己", "顺着了解", "大概情况"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["男生还是女生", "你今年多大", "你在哪个城市"] }
+      ]
+    },
+    {
+      "id": "listener_first_opening_probe_particle_soft_intent_self_intro",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "opening_clarify", "open_self_intro"],
+      "description": "开场探询后，用户回复“先了解下呢”这类带语气词的软意图，下一轮仍应给开放自述入口，不应直接切字段。",
+      "messages": [
+        "你好",
+        "先了解下呢"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 1, "values": ["找对象", "了解下", "聊聊", "情况"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["介绍下自己", "简单说说自己", "顺着了解", "大概情况"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["男生还是女生", "你今年多大", "你在哪个城市"] }
+      ]
+    },
+    {
+      "id": "listener_first_opening_probe_xiankan_soft_intent_self_intro",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "opening_clarify", "open_self_intro"],
+      "description": "开场探询后，用户回复“我先看看”这类观望表达，下一轮应先邀请用户简单介绍自己，而不是直接盘问资料。",
+      "messages": [
+        "你好",
+        "我先看看"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 1, "values": ["找对象", "了解下", "聊聊", "情况"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["介绍下自己", "简单说说自己", "顺着了解", "大概情况"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["男生还是女生", "你今年多大", "你在哪个城市"] }
+      ]
+    },
+    {
+      "id": "listener_first_opening_probe_wenwen_qingkuang_prefix_self_intro",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "open_self_intro"],
+      "description": "开场探询后，用户回复“就是想先问问情况呢”这类带前缀的低压了解表达，下一轮仍应给开放自述入口，而不是直接切字段。",
+      "messages": [
+        "你好",
+        "就是想先问问情况呢"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 1, "values": ["找对象", "了解下", "问问情况", "聊聊"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["介绍下自己", "简单说说自己", "顺着了解", "大概情况"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["男生还是女生", "你今年多大", "你在哪个城市"] }
+      ]
+    },
+    {
+      "id": "listener_first_opening_faq_does_not_collect_fields",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "faq"],
+      "description": "开场直接问收费时，应先答收费，不应同时切资料字段。",
+      "messages": [
+        "你好",
+        "怎么收费"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["收费", "免费", "服务", "安排"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["男生还是女生", "你今年多大", "你在哪个城市", "你是什么学历"] }
+      ]
+    },
+    {
+      "id": "listener_first_opening_boundary_contact_refusal_no_push",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "boundary", "contact"],
+      "description": "开场直接说不给电话时，应先接住边界，不继续推电话微信，也不切资料字段。",
+      "messages": [
+        "你好",
+        "不给电话行不行"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["可以", "不强求", "不留也行", "先聊"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["留个电话", "加个微信", "男生还是女生", "你今年多大"] }
+      ]
+    },
+    {
+      "id": "listener_first_opening_profile_provided_no_repeat_field",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "profile"],
+      "description": "开场直接给出性别和城市时，应先接住已给资料，不能重复问同字段。",
+      "messages": [
+        "你好",
+        "男的，深圳"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["男生", "深圳", "这边", "知道了"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["男生还是女生", "你在哪个城市"] }
+      ]
+    },
+    {
+      "id": "listener_first_opening_mixed_faq_priority_over_matchmaking",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "mixed", "faq"],
+      "description": "开场同时说找对象并问收费时，本轮应先答收费，不应直接切字段。",
+      "messages": [
+        "你好",
+        "找对象，怎么收费"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["收费", "免费", "服务", "安排"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["男生还是女生", "你今年多大", "你在哪个城市"] }
+      ]
+    },
+    {
+      "id": "listener_first_opening_mixed_boundary_priority_over_profile",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "mixed", "boundary"],
+      "description": "开场同时说不给电话并给出性别时，应优先接住边界，而不是顺着资料继续追问。",
+      "messages": [
+        "你好",
+        "不给电话行不行，我是男的"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["可以", "不强求", "不留也行", "先聊"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["留个电话", "加个微信", "你今年多大", "你在哪个城市"] }
+      ]
+    },
+    {
       "id": "listener_first_preference_ack_city",
       "category": "humanlike_listener_first",
       "tags": ["critical", "humanlike", "listener_first", "preference"],
@@ -151,6 +321,58 @@
       ]
     },
     {
+      "id": "listener_first_explicit_matchmaking_enters_mainline",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "intent"],
+      "description": "用户首轮明确说帮我找对象时，应直接承接后进入主线，不要重复确认意图。",
+      "messages": [
+        "帮我找个对象"
+      ],
+      "assertions": [
+        { "type": "final_response_not_contains_any", "values": ["你是想找对象吗", "你想找对象是吗", "你也是来找对象的呀"] },
+        { "type": "final_response_contains_any", "values": ["男生", "女生", "了解下", "情况"] }
+      ]
+    },
+    {
+      "id": "listener_first_explicit_matchmaking_allows_open_self_intro",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "intent", "open_self_intro"],
+      "description": "用户明确说找对象时，回复允许给一个开放自述入口，而不是只能立刻硬切字段。",
+      "messages": [
+        "找对象"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["介绍下自己", "简单说说自己", "了解下你", "顺着了解"] }
+      ]
+    },
+    {
+      "id": "listener_first_multi_profile_no_mechanical_repeat",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "multi_profile"],
+      "description": "用户首轮主动给多个资料点时，应顺着继续，不要回头重问已给字段。",
+      "messages": [
+        "90后，深圳，做IT"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["学历", "单身", "婚况", "年龄段"] },
+        { "type": "final_response_not_contains_any", "values": ["哪个城市", "做什么工作", "你在深圳吗", "你做IT吗"] }
+      ]
+    },
+    {
+      "id": "listener_first_matchmaking_then_multi_profile_stays_contextual",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "intent", "multi_profile"],
+      "description": "用户先表达找对象，再主动给多个资料点时，AI应顺着已给信息继续，不回头重问城市或工作。",
+      "messages": [
+        "找对象",
+        "90后，深圳，做IT"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["学历", "单身", "婚况", "年龄段"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["哪个城市", "做什么工作", "你在深圳吗", "你做IT吗"] }
+      ]
+    },
+    {
       "id": "listener_first_mixed_answer_and_boundary",
       "category": "humanlike_listener_first",
       "tags": ["humanlike", "listener_first", "mixed", "boundary"],
@@ -161,6 +383,33 @@
       "assertions": [
         { "type": "final_response_contains_any", "values": ["本科", "不太想展开", "不方便", "先不追问"] },
         { "type": "final_response_not_contains_any", "values": ["那你职业呢", "再说下城市", "留个电话"] }
+      ]
+    },
+    {
+      "id": "listener_first_boundary_opening_no_collection",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "boundary"],
+      "description": "用户首轮先划边界时，应先降压，不继续采字段。",
+      "messages": [
+        "先别问我这些"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["先轻松聊", "不追问", "没关系", "不问那么紧"] },
+        { "type": "final_response_not_contains_any", "values": ["你今年多大", "你在哪个城市", "你做什么工作", "留个电话"] }
+      ]
+    },
+    {
+      "id": "listener_first_latest_location_prefers_occupation",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "contextual_followup"],
+      "description": "用户刚给出性别和所在地时，下一问应优先顺着所在地去问工作，而不是立刻回头问年龄。",
+      "messages": [
+        "找对象",
+        "男的呢，在深圳"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["工作", "做什么", "做哪方面"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["你今年多大", "什么年龄段", "几岁"] }
       ]
     },
     {

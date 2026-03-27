@@ -22,6 +22,14 @@ class TurnDecision:
     # Phase 2: 投诉修复状态
     in_repair_mode: bool = False
     repair_cooldown_remaining: int = 0
+    user_concern_type: str | None = None
+    resume_mode: str | None = None
+    resume_target: str | None = None
+    resume_applied: bool = False
+    followup_topic: str | None = None
+    context_ack_required: bool = False
+    context_ack_type: str | None = None
+    context_ack_payload: dict[str, Any] = field(default_factory=dict)
 
     def to_log_dict(self) -> dict[str, Any]:
         return {
@@ -38,4 +46,12 @@ class TurnDecision:
             "tone_policy": self.tone_policy,
             "in_repair_mode": self.in_repair_mode,
             "repair_cooldown_remaining": self.repair_cooldown_remaining,
+            "user_concern_type": self.user_concern_type,
+            "resume_mode": self.resume_mode,
+            "resume_target": self.resume_target,
+            "resume_applied": self.resume_applied,
+            "followup_topic": self.followup_topic,
+            "context_ack_required": self.context_ack_required,
+            "context_ack_type": self.context_ack_type,
+            "context_ack_payload": self.context_ack_payload,
         }

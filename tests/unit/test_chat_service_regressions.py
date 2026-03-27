@@ -11,6 +11,7 @@ from src.modules.profile_collection.domain.profile_collection_policy import Prof
 from src.services.ai_service import AIService
 from src.services.core.chat_service import ChatService
 from src.services.prompts.prompts import CORE_PERSONALITY, MAIN_DIALOGUE, SYSTEM_WELCOME_MESSAGE, get_main_dialogue
+from src.services.core.chat_service import OpeningIntentSignal
 
 
 class _FakeAIService:
@@ -144,6 +145,15 @@ def test_enforce_core_mainline_followup_overrides_wrong_medium_question():
 
     assert "年龄" in response or "多大" in response
     assert "另一半" not in response
+
+
+def test_extract_deterministic_profile_fields_handles_compound_sex_and_location_reply():
+    chat_service = _build_chat_service()
+
+    extracted = chat_service._extract_deterministic_profile_fields("男的呢，在深圳")
+
+    assert extracted["sex"] == "男"
+    assert extracted["location"] == "深圳"
 
 
 def test_enforce_core_mainline_followup_keeps_divorce_confirmation_prompt():
@@ -451,6 +461,18 @@ def test_build_turn_decision_prefers_answer_then_pause_for_faq():
     assert decision.response_channel == "quick_faq"
 
 
+def test_build_turn_decision_saves_resume_target_when_user_question_interrupts_field():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_resume_save")
+
+    decision = chat_service._build_turn_decision("你们靠谱吗？", profile, conversation_context={"message_count": 1})
+
+    assert decision.prioritize_user_question is True
+    assert profile.resume_profile_target == "sex"
+    assert profile.resume_profile_mode == "collect_core"
+    assert decision.resume_target == "sex"
+
+
 def test_build_turn_decision_uses_light_followup_for_short_message():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_light_followup")
@@ -458,6 +480,202 @@ def test_build_turn_decision_uses_light_followup_for_short_message():
     decision = chat_service._build_turn_decision("男的", profile, conversation_context={"message_count": 1})
 
     assert decision.primary_move == "light_followup"
+
+
+def test_build_turn_decision_uses_opening_probe_for_pure_greeting():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_probe")
+
+    decision = chat_service._build_turn_decision("在吗", profile, conversation_context={"message_count": 0})
+
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+    assert decision.primary_move == "answer_then_pause"
+
+
+def test_build_turn_decision_uses_opening_probe_for_combined_greeting():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_probe_combo")
+
+    decision = chat_service._build_turn_decision("你好，在吗？", profile, conversation_context={"message_count": 0})
+
+    assert decision.intent == "opening_probe"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+    assert decision.primary_move == "answer_then_pause"
+
+
+def test_build_turn_decision_uses_opening_probe_for_repeated_casual_greeting():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_probe_repeat")
+
+    decision = chat_service._build_turn_decision("在吗在吗", profile, conversation_context={"message_count": 0})
+
+    assert decision.intent == "opening_probe"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+
+
+def test_build_turn_decision_uses_opening_probe_for_english_greeting():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_probe_hi")
+
+    decision = chat_service._build_turn_decision("hi", profile, conversation_context={"message_count": 0})
+
+    assert decision.intent == "opening_probe"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+
+
+def test_build_turn_decision_uses_opening_probe_for_light_consult():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_probe_consult")
+
+    decision = chat_service._build_turn_decision("想了解下", profile, conversation_context={"message_count": 0})
+
+    assert decision.intent == "opening_probe"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+
+
+def test_build_turn_decision_uses_opening_clarify_for_unstable_opening_input():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_clarify")
+
+    decision = chat_service._build_turn_decision("佃�好", profile, conversation_context={"message_count": 0})
+
+    assert decision.intent == "opening_clarify"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+    assert decision.primary_move == "answer_then_pause"
+
+
+def test_build_turn_decision_uses_opening_self_intro_for_explicit_matchmaking_intent():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_self_intro")
+
+    decision = chat_service._build_turn_decision("找对象", profile, conversation_context={"message_count": 1})
+
+    assert decision.intent == "opening_self_intro"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+    assert decision.primary_move == "answer_then_pause"
+    assert decision.allow_contact_target is False
+    assert decision.allow_medium_target is False
+
+
+def test_build_turn_decision_uses_opening_self_intro_after_probe_followup_soft_intent():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_self_intro_after_probe")
+
+    decision = chat_service._build_turn_decision(
+        "先了解下",
+        profile,
+        conversation_context={
+            "message_count": 1,
+            "recent_responses": ["你好呀，我在呢。你这边是想找对象，还是先了解下呀？"],
+        },
+    )
+
+    assert decision.intent == "opening_self_intro"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+    assert decision.primary_move == "answer_then_pause"
+
+
+def test_build_turn_decision_uses_opening_self_intro_after_probe_followup_soft_intent_with_particle():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_self_intro_after_probe_particle")
+
+    decision = chat_service._build_turn_decision(
+        "先了解下呢",
+        profile,
+        conversation_context={
+            "message_count": 1,
+            "recent_responses": ["你好呀，我在呢。你这边是想找对象，还是先了解下呀？"],
+        },
+    )
+
+    assert decision.intent == "opening_self_intro"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+    assert decision.primary_move == "answer_then_pause"
+
+
+def test_build_turn_decision_uses_opening_self_intro_for_probe_followup_xiankan():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_self_intro_after_probe_xiankan")
+
+    decision = chat_service._build_turn_decision(
+        "我先看看",
+        profile,
+        conversation_context={
+            "message_count": 1,
+            "recent_responses": ["你好呀，我在呢。你这边是想找对象，还是先了解下呀？"],
+        },
+    )
+
+    assert decision.intent == "opening_self_intro"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+    assert decision.primary_move == "answer_then_pause"
+
+
+def test_build_turn_decision_uses_opening_self_intro_for_probe_followup_wenwen_qingkuang_with_prefix():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_self_intro_after_probe_wenwen_qingkuang_prefix")
+
+    decision = chat_service._build_turn_decision(
+        "就是想先问问情况呢",
+        profile,
+        conversation_context={
+            "message_count": 1,
+            "recent_responses": ["你好呀，在的。 你是想认真聊聊，还是先问问情况呀？"],
+        },
+    )
+
+    assert decision.intent == "opening_self_intro"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+    assert decision.primary_move == "answer_then_pause"
+
+
+def test_build_turn_decision_does_not_treat_contact_refusal_as_boundary_pause():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_contact_refusal_not_boundary")
+    profile.sex = "男"
+    profile.age = 36
+    profile.education = "本科"
+    profile.occupation = "IT"
+    profile.location = "深圳"
+    profile.marital_status = "单身"
+    profile.partner_requirement = "温柔"
+    profile.monthly_income = "5万"
+    profile.phone_ask_count = 1
+    for field in ["sex", "age", "education", "occupation", "location", "marital_status", "partner_requirement", "monthly_income"]:
+        profile.collection_progress[field] = True
+
+    decision = chat_service._build_turn_decision("不方便留呀", profile, conversation_context={"message_count": 8})
+
+    assert decision.risk != "boundary"
+    assert decision.primary_move != "soft_hold"
+    assert decision.allow_contact_target is True
+
+
+def test_build_turn_decision_applies_resume_target_once_before_new_target():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_resume_apply")
+    profile.sex = "男"
+    profile.collection_progress["sex"] = True
+    profile.resume_profile_mode = "collect_core"
+    profile.resume_profile_target = "age"
+
+    decision = chat_service._build_turn_decision("嗯", profile, conversation_context={"message_count": 2})
+
+    assert decision.ask_field == "age"
+    assert decision.primary_move == "light_followup"
+    assert decision.resume_applied is True
+    assert profile.resume_profile_target is None
 
 
 def test_build_turn_decision_resumes_profile_collection_without_contact_pivot():
@@ -477,6 +695,63 @@ def test_build_turn_decision_resumes_profile_collection_without_contact_pivot():
     assert decision.primary_move == "light_followup"
     assert decision.allow_contact_target is False
     assert decision.ask_field != "contact"
+
+
+@pytest.mark.anyio
+async def test_update_progress_runtime_counters_rolls_back_first_wrong_field_answer():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_wrong_field_rollback")
+    profile.field_ask_count["location"] = 1
+
+    turn_decision = SimpleNamespace(
+        prioritize_user_question=False,
+        response_channel="model",
+        allow_contact_target=False,
+        allow_medium_target=False,
+        primary_move="light_followup",
+        resume_applied=False,
+    )
+
+    await chat_service._update_progress_runtime_counters(
+        "u_wrong_field_rollback",
+        profile,
+        user_message="我做IT",
+        collection_result={"all_fields": [{"field": "occupation", "value": "IT"}]},
+        turn_decision=turn_decision,
+        previous_asked_field="location",
+    )
+
+    assert profile.field_ask_count["location"] == 0
+    assert profile.get_field_miss_streak("location") == 1
+    assert profile.last_effective_progress is True
+
+
+@pytest.mark.anyio
+async def test_update_progress_runtime_counters_treats_resume_applied_as_effective_progress():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_resume_progress")
+    profile.non_cooperation_turns = 2
+
+    turn_decision = SimpleNamespace(
+        prioritize_user_question=False,
+        response_channel="model",
+        allow_contact_target=False,
+        allow_medium_target=False,
+        primary_move="light_followup",
+        resume_applied=True,
+    )
+
+    await chat_service._update_progress_runtime_counters(
+        "u_resume_progress",
+        profile,
+        user_message="嗯",
+        collection_result={"all_fields": []},
+        turn_decision=turn_decision,
+        previous_asked_field=None,
+    )
+
+    assert profile.last_effective_progress is True
+    assert profile.non_cooperation_turns == 0
 
 
 def test_divorce_confirmation_response_only_asks_about_formality():
@@ -742,6 +1017,18 @@ def test_sanitize_robotic_tone_does_not_create_broken_sentence_fragments():
     assert "你是男生" in response
 
 
+def test_sanitize_robotic_tone_removes_meta_tone_adjustment_copy():
+    chat_service = _build_chat_service()
+
+    response = chat_service._sanitize_robotic_tone(
+        "哈哈好的，我语气放轻松些。之后有合适的匹配进展也方便及时通知到你，你方便留个联系电话不？"
+    )
+
+    assert "语气放轻松" not in response
+    assert "及时通知到你" not in response
+    assert "联系电话吗" in response or "联系你会更方便" in response
+
+
 def test_is_delivery_viable_rejects_empty_and_truncated_responses():
     chat_service = _build_chat_service()
 
@@ -884,6 +1171,117 @@ async def test_build_no_ai_response_uses_divorce_confirmation_when_pending():
 
 
 @pytest.mark.anyio
+async def test_build_no_ai_response_returns_opening_probe_for_greeting():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_greeting")
+
+    response = await chat_service._build_no_ai_response("u_no_ai_greeting", profile, "在吗")
+
+    assert (
+        "想找对象" in response
+        or "先了解下" in response
+        or "看看情况" in response
+        or "认真聊聊" in response
+    )
+    assert "男生还是女生" not in response
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_returns_opening_clarify_for_unstable_opening_input():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_opening_clarify")
+
+    response = await chat_service._build_no_ai_response("u_no_ai_opening_clarify", profile, "佃�好")
+
+    assert any(token in response for token in ["没看懂", "没太接住", "没看明白", "没反应过来"])
+    assert any(token in response for token in ["想找对象", "先了解下", "先看看情况", "先问问情况"])
+    assert "男生还是女生" not in response
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_corrects_evening_greeting_against_morning():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_time_greeting")
+    chat_service.greeting_service.get_current_time_period = lambda: "morning"
+
+    response = await chat_service._build_no_ai_response("u_no_ai_time_greeting", profile, "晚上好")
+
+    assert "早上" in response or "上午" in response
+    assert "晚上好呀" not in response
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_returns_opening_self_intro_for_explicit_matchmaking_intent():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_self_intro")
+
+    response = await chat_service._build_no_ai_response("u_no_ai_self_intro", profile, "找对象")
+
+    assert "介绍下自己" in response or "说说自己" in response or "大概情况" in response
+    assert "男生还是女生" not in response
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_returns_opening_self_intro_for_probe_followup_soft_intent():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_self_intro_after_probe")
+    chat_service.dialogue_manager.get_last_response = AsyncMock(
+        return_value="你好呀，我在呢。你这边是想找对象，还是先了解下呀？"
+    )
+
+    response = await chat_service._build_no_ai_response("u_no_ai_self_intro_after_probe", profile, "先了解下")
+
+    assert "介绍下自己" in response or "说说自己" in response or "大概情况" in response
+    assert "男生还是女生" not in response
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_returns_opening_self_intro_for_probe_followup_soft_intent_with_particle():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_self_intro_after_probe_particle")
+    chat_service.dialogue_manager.get_last_response = AsyncMock(
+        return_value="你好呀，我在呢。你这边是想找对象，还是先了解下呀？"
+    )
+
+    response = await chat_service._build_no_ai_response("u_no_ai_self_intro_after_probe_particle", profile, "先了解下呢")
+
+    assert "介绍下自己" in response or "说说自己" in response or "大概情况" in response
+    assert "男生还是女生" not in response
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_returns_opening_self_intro_for_probe_followup_xiankan():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_self_intro_after_probe_xiankan")
+    chat_service.dialogue_manager.get_last_response = AsyncMock(
+        return_value="你好呀，我在呢。你这边是想找对象，还是先了解下呀？"
+    )
+
+    response = await chat_service._build_no_ai_response("u_no_ai_self_intro_after_probe_xiankan", profile, "我先看看")
+
+    assert "介绍下自己" in response or "说说自己" in response or "大概情况" in response
+    assert "男生还是女生" not in response
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_returns_opening_self_intro_for_probe_followup_wenwen_qingkuang_with_prefix():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_self_intro_after_probe_wenwen_qingkuang_prefix")
+    chat_service.dialogue_manager.get_last_response = AsyncMock(
+        return_value="你好呀，在的。 你是想认真聊聊，还是先问问情况呀？"
+    )
+
+    response = await chat_service._build_no_ai_response(
+        "u_no_ai_self_intro_after_probe_wenwen_qingkuang_prefix",
+        profile,
+        "就是想先问问情况呢",
+    )
+
+    assert "介绍下自己" in response or "说说自己" in response or "大概情况" in response
+    assert "男生还是女生" not in response
+
+
+@pytest.mark.anyio
 async def test_build_no_ai_response_respects_resume_profile_collection_without_contact_pivot():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_no_ai_resume")
@@ -900,7 +1298,7 @@ async def test_build_no_ai_response_respects_resume_profile_collection_without_c
 
     assert "电话" not in response
     assert "微信" not in response
-    assert "顺着往下了解" in response or "更在意哪块" in response
+    assert "顺着往下了解" in response or "更在意哪块" in response or "更看重哪方面" in response
 
 
 @pytest.mark.anyio
@@ -1610,6 +2008,74 @@ def test_ensure_humanlike_memory_ack_reuses_preference():
     assert any(k in resp for k in ["成熟", "稳重", "合拍", "推荐"])
 
 
+def test_build_turn_decision_marks_work_busy_context_ack():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_topic_work")
+    profile.occupation = "运营"
+
+    decision = chat_service._build_turn_decision("我工作比较忙", profile, conversation_context={"message_count": 2})
+
+    assert decision.followup_topic == "work_busy"
+    assert decision.context_ack_required is True
+    assert decision.context_ack_type == "work_busy"
+
+
+def test_apply_context_ack_policy_reuses_work_topic_without_fixed_template():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_context_work")
+    profile.occupation = "运营"
+    decision = SimpleNamespace(
+        context_ack_required=True,
+        context_ack_type="work_busy",
+        context_ack_payload={"occupation": "运营"},
+    )
+
+    response = chat_service._apply_context_ack_policy(
+        "你对另一半大概有什么要求呀？",
+        decision,
+        profile,
+        "我工作比较忙",
+    )
+
+    assert any(token in response for token in ["运营", "工作", "忙", "节奏"])
+    assert "另一半" in response
+
+
+def test_apply_context_ack_policy_turns_partial_boundary_into_no_push_response():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_context_boundary")
+    decision = SimpleNamespace(
+        context_ack_required=True,
+        context_ack_type="profile_partial_with_boundary",
+        context_ack_payload={"field_ack": "本科我知道了。"},
+    )
+
+    response = chat_service._apply_context_ack_policy(
+        "你现在主要在哪个城市生活呀？",
+        decision,
+        profile,
+        "本科，不过这个先不太方便说",
+    )
+
+    assert "本科" in response
+    assert any(token in response for token in ["不追", "舒服", "先不往", "不想展开"])
+    assert "城市" not in response
+
+
+def test_apply_priority_question_guard_blocks_contact_push_on_faq_turn():
+    chat_service = _build_chat_service()
+    decision = SimpleNamespace(prioritize_user_question=True)
+
+    response = chat_service._apply_priority_question_guard(
+        "方便留个电话吗？后面沟通会方便些。",
+        decision,
+        "为什么要留电话呢",
+    )
+
+    assert "留个电话吗" not in response
+    assert any(token in response for token in ["方便", "沟通", "乱用", "打扰"])
+
+
 def test_select_model_for_turn_prefers_main_model_on_high_risk(monkeypatch):
     monkeypatch.setenv("AI_ROUTING_ENABLED", "true")
     monkeypatch.setenv("AI_FAST_MODEL_NAME", "doubao-seed-fast")
@@ -1678,9 +2144,94 @@ def test_get_boundary_pause_response_handles_privacy_concern():
     chat_service = _build_chat_service()
     response = chat_service._get_boundary_pause_response("这个我不太方便说，先不留")
     assert response is not None
-    assert "先不追问" in response
-    assert "隐私" in response or "流程" in response
-    assert "不太想展开" in response or "不方便" in response
+
+
+def test_extract_opening_intent_block_parses_payload_and_natural_response():
+    chat_service = _build_chat_service()
+
+    signal, natural = chat_service._extract_opening_intent_block(
+        '<opening_intent>{"intent":"low_pressure_opening","confidence":0.91,"secondary_intent":null}</opening_intent>可以呀，那我们先轻松聊聊。'
+    )
+
+    assert signal is not None
+    assert signal.intent == "low_pressure_opening"
+    assert signal.confidence == pytest.approx(0.91)
+    assert natural == "可以呀，那我们先轻松聊聊。"
+
+
+def test_extract_opening_intent_block_returns_parse_failed_on_invalid_json():
+    chat_service = _build_chat_service()
+
+    signal, natural = chat_service._extract_opening_intent_block(
+        "<opening_intent>{bad json}</opening_intent>可以呀，那我们先轻松聊聊。"
+    )
+
+    assert signal is not None
+    assert signal.parse_failed is True
+    assert natural == "可以呀，那我们先轻松聊聊。"
+
+
+def test_resolve_opening_intent_priority_promotes_higher_priority_secondary():
+    primary, secondary = ChatService._resolve_opening_intent_priority(
+        "explicit_matchmaking_opening",
+        "opening_faq",
+    )
+
+    assert primary == "opening_faq"
+    assert secondary == "explicit_matchmaking_opening"
+
+
+def test_enforce_opening_intent_consistency_replaces_wrong_followup_for_low_pressure():
+    chat_service = _build_chat_service()
+
+    response = chat_service._enforce_opening_intent_consistency(
+        "先随便聊聊，你这边是男生还是女生呀？",
+        OpeningIntentSignal(intent="low_pressure_opening", confidence=0.91),
+        user_message="就是想先问问情况呢",
+        seed_hint="u:test",
+    )
+
+    assert "介绍下自己" in response or "说说自己" in response or "大概情况" in response
+    assert "男生还是女生" not in response
+
+
+def test_apply_opening_intent_signal_to_turn_decision_maps_opening_greeting_to_probe():
+    chat_service = _build_chat_service()
+    decision = SimpleNamespace(
+        intent="general",
+        primary_move="ack_and_ask",
+        ask_field="sex",
+        prioritize_user_question=False,
+        allow_contact_target=True,
+        allow_medium_target=True,
+        followup_topic=None,
+    )
+
+    chat_service._apply_opening_intent_signal_to_turn_decision(
+        OpeningIntentSignal(intent="opening_greeting", confidence=0.95),
+        decision,
+        user_message="你好呀，在吗呀呀呀？",
+    )
+
+    assert decision.intent == "opening_probe"
+    assert decision.primary_move == "answer_then_pause"
+    assert decision.ask_field is None
+    assert decision.prioritize_user_question is True
+    assert decision.allow_contact_target is False
+
+
+def test_enforce_opening_intent_consistency_replaces_wrong_followup_for_opening_greeting():
+    chat_service = _build_chat_service()
+
+    response = chat_service._enforce_opening_intent_consistency(
+        "我在的~咱们先随便聊聊哈，你是男生还是女生呀？",
+        OpeningIntentSignal(intent="opening_greeting", confidence=1.0),
+        user_message="你好呀，在吗呀呀呀？",
+        seed_hint="u:greeting",
+    )
+
+    assert any(token in response for token in ["找对象", "了解下", "看看情况", "问问情况"])
+    assert "男生还是女生" not in response
 
 
 def test_get_boundary_pause_response_softens_phone_refusal_without_switching_to_wechat():
@@ -1693,6 +2244,20 @@ def test_get_boundary_pause_response_softens_phone_refusal_without_switching_to_
     assert "不方便也没事" in response
     assert "微信" not in response
     assert "按你方便的方式" in response
+
+
+def test_apply_income_appreciation_policy_adds_light_ack_for_high_income():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_income_ack")
+    profile.monthly_income = "5万"
+
+    response = chat_service._apply_income_appreciation_policy(
+        "好呀，你大概是什么学历呀？ 这样我对你的情况会更有数一点。",
+        profile,
+        {"all_fields": [{"field": "monthly_income", "value": "5万"}]},
+    )
+
+    assert "那还不错呀" in response
 
 
 def test_build_user_feeling_ack_handles_phone_unavailable_more_naturally():
@@ -2628,6 +3193,19 @@ def test_ensure_short_answer_ack_transition_prefixes_ack_before_question():
     assert "学历" in response
 
 
+def test_ensure_short_answer_ack_transition_does_not_double_ack_when_model_already_confirmed_field():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_short_answer_bridge_existing_ack")
+
+    response = chat_service._ensure_short_answer_ack_transition(
+        "好的，你是男生啦。 你今年多大呀？",
+        user_message="男的",
+        user_profile=profile,
+    )
+
+    assert response == "好的，你是男生啦。 你今年多大呀？"
+
+
 def test_profile_collection_policy_does_not_repeat_partner_requirement_side_target_after_first_ask():
     policy = ProfileCollectionPolicy()
     profile = UserProfile(account_id="u_policy_pref_cooldown")
@@ -2665,7 +3243,7 @@ def test_profile_collection_policy_prioritizes_marital_status_after_core_fields(
     assert main_target == "marital_status"
 
 
-def test_profile_collection_policy_can_enter_contact_without_partner_requirement_once_core_ready():
+def test_profile_collection_policy_blocks_contact_until_partner_requirement_is_covered():
     policy = ProfileCollectionPolicy()
     profile = UserProfile(account_id="u_policy_contact_ready")
     profile.sex = "男"
@@ -2677,7 +3255,7 @@ def test_profile_collection_policy_can_enter_contact_without_partner_requirement
         {"sex": True, "age": True, "location": True, "education": True, "occupation": True}
     )
 
-    assert policy.can_enter_contact(profile) is True
+    assert policy.can_enter_contact(profile) is False
 
 
 def test_enforce_core_mainline_followup_allows_approved_side_target_interleave():
@@ -2711,6 +3289,16 @@ def test_collapse_duplicate_ack_segments_removes_double_confirmation():
 
     assert "你今年多大呀？" in response
     assert response.count("男生") <= 1
+
+
+def test_collapse_duplicate_ack_segments_prefers_compound_ack_question_segment():
+    chat_service = _build_chat_service()
+
+    response = chat_service._collapse_duplicate_ack_segments(
+        "男生，明白了。 好的，你是男生啦。 你今年多大呀？"
+    )
+
+    assert response == "好的，你是男生啦。 你今年多大呀？"
 
 
 def test_enforce_contact_outcome_policy_keeps_model_written_phone_prompt_when_action_matches():

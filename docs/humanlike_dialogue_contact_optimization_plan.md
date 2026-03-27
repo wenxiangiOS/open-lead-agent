@@ -1,7 +1,7 @@
 # 拟人化与对话逻辑最终优化方案
 
 > 更新时间：2026-03-25
-> 目标：让项目逻辑严格符合 `contact_collection.md` 与 `ai_dialog_policy.md`，并在此基础上显著提升真人感
+> 目标：让项目逻辑严格符合 `06_CONTACT_COLLECTION.md` 与 `ai_dialog_policy.md`，并在此基础上显著提升真人感
 
 ---
 
@@ -9,7 +9,7 @@
 
 本项目后续所有相关优化，统一以这两份文档为真源：
 
-1. [contact_collection.md](/Users/eric/Desktop/doubao_mcp_server/docs/contact_collection.md)
+1. [06_CONTACT_COLLECTION.md](/Users/eric/Desktop/doubao_mcp_server/docs/06_CONTACT_COLLECTION.md)
    - 约束联系方式状态机
    - 约束询问次数、拒绝检测、切换与结束条件
 
@@ -37,7 +37,7 @@
 
 ### 2.1 逻辑真源不纯
 
-- 联系方式逻辑没有完全收敛到 [contact_collection.md](/Users/eric/Desktop/doubao_mcp_server/docs/contact_collection.md)
+- 联系方式逻辑没有完全收敛到 [06_CONTACT_COLLECTION.md](/Users/eric/Desktop/doubao_mcp_server/docs/06_CONTACT_COLLECTION.md)
 - 资料主线优先级没有完全收敛到 [ai_dialog_policy.md](/Users/eric/Desktop/doubao_mcp_server/docs/ai_dialog_policy.md)
 - 当前流程被多个层同时改写：
   - [contact_collection_service.py](/Users/eric/Desktop/doubao_mcp_server/src/services/collection/contact_collection_service.py)
@@ -78,7 +78,7 @@
 
 ## 3. 两份真源文档的落地解释
 
-### 3.1 `contact_collection.md` 的约束边界
+### 3.1 `06_CONTACT_COLLECTION.md` 的约束边界
 
 这份文档约束的是“联系方式状态机”。
 
@@ -233,7 +233,7 @@
 
 ### 6.2 非香港用户标准流程
 
-严格按 [contact_collection.md](/Users/eric/Desktop/doubao_mcp_server/docs/contact_collection.md)：
+严格按 [06_CONTACT_COLLECTION.md](/Users/eric/Desktop/doubao_mcp_server/docs/06_CONTACT_COLLECTION.md)：
 
 - 默认先电话
 - 电话拒绝后，再微信
@@ -544,7 +544,7 @@ AI 超时后，不能让用户看到空白。
 
 目标：
 
-- `get_next_action()` 回归 [contact_collection.md](/Users/eric/Desktop/doubao_mcp_server/docs/contact_collection.md)
+- `get_next_action()` 回归 [06_CONTACT_COLLECTION.md](/Users/eric/Desktop/doubao_mcp_server/docs/06_CONTACT_COLLECTION.md)
 - 修 ask_count 语义
 - 修拒绝检测为“当前动作优先”
 
@@ -635,7 +635,7 @@ AI 超时后，不能让用户看到空白。
 
 最终最优方案是：
 
-1. 先把 [contact_collection.md](/Users/eric/Desktop/doubao_mcp_server/docs/contact_collection.md) 固化为联系方式逻辑唯一真源
+1. 先把 [06_CONTACT_COLLECTION.md](/Users/eric/Desktop/doubao_mcp_server/docs/06_CONTACT_COLLECTION.md) 固化为联系方式逻辑唯一真源
 2. 再把 [ai_dialog_policy.md](/Users/eric/Desktop/doubao_mcp_server/docs/ai_dialog_policy.md) 固化为资料主线与拟人化优先级真源
 3. 再补上一致性层：
    - 用户看到什么

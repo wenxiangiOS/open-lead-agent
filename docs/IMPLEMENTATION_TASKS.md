@@ -2,7 +2,7 @@
 
 > 创建时间：2026-03-17
 > 目标读者：负责按文档直接编码实现的其他模型或工程师
-> 依赖文档：`docs/message_queue_design.md`
+> 依赖文档：`docs/07_MESSAGE_QUEUE_DESIGN.md`
 
 ## 一、使用说明
 
@@ -10,7 +10,7 @@
 
 实现时必须遵守：
 
-1. 先阅读 `docs/message_queue_design.md`
+1. 先阅读 `docs/07_MESSAGE_QUEUE_DESIGN.md`
 2. 严格按本任务书阶段顺序实施
 3. 每阶段只做该阶段要求的内容，不擅自扩 scope
 4. 不要重写现有 `ChatService` 业务逻辑
@@ -109,7 +109,7 @@
 - `OutboxJob`
 - `EnqueueResult`
 
-字段以 `docs/message_queue_design.md` 为准。
+字段以 `docs/07_MESSAGE_QUEUE_DESIGN.md` 为准。
 
 #### B. `intent_classifier.py`
 

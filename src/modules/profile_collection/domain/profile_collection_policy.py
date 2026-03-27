@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field as dataclass_field
 import os
+import re
 from typing import Dict, List, Optional
 
 from src.models.user_profile import UserProfile
@@ -35,6 +36,11 @@ class PolicyDecision:
     core_success_count: int = 0
     allow_contact_push: bool = False
     reason: str = ""
+    must_answer_first: bool = False
+    user_concern_type: Optional[str] = None
+    resume_mode: Optional[str] = None
+    resume_target: Optional[str] = None
+    made_effective_progress: bool = False
 
 
 class ProfileCollectionPolicy:
@@ -56,6 +62,12 @@ class ProfileCollectionPolicy:
         "occupation",
         "marital_status",
         "contact",
+    ]
+
+    CORE_ORDER_VARIANTS = [
+        ["sex", "age", "location", "education", "occupation"],
+        ["sex", "location", "age", "education", "occupation"],
+        ["sex", "age", "education", "location", "occupation"],
     ]
 
     ASK_LIMITS: Dict[str, int] = {
@@ -206,7 +218,13 @@ class ProfileCollectionPolicy:
         main_target: Optional[str] = None
         forced_cover_target: Optional[str] = None
         if next_mode == "collect_core":
-            main_target = self.get_main_target(profile, can_enter_contact=False, allow_contact_target=False)
+            main_target = self.get_main_target(
+                profile,
+                can_enter_contact=False,
+                allow_contact_target=False,
+                user_message=user_message,
+                message_count=message_count,
+            )
         elif next_mode == "collect_medium":
             forced_cover_target = self.get_forced_cover_target(profile)
             main_target = forced_cover_target
@@ -246,6 +264,7 @@ class ProfileCollectionPolicy:
                 engagement_mode=engagement_mode,
                 unresolved_core_fields=unresolved_core_fields,
                 unresolved_medium_fields=unresolved_medium_fields,
+                ongoing_contact_flow=ongoing_contact_flow,
             ),
         )
 
@@ -254,11 +273,21 @@ class ProfileCollectionPolicy:
         profile: UserProfile,
         can_enter_contact: Optional[bool] = None,
         allow_contact_target: bool = True,
+        user_message: str = "",
+        message_count: int = 0,
     ) -> Optional[str]:
         """获取当前主目标字段"""
         can_enter_contact = self.can_enter_contact(profile) if can_enter_contact is None else can_enter_contact
 
-        for field in self.PRIORITY_ORDER:
+        contextual_core_target = self._get_contextual_core_target(
+            profile,
+            user_message=user_message,
+            message_count=message_count,
+        )
+        if contextual_core_target and self.can_actively_ask(profile, contextual_core_target):
+            return contextual_core_target
+
+        for field in self._get_priority_order(profile):
             if field == "contact":
                 if not allow_contact_target or not can_enter_contact:
                     continue
@@ -285,9 +314,12 @@ class ProfileCollectionPolicy:
         if main_target == "contact":
             return None
         if message_count and message_count <= 4:
-            return None
+            if not self._message_contains_profile_context(user_message):
+                return None
 
         if self.can_actively_ask(profile, "partner_requirement"):
+            if main_target == "marital_status":
+                return "partner_requirement"
             if any(keyword in user_message for keyword in self.PARTNER_REQUIREMENT_TRIGGER_KEYWORDS):
                 return "partner_requirement"
 
@@ -297,7 +329,11 @@ class ProfileCollectionPolicy:
 
         # 职业语境下可低压顺带问一次月薪。
         if self.can_use_as_side_target(profile, "monthly_income"):
-            if main_target == "occupation" and (message_count == 0 or message_count >= 7):
+            if main_target == "occupation" and (
+                message_count == 0
+                or message_count >= 7
+                or self._message_contains_profile_context(user_message)
+            ):
                 return "monthly_income"
             if any(keyword in user_message for keyword in self.INCOME_TRIGGER_KEYWORDS):
                 return "monthly_income"
@@ -315,7 +351,7 @@ class ProfileCollectionPolicy:
         can_enter_contact = self.can_enter_contact(profile) if can_enter_contact is None else can_enter_contact
         fields: List[str] = []
 
-        for field in self.PRIORITY_ORDER:
+        for field in self._get_priority_order(profile):
             if field == "contact" and (not can_enter_contact or not allow_contact_target):
                 continue
             if field == "contact":
@@ -338,6 +374,132 @@ class ProfileCollectionPolicy:
 
     def get_core_success_count(self, profile: UserProfile) -> int:
         return sum(1 for field in self.CORE_CONTACT_FIELDS if self.is_collected(profile, field))
+
+    def _get_priority_order(self, profile: UserProfile) -> List[str]:
+        """返回当前用户的受控主线顺序。
+
+        目标不是完全随机，而是在不打乱主线骨架的前提下，让 age/location/education
+        之间存在轻微换位，减少流程感。
+        """
+        account_id = str(getattr(profile, "account_id", "") or "")
+        stable_seed = sum(ord(ch) for ch in account_id)
+        core_order = self.CORE_ORDER_VARIANTS[stable_seed % len(self.CORE_ORDER_VARIANTS)]
+        return [*core_order, "marital_status", "contact"]
+
+    def _get_contextual_core_target(
+        self,
+        profile: UserProfile,
+        *,
+        user_message: str = "",
+        message_count: int = 0,
+    ) -> Optional[str]:
+        """根据用户刚给出的资料，优先选择更像顺着聊的下一个核心字段。"""
+        message = str(user_message or "").strip()
+        if not message:
+            return None
+
+        cue_order = self._extract_message_field_cue_order(message)
+        if not cue_order:
+            return None
+        cues = {field: True for field in cue_order}
+
+        if cues.get("location") and cues.get("occupation"):
+            for field in ("age", "education", "sex"):
+                if self.can_actively_ask(profile, field):
+                    return field
+
+        latest_cue = cue_order[-1]
+
+        if latest_cue == "location":
+            for field in ("occupation", "education", "age", "sex"):
+                if self.can_actively_ask(profile, field):
+                    return field
+
+        if latest_cue == "occupation":
+            for field in ("education", "age", "location", "sex"):
+                if self.can_actively_ask(profile, field):
+                    return field
+
+        if latest_cue == "age":
+            for field in ("location", "education", "occupation", "sex"):
+                if self.can_actively_ask(profile, field):
+                    return field
+
+        if latest_cue == "education":
+            for field in ("occupation", "location", "age", "sex"):
+                if self.can_actively_ask(profile, field):
+                    return field
+
+        if latest_cue == "sex":
+            for field in ("location", "age", "education", "occupation"):
+                if self.can_actively_ask(profile, field):
+                    return field
+
+        return None
+
+    @staticmethod
+    def _message_contains_profile_context(user_message: str) -> bool:
+        return bool(ProfileCollectionPolicy._extract_message_field_cue_order(user_message))
+
+    @staticmethod
+    def _extract_message_field_cues(user_message: str) -> Dict[str, bool]:
+        cue_order = ProfileCollectionPolicy._extract_message_field_cue_order(user_message)
+        return {
+            "sex": "sex" in cue_order,
+            "age": "age" in cue_order,
+            "location": "location" in cue_order,
+            "education": "education" in cue_order,
+            "occupation": "occupation" in cue_order,
+        }
+
+    @staticmethod
+    def _extract_message_field_cue_order(user_message: str) -> List[str]:
+        message = str(user_message or "").strip().lower()
+        if not message:
+            return []
+
+        compact = re.sub(r"[，,、。！？!?~～\s]+", "", message)
+        location_cities = ("深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港")
+        education_tokens = ("博士", "硕士", "研究生", "本科", "大专", "中专", "高中")
+        occupation_tokens = ("it", "ui", "hr", "qa", "产品", "运营", "设计", "开发", "程序员", "销售", "老师", "医生", "公务员")
+        found: List[tuple[int, str]] = []
+
+        sex_match = re.search(r"(男生|男的|女生|女的|我是男|我是女)", message)
+        if sex_match:
+            found.append((sex_match.start(), "sex"))
+
+        age_match = re.search(r"(\d{2}后|\d{2}岁|\d{4}年|\d{2}年生|90后|95后|85后)", message)
+        if age_match:
+            found.append((age_match.start(), "age"))
+
+        for city in location_cities:
+            idx = compact.find(city)
+            if idx != -1:
+                found.append((idx, "location"))
+                break
+
+        for token in education_tokens:
+            idx = compact.find(token)
+            if idx != -1:
+                found.append((idx, "education"))
+                break
+
+        occupation_match = re.search(r"(做|从事|工作是|工作做|职业是)\S{1,10}", message)
+        if occupation_match:
+            found.append((occupation_match.start(), "occupation"))
+        else:
+            for token in occupation_tokens:
+                idx = compact.find(token)
+                if idx != -1:
+                    found.append((idx, "occupation"))
+                    break
+
+        found.sort(key=lambda item: item[0])
+        ordered_fields: List[str] = []
+        for _, field in found:
+            if field not in ordered_fields:
+                ordered_fields.append(field)
+        return ordered_fields
 
     def is_core_field_covered(self, profile: UserProfile, field: str) -> bool:
         if profile.skipped_fields.get(field, False) or profile.is_active_ask_closed(field):
@@ -447,7 +609,10 @@ class ProfileCollectionPolicy:
         engagement_mode: str,
         unresolved_core_fields: List[str],
         unresolved_medium_fields: List[str],
+        ongoing_contact_flow: bool = False,
     ) -> str:
+        if ongoing_contact_flow:
+            return "ongoing_contact_flow_freeze_profile_collection"
         if engagement_mode == "close":
             return "cost_control_close"
         if engagement_mode == "light":

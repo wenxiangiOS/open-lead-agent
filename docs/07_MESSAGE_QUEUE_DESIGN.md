@@ -15,7 +15,7 @@
 
 协作口令（可直接复制给其他模型）：
 
-`先按 docs/message_queue_design.md 的“执行入口”和“零”章节实施，再更新 docs/message_queue_status.yaml，并提交 reports/mq/p0_acceptance_*.md。`
+`先按 docs/07_MESSAGE_QUEUE_DESIGN.md 的“执行入口”和“零”章节实施，再更新 docs/message_queue_status.yaml，并提交 reports/mq/p0_acceptance_*.md。`
 
 ## 实施状态看板（跨模型协作必读）
 
@@ -260,7 +260,7 @@ MQ_LOCK_TTL_SECONDS = 180
 
 ## 一点一、2026-03-18 时延优化最终方案（不改业务逻辑版）
 
-> 适用前提：不修改 `contact_collection.md` 规则，不改变现有对话状态机语义，不降低拟人化要求。
+> 适用前提：不修改 `06_CONTACT_COLLECTION.md` 规则，不改变现有对话状态机语义，不降低拟人化要求。
 > 执行优先级：高。若与历史参数建议冲突，以本节为准。
 
 ### 1. 目标指标
@@ -312,7 +312,7 @@ MQ_LOCK_TTL_SECONDS = 180
 
 ### 6. 质量与拟人化守门（强约束）
 
-1. 规则冻结：不得更改 `contact_collection.md` 语义与流程边界。
+1. 规则冻结：不得更改 `06_CONTACT_COLLECTION.md` 语义与流程边界。
 2. 回归门槛：108 场景通过率不得下降。
 3. 子集门槛：`contact_* / faq_priority_* / humanlike_*` 全量不退化。
 4. 人工抽检：至少 30 段对话，拟人化评分不低于基线。
@@ -340,7 +340,7 @@ MQ_LOCK_TTL_SECONDS = 180
 
 ### 0.1 执行边界（不允许偏离）
 
-1. 不修改 `contact_collection.md` 的业务规则定义、字段语义和收集约束。
+1. 不修改 `06_CONTACT_COLLECTION.md` 的业务规则定义、字段语义和收集约束。
 2. 仅在消息编排层、调度层、发送层和表达层做优化。
 3. 小红书正式链路必须走异步队列，不再以 `/api/doubao/chat` 作为主入口。
 

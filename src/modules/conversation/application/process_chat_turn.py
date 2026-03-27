@@ -218,6 +218,17 @@ class ProcessChatTurnUseCase:
                     repeat_count=1,
                     recent_responses=conversation_context.get("recent_responses") or (),
                 ) or await self.chat_service._build_no_ai_response(account_id, user_profile, request.question)  # noqa: SLF001
+                final_response = self.chat_service._apply_priority_question_guard(  # noqa: SLF001
+                    final_response,
+                    turn_decision,
+                    request.question,
+                )
+                final_response = self.chat_service._apply_context_ack_policy(  # noqa: SLF001
+                    final_response,
+                    turn_decision,
+                    user_profile,
+                    request.question,
+                )
                 final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
                 # Phase 2: FAQ 结束后设置 bridge_back 标记
                 user_profile.needs_bridge_back = True
@@ -252,6 +263,12 @@ class ProcessChatTurnUseCase:
 
             if turn_decision.risk == "boundary":
                 final_response = self.chat_service._get_boundary_pause_response(request.question)  # noqa: SLF001
+                final_response = self.chat_service._apply_context_ack_policy(  # noqa: SLF001
+                    final_response,
+                    turn_decision,
+                    user_profile,
+                    request.question,
+                )
                 final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
                 # Phase 2: boundary 结束后设置 bridge_back 标记
                 user_profile.needs_bridge_back = True
@@ -287,6 +304,12 @@ class ProcessChatTurnUseCase:
             # Phase 1: complaint / repair 意图处理
             if turn_decision.intent == "complaint":
                 final_response = self.chat_service._get_complaint_repair_response(request.question)  # noqa: SLF001
+                final_response = self.chat_service._apply_context_ack_policy(  # noqa: SLF001
+                    final_response,
+                    turn_decision,
+                    user_profile,
+                    request.question,
+                )
                 final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
                 # complaint 修复态不再桥接回“继续采集”的主线，避免下一轮又把用户拉回资料追问。
                 user_profile.needs_bridge_back = False
@@ -353,6 +376,12 @@ class ProcessChatTurnUseCase:
                 allow_contact_target=turn_decision.allow_contact_target,
                 allow_medium_target=turn_decision.allow_medium_target,
             )
+            opening_intent_detection_enabled = self.chat_service._should_run_opening_intent_detection(  # noqa: SLF001
+                conversation_context,
+                user_profile,
+            ) and turn_decision.response_channel == "model"
+            if opening_intent_detection_enabled:
+                main_prompt = self.chat_service._augment_prompt_for_opening_intent_detection(main_prompt)  # noqa: SLF001
             _mark("prompt_build", t0)
             prompt_chars = len(main_prompt or "")
 
@@ -361,15 +390,35 @@ class ProcessChatTurnUseCase:
             _mark("profile_save_pre_ai", t0)
 
             t0 = time.perf_counter()
+            self.chat_service._last_opening_intent_signal = None  # noqa: SLF001
             ai_response = await self.chat_service._call_ai(main_prompt, account_id, request.question)  # noqa: SLF001
             _mark("ai_call", t0)
             if not ai_response:
                 infra_fail = True
                 infra_fail_reason = getattr(self.chat_service, "_last_ai_failure_reason", None) or "ai_empty_response"
+                self.chat_service._last_opening_intent_signal = None  # noqa: SLF001
                 t0 = time.perf_counter()
                 ai_response = await self.chat_service._build_no_ai_response(account_id, user_profile, request.question)  # noqa: SLF001
                 _mark("no_ai_fallback", t0)
             elif turn_decision.response_channel == "model":
+                opening_signal = None
+                if opening_intent_detection_enabled:
+                    opening_signal, ai_response = self.chat_service._extract_opening_intent_block(ai_response)  # noqa: SLF001
+                    self.chat_service._last_opening_intent_signal = opening_signal  # noqa: SLF001
+                    if opening_signal and opening_signal.parse_failed:
+                        logger.info("[opening_intent] parse_failed=1")
+                    elif opening_signal and opening_signal.intent:
+                        logger.info(
+                            "[opening_intent] intent=%s confidence=%.2f secondary=%s",
+                            opening_signal.intent,
+                            opening_signal.confidence,
+                            opening_signal.secondary_intent or "-",
+                        )
+                    self.chat_service._apply_opening_intent_signal_to_turn_decision(  # noqa: SLF001
+                        opening_signal,
+                        turn_decision,
+                        user_message=request.question,
+                    )
                 t0 = time.perf_counter()
                 ai_response = await self.chat_service._stabilize_style_response(  # noqa: SLF001
                     ai_response,
@@ -386,6 +435,8 @@ class ProcessChatTurnUseCase:
                     user_profile=user_profile,
                 )
                 _mark("short_answer_bridge", t0)
+            else:
+                self.chat_service._last_opening_intent_signal = None  # noqa: SLF001
 
             t0 = time.perf_counter()
             if infra_fail:
@@ -456,6 +507,23 @@ class ProcessChatTurnUseCase:
                     response_to_clean = ai_ending_response
                     ending_info["response"] = ai_ending_response
             final_response = self.chat_service._clean_response(response_to_clean)  # noqa: SLF001
+            final_response = self.chat_service._enforce_opening_intent_consistency(  # noqa: SLF001
+                final_response,
+                getattr(self.chat_service, "_last_opening_intent_signal", None),
+                user_message=request.question,
+                seed_hint=f"{account_id}:{request.question}",
+            )
+            final_response = self.chat_service._apply_priority_question_guard(  # noqa: SLF001
+                final_response,
+                turn_decision,
+                request.question,
+            )
+            final_response = self.chat_service._apply_context_ack_policy(  # noqa: SLF001
+                final_response,
+                turn_decision,
+                user_profile,
+                request.question,
+            )
             final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
                 final_response,
                 user_profile,
@@ -511,6 +579,11 @@ class ProcessChatTurnUseCase:
             ):
                 final_response = self.chat_service._build_divorce_confirmation_response()  # noqa: SLF001
             final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+            final_response = self.chat_service._apply_income_appreciation_policy(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+            )
             final_response = self.chat_service._apply_field_ask_guard(  # noqa: SLF001
                 user_profile,
                 final_response,
@@ -532,6 +605,17 @@ class ProcessChatTurnUseCase:
                     request.question,
                 )
                 final_response = self.chat_service._clean_response(fallback_response)  # noqa: SLF001
+                final_response = self.chat_service._apply_priority_question_guard(  # noqa: SLF001
+                    final_response,
+                    turn_decision,
+                    request.question,
+                )
+                final_response = self.chat_service._apply_context_ack_policy(  # noqa: SLF001
+                    final_response,
+                    turn_decision,
+                    user_profile,
+                    request.question,
+                )
                 final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
                     final_response,
                     user_profile,
@@ -572,6 +656,11 @@ class ProcessChatTurnUseCase:
                     request.question,
                 )
                 final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                final_response = self.chat_service._apply_income_appreciation_policy(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    collection_result,
+                )
                 final_response = self.chat_service._apply_refusal_respect_guard(  # noqa: SLF001
                     final_response,
                     user_profile,
@@ -601,6 +690,12 @@ class ProcessChatTurnUseCase:
                 user_profile,
                 request.question,
                 allow_medium_target=turn_decision.allow_medium_target,
+            )
+            final_response = self.chat_service._apply_context_ack_policy(  # noqa: SLF001
+                final_response,
+                turn_decision,
+                user_profile,
+                request.question,
             )
             final_response = self.chat_service._enforce_natural_completion_transition(  # noqa: SLF001
                 final_response,
@@ -688,14 +783,21 @@ class ProcessChatTurnUseCase:
                 )
                 _mark("contact_ask_record", t0)
 
+            previous_asked_field = user_profile.last_asked_field
             field_ask_count_before = dict(user_profile.field_ask_count) if user_profile.field_ask_count else {}
             t0 = time.perf_counter()
+            should_track_asked_fields = (
+                delivery_ok
+                and not turn_decision.prioritize_user_question
+                and turn_decision.primary_move
+                not in {"answer_then_pause", "repair_and_release", "soft_hold", "ack_only", "confirm_status_only"}
+            )
             await self.chat_service._update_conversation_state(  # noqa: SLF001
                 account_id,
                 request.question,
                 final_response,
                 ai_response,
-                track_asked_fields=delivery_ok,
+                track_asked_fields=should_track_asked_fields,
             )
             _mark("state_update", t0)
             t0 = time.perf_counter()
@@ -710,6 +812,7 @@ class ProcessChatTurnUseCase:
                 collection_result=collection_result,
                 turn_decision=turn_decision,
                 message_count=message_count,
+                previous_asked_field=previous_asked_field,
             )
             _mark("progress_counters", t0)
 

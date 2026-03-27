@@ -2,6 +2,42 @@
 
 这套测试用于跑真实 `AIService + ChatService` 端到端链路，不 mock 模型回复。
 
+## 最优先命令
+
+如果你要测试下面两份文档合并后的完整方案：
+
+- `docs/05_PROFILE_COLLECTION_STRATEGY.md`
+- `docs/06_CONTACT_COLLECTION.md`
+
+最优先直接运行这条核心场景命令：
+
+```bash
+python3 scripts/run_profile_contact_full_regression.py --scenario-pack core84 --verbose
+```
+
+这条命令会一次性跑：
+
+1. `05_PROFILE_COLLECTION_STRATEGY.md` 对应的 63 个核心真实 AI chat 场景
+2. `06_CONTACT_COLLECTION.md` 对应的 21 个真实 AI 联系方式集成场景
+3. 两份方案联动后的核心完整真实 AI 效果
+
+如果你当前只看一个命令，就看这条。
+
+如果你要跑**全量完整方案回归**，再运行：
+
+```bash
+python3 scripts/run_profile_contact_full_regression.py --verbose
+```
+
+这里的 `core84` 是历史名称，当前指的是：
+
+1. `05_PROFILE_COLLECTION_STRATEGY.md` 对应的 74 个核心 chat 场景
+2. `06_CONTACT_COLLECTION.md` 对应的 21 个真实 AI 联系方式集成场景
+
+合计：
+
+- **95 个真实 AI 场景**
+
 ## 目录结构
 
 - `tests/real_ai/scenario_runner.py`
@@ -21,6 +57,63 @@
 
 ```bash
 python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verbose
+```
+
+## 05 + 06 完整方案真实 AI 回归（新增主命令）
+
+如果你的目标是一次性验证下面两份文档合并后的完整方案：
+
+- `docs/05_PROFILE_COLLECTION_STRATEGY.md`
+- `docs/06_CONTACT_COLLECTION.md`
+
+请优先使用这个命令：
+
+```bash
+python3 scripts/run_profile_contact_full_regression.py --verbose
+```
+
+这个命令测试的是：
+
+1. `05_PROFILE_COLLECTION_STRATEGY.md` 中资料主线、4 Gate、字段级 outcome、用户疑问优先恢复、`partner_requirement` 兜底、联系方式冻结、`made_effective_progress` 等全部真实 AI 场景。
+2. `06_CONTACT_COLLECTION.md` 中电话/微信状态机、用户主动拒绝联系方式、用户主动提供联系方式、AI 主动询问联系方式、香港/非香港差异、双拒结束等全部真实 AI 场景。
+3. 两份文档联动后的整体效果，而不是单独模块的假设效果。
+
+它会顺序执行两部分：
+
+1. `tests/real_ai/scenarios/*.json` 中全部非 mq chat 场景
+2. `tests/integration/test_contact_collection_integration.py` 中 21 个真实 AI 联系方式集成场景
+
+也就是说，这条命令不是只测聊天，也不是只测联系方式，而是测：
+
+- 资料主策略是否正确
+- 联系方式流程是否正确
+- 两者交接时的真实 AI 效果是否正确
+
+报告输出目录默认在：
+
+- `reports/real_ai/profile_contact_full/`
+
+其中：
+
+- chat 报告在 `reports/real_ai/profile_contact_full/chat/`
+- 总汇总在 `reports/real_ai/profile_contact_full/latest_summary.md`
+
+只查看覆盖范围，不执行：
+
+```bash
+python3 scripts/run_profile_contact_full_regression.py --list
+```
+
+只跑联系方式 21 场景：
+
+```bash
+python3 scripts/run_profile_contact_full_regression.py --skip-chat --verbose
+```
+
+只跑某一个联系方式场景，例如 `1.1`：
+
+```bash
+python3 scripts/run_profile_contact_full_regression.py --skip-chat --contact-scenario 1.1 --verbose
 ```
 
 

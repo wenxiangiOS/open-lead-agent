@@ -31,7 +31,7 @@ git commit -m "feat(dialogue): simplify prompt, add turn observability and dynam
 ```bash
 cd /Users/eric/Desktop/doubao_mcp_server
 git add \
-  docs/README.md \
+  docs/00_00_README.md \
   docs/00_ALIYUN_RELEASE_CHECKLIST.md \
   docs/04_ALIYUN_RELEASE_RECORD_TEMPLATE.md \
   docs/prompt_optimization_final_plan.md \

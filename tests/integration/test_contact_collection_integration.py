@@ -272,42 +272,55 @@ class ContactScenarioTester:
         """重置用户数据"""
         await self.chat_service.reset_user_conversation(account_id)
 
+    @staticmethod
+    def _has_entered_contact_stage(profile: Dict) -> bool:
+        """判断预热后是否已经进入联系方式流程。"""
+        return any(
+            [
+                bool(profile.get("phone_ask_count", 0)),
+                bool(profile.get("wechat_ask_count", 0)),
+                bool(profile.get("last_contact_request_type")),
+                bool(profile.get("phone_collected")),
+                bool(profile.get("wechat_collected")),
+                bool(profile.get("rejected_phone")),
+                bool(profile.get("rejected_wechat")),
+            ]
+        )
+
     async def fill_basic_info(self, account_id: str, is_hongkong: bool = False) -> Tuple[str, Dict]:
         """
         快速填充基础信息，进入联系方式收集阶段
         返回 (AI回复, 用户资料)
 
-        策略：提供完整基础信息 + 择偶要求，让系统自然进入联系方式收集阶段
+        策略：提供完整基础信息 + 择偶要求，让系统自然进入联系方式收集阶段。
+        一旦系统已经开始真实展示联系方式询问，就立即停止预热，避免把场景起点
+        推进到“第二次争取”。
         """
         user_info = HONGKONG_USER_INFO if is_hongkong else NON_HK_USER_INFO
 
-        # 第一轮：提供基础信息
-        request = ChatRequest(
-            question=user_info,
-            accountId=account_id,
-            dialogId=f"test_{uuid.uuid4().hex[:8]}"
-        )
-        result = await self.chat_service.process_chat_request(request)
-        response = result.get('response', '')
+        response = ""
+        profile: Dict = {}
 
-        # 第二轮：提供择偶要求
-        request = ChatRequest(
-            question="找个温柔体贴的，年龄相仿就行",
-            accountId=account_id,
-            dialogId=f"test_{uuid.uuid4().hex[:8]}"
-        )
-        result = await self.chat_service.process_chat_request(request)
+        warmup_messages = [
+            user_info,
+            "找个温柔体贴的，年龄相仿就行",
+            "没有其他要求了",
+        ]
 
-        # 第三轮：确认没有其他要求（触发联系方式收集）
-        request = ChatRequest(
-            question="没有其他要求了",
-            accountId=account_id,
-            dialogId=f"test_{uuid.uuid4().hex[:8]}"
-        )
-        result = await self.chat_service.process_chat_request(request)
+        for message in warmup_messages:
+            request = ChatRequest(
+                question=message,
+                accountId=account_id,
+                dialogId=f"test_{uuid.uuid4().hex[:8]}"
+            )
+            result = await self.chat_service.process_chat_request(request)
+            response = result.get('response', '')
 
-        profile_data = await self.user_service.get_user_profile(account_id)
-        profile = profile_data.to_dict() if profile_data else {}
+            profile_data = await self.user_service.get_user_profile(account_id)
+            profile = profile_data.to_dict() if profile_data else {}
+
+            if self._has_entered_contact_stage(profile):
+                break
 
         return response, profile
 

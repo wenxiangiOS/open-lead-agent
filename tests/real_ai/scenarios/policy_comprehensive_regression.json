@@ -665,6 +665,46 @@
       ]
     },
     {
+      "id": "policy_opening_location_occupation_prefers_low_pressure_core",
+      "category": "policy_opening",
+      "tags": ["critical", "opening", "contextual_target"],
+      "description": "首轮已给所在地和职业时，下一步优先补低压核心字段，不默认直接主问月薪。",
+      "messages": [
+        "我是深圳的，我做IT"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["年龄", "多大", "学历"] },
+        { "type": "final_response_not_contains_any", "values": ["月薪多少", "收入多少", "工资多少", "待遇多少"] }
+      ]
+    },
+    {
+      "id": "policy_opening_location_occupation_fee_answers_first",
+      "category": "policy_opening",
+      "tags": ["critical", "opening", "mixed", "faq"],
+      "description": "首轮同句给所在地职业并问收费时，应先答收费，同时接住已给资料。",
+      "messages": [
+        "收费吗，我是深圳做IT的"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["收费", "免费", "定制", "深圳", "IT"] },
+        { "type": "final_response_not_contains_any", "values": ["先告诉我年龄", "先说下学历", "先留个电话"] }
+      ]
+    },
+    {
+      "id": "policy_latest_location_followup_prefers_occupation",
+      "category": "policy_opening",
+      "tags": ["critical", "contextual_target", "followup"],
+      "description": "用户在后续轮次刚给出所在地时，应优先顺着所在地去问职业，而不是回到全局顺序问年龄。",
+      "messages": [
+        "找对象",
+        "男的呢，在深圳"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["工作", "做什么", "做哪方面"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["你今年多大", "几岁", "年龄段"] }
+      ]
+    },
+    {
       "id": "policy_mixed_location_and_boundary",
       "category": "policy_mixed",
       "tags": ["mixed", "boundary"],
