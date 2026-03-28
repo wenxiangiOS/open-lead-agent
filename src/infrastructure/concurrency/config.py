@@ -140,6 +140,17 @@ class ConcurrencyConfig(BaseModel):
     @model_validator(mode="after")
     def load_from_env(self) -> "ConcurrencyConfig":
         """从 CONCURRENCY_* 环境变量加载配置。"""
+        base_chat_timeout_raw = os.getenv("CHAT_AI_TIMEOUT_SECONDS")
+        if base_chat_timeout_raw:
+            try:
+                base_chat_timeout = int(float(base_chat_timeout_raw))
+                if "CONCURRENCY_REQUEST_TIMEOUT" not in os.environ:
+                    self.request_timeout = max(self.request_timeout, base_chat_timeout + 20)
+                if "CONCURRENCY_HTTP_TIMEOUT" not in os.environ:
+                    self.http_timeout = max(self.http_timeout, base_chat_timeout + 10)
+            except ValueError:
+                pass
+
         mapping = {
             "CONCURRENCY_REDIS_POOL_SIZE": "redis_pool_size",
             "CONCURRENCY_REDIS_POOL_TIMEOUT": "redis_pool_timeout",

@@ -75,12 +75,19 @@ class ExpectationService:
     def get_matching_timeline_response(self, user_profile: UserProfile) -> str:
         """根据资料条件返回匹配时长回复。"""
         if self.qualifies_fast_match(user_profile):
-            return "按你现在的情况，后面推进一般会相对快一点，不过具体还是要看实际聊下来的感觉和节奏。"
+            return "按你现在的情况，匹配一般1-8小时哒～牵线同事联系前会提前约时间，不会突然打扰你。"
 
-        return "这个没有固定时长，通常还是先看彼此聊得怎么样，再决定后面怎么往下走。"
+        return "按你现在的情况，匹配一般1-2天哒～牵线同事联系前会提前约时间，不会突然打扰你。"
 
     def get_closing_timeline_text(self, user_profile: UserProfile) -> str:
         """返回收尾场景使用的匹配时长文案片段。"""
         if self.qualifies_fast_match(user_profile):
-            return "后面推进一般会相对快一点"
-        return "后面的节奏还是要结合实际聊天情况看"
+            return "匹配一般1-8小时"
+        return "匹配一般1-2天"
+
+    def get_contact_completion_response(self, user_profile: UserProfile) -> str:
+        """联系方式完成后的业务收尾话术。"""
+        return (
+            f"好的，那你等好消息啦，祝你早日脱单🥰 {self.get_closing_timeline_text(user_profile)}哒～"
+            "牵线同事联系前会提前约时间，不打扰你～"
+        )

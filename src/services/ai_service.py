@@ -37,6 +37,50 @@ class AIService:
     DEFAULT_TIMEOUT = 30
     CONNECT_TIMEOUT = 10
 
+    @staticmethod
+    def _env_flag(name: str, default: bool = False) -> bool:
+        raw = str(os.getenv(name, str(default))).strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _env_int(name: str, default: int) -> int:
+        try:
+            return int(str(os.getenv(name, default)).strip())
+        except (TypeError, ValueError):
+            return default
+
+    @classmethod
+    def resolve_timeout_settings(cls) -> Dict[str, float]:
+        """统一解析 AI 相关超时，允许主配置驱动、其余自动推导。"""
+        base_timeout = float(os.getenv("CHAT_AI_TIMEOUT_SECONDS", "45"))
+        if base_timeout <= 0:
+            base_timeout = 45.0
+
+        http_total_timeout = float(
+            os.getenv("AI_HTTP_TOTAL_TIMEOUT_SECONDS", str(base_timeout + 5.0))
+        )
+        if http_total_timeout < base_timeout:
+            http_total_timeout = base_timeout + 5.0
+
+        hard_timeout = float(
+            os.getenv("CHAT_AI_HARD_TIMEOUT_SECONDS", str(base_timeout + 10.0))
+        )
+        if hard_timeout <= http_total_timeout:
+            hard_timeout = http_total_timeout + 5.0
+
+        request_timeout = float(
+            os.getenv("CONCURRENCY_REQUEST_TIMEOUT", str(hard_timeout + 10.0))
+        )
+        if request_timeout <= hard_timeout:
+            request_timeout = hard_timeout + 10.0
+
+        return {
+            "chat_ai_timeout": base_timeout,
+            "http_total_timeout": http_total_timeout,
+            "chat_ai_hard_timeout": hard_timeout,
+            "request_timeout": request_timeout,
+        }
+
     def __init__(self, client: Optional[AsyncOpenAI] = None):
         """Initialize AI service"""
         self._owns_client = client is None
@@ -45,7 +89,7 @@ class AIService:
 
     def _create_async_openai_client(self) -> AsyncOpenAI:
         """创建新的异步 OpenAI 客户端，用于初始化和超时后重建。"""
-        timeout = float(os.getenv("AI_HTTP_TOTAL_TIMEOUT_SECONDS", str(self.DEFAULT_TIMEOUT)))
+        timeout = self.resolve_timeout_settings()["http_total_timeout"]
         return AsyncOpenAI(
             base_url=settings.base_url,
             api_key=settings.api_key,
@@ -94,7 +138,7 @@ class AIService:
             AIServiceException: AI 服务调用失败
             asyncio.TimeoutError: 调用超时
         """
-        timeout = timeout or self.DEFAULT_TIMEOUT
+        timeout = timeout or self.resolve_timeout_settings()["chat_ai_timeout"]
         # 在线对话链路默认快失败：减少长尾阻塞
         max_retries = int(os.getenv("AI_CHAT_MAX_RETRIES", "1"))
         if max_retries < 1:
@@ -120,6 +164,17 @@ class AIService:
             except Exception as e:
                 last_error = e
                 status_code = self._extract_status_code(e)
+                cause = getattr(e, "__cause__", None)
+                context = getattr(e, "__context__", None)
+                logger.warning(
+                    "AI 调用异常详情: type=%s repr=%r cause_type=%s cause=%r context_type=%s context=%r",
+                    type(e).__name__,
+                    e,
+                    type(cause).__name__ if cause else "-",
+                    cause,
+                    type(context).__name__ if context else "-",
+                    context,
+                )
                 if self._is_non_retryable_client_error(e):
                     logger.error(
                         "AI 调用失败(非重试错误): %s (status=%s)",
@@ -210,9 +265,71 @@ class AIService:
             logger.warning("Empty response from AI model, will retry")
             raise AIServiceException("AI 模型返回空响应")
 
+        self._log_raw_response_debug(
+            response=response,
+            content=content,
+            requested_max_tokens=max_tokens,
+            model_name=model_name or self.model_name,
+        )
+
         await self._record_token_usage(response)
 
         return content.strip()
+
+    def _log_raw_response_debug(
+        self,
+        *,
+        response: Any,
+        content: str,
+        requested_max_tokens: int,
+        model_name: str,
+    ) -> None:
+        usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+
+        choice = response.choices[0] if getattr(response, "choices", None) else None
+        finish_reason = getattr(choice, "finish_reason", None) or "-"
+        response_id = getattr(response, "id", None) or "-"
+        raw_text = str(content or "")
+        raw_chars = len(raw_text)
+
+        logger.info(
+            "[AI原始响应] model=%s response_id=%s finish_reason=%s requested_max_tokens=%s raw_chars=%s usage_prompt=%s usage_completion=%s usage_total=%s",
+            model_name,
+            response_id,
+            finish_reason,
+            requested_max_tokens,
+            raw_chars,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        )
+
+        if completion_tokens > max(0, requested_max_tokens):
+            logger.warning(
+                "[AI原始响应] usage_completion_tokens 超过 requested_max_tokens: completion=%s requested=%s finish_reason=%s response_id=%s",
+                completion_tokens,
+                requested_max_tokens,
+                finish_reason,
+                response_id,
+            )
+
+        if not self._env_flag("AI_RAW_RESPONSE_LOG_ENABLED", False):
+            return
+
+        preview_chars = max(0, self._env_int("AI_RAW_RESPONSE_PREVIEW_CHARS", 800))
+        if preview_chars == 0:
+            return
+
+        preview = raw_text[:preview_chars]
+        logger.info(
+            "[AI原始响应预览] response_id=%s preview_chars=%s content=%r",
+            response_id,
+            min(preview_chars, raw_chars),
+            preview,
+        )
 
     async def _record_token_usage(self, response: Any) -> None:
         """从响应中提取并累计 token 使用量。"""
@@ -259,7 +376,7 @@ class AIService:
             AIServiceException: AI 服务调用失败
             asyncio.TimeoutError: 调用超时
         """
-        timeout = timeout or self.DEFAULT_TIMEOUT
+        timeout = timeout or self.resolve_timeout_settings()["chat_ai_timeout"]
 
         try:
             async with asyncio.timeout(timeout):

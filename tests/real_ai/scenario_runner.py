@@ -65,6 +65,7 @@ class ScenarioCase:
     """单个多轮场景。"""
 
     scenario_id: str
+    source_file: str
     category: str
     tags: List[str]
     description: str
@@ -72,7 +73,7 @@ class ScenarioCase:
     assertions: List[ScenarioAssertion]
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ScenarioCase":
+    def from_dict(cls, data: Dict[str, Any], source_file: str = "") -> "ScenarioCase":
         messages = data.get("messages")
         if messages is None:
             messages = [
@@ -82,6 +83,7 @@ class ScenarioCase:
             ]
         return cls(
             scenario_id=data["id"],
+            source_file=source_file,
             category=data["category"],
             tags=list(data.get("tags", [])),
             description=data.get("description", ""),
@@ -123,8 +125,10 @@ class ScenarioResult:
     """单个场景执行结果。"""
 
     scenario_id: str
+    source_file: str
     category: str
     tags: List[str]
+    description: str
     passed: bool
     checks_total: int
     checks_passed: int
@@ -136,8 +140,10 @@ class ScenarioResult:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "scenario_id": self.scenario_id,
+            "source_file": self.source_file,
             "category": self.category,
             "tags": self.tags,
+            "description": self.description,
             "passed": self.passed,
             "checks_total": self.checks_total,
             "checks_passed": self.checks_passed,
@@ -167,7 +173,10 @@ class ScenarioLoader:
         scenarios: List[ScenarioCase] = []
         for file_path in scenario_files:
             raw = json.loads(file_path.read_text(encoding="utf-8"))
-            scenarios.extend(ScenarioCase.from_dict(item) for item in raw["scenarios"])
+            scenarios.extend(
+                ScenarioCase.from_dict(item, source_file=str(file_path))
+                for item in raw["scenarios"]
+            )
         errors, _warnings = self.validate_scenarios(scenarios)
         if errors:
             raise ScenarioValidationError("; ".join(errors))
@@ -178,7 +187,10 @@ class ScenarioLoader:
         scenarios: List[ScenarioCase] = []
         for file_path in scenario_files:
             raw = json.loads(file_path.read_text(encoding="utf-8"))
-            scenarios.extend(ScenarioCase.from_dict(item) for item in raw["scenarios"])
+            scenarios.extend(
+                ScenarioCase.from_dict(item, source_file=str(file_path))
+                for item in raw["scenarios"]
+            )
         errors, warnings = self.validate_scenarios(scenarios, require_tags=require_tags)
         return {"errors": errors, "warnings": warnings}
 
@@ -468,8 +480,10 @@ class RealAIScenarioRunner:
         duration = (datetime.now() - started).total_seconds()
         return ScenarioResult(
             scenario_id=scenario.scenario_id,
+            source_file=scenario.source_file,
             category=scenario.category,
             tags=scenario.tags,
+            description=scenario.description,
             passed=not failures,
             checks_total=checks_total,
             checks_passed=max(0, checks_total - len(failures)),
@@ -492,6 +506,11 @@ class RealAIScenarioRunner:
         total_duration = round(sum(durations), 3) if durations else 0.0
         avg_duration = round(total_duration / len(durations), 3) if durations else 0.0
         max_duration = round(max(durations), 3) if durations else 0.0
+        failure_breakdown: Dict[str, int] = {}
+        for item in results:
+            for failure in item.failures:
+                kind = self._classify_failure_kind(failure)
+                failure_breakdown[kind] = failure_breakdown.get(kind, 0) + 1
 
         return {
             "started_at": started_at.isoformat(timespec="seconds"),
@@ -505,9 +524,35 @@ class RealAIScenarioRunner:
                 "avg_duration_seconds": avg_duration,
                 "max_duration_seconds": max_duration,
                 "token_usage": token_usage,
+                "failure_breakdown": failure_breakdown,
             },
             "results": [item.to_dict() for item in results],
         }
+
+    @staticmethod
+    def _classify_failure_kind(failure: FailureDetail) -> str:
+        assertion_type = str(failure.assertion_type or "")
+        if assertion_type == "scenario_runtime_error":
+            return "runtime_exception"
+        if assertion_type.startswith("profile_field_"):
+            return "profile_or_state"
+        if assertion_type.startswith("response_") or assertion_type.startswith("final_response_"):
+            return "response_content"
+        return "other"
+
+    @staticmethod
+    def _suggest_fix_area(item: Dict[str, Any]) -> str:
+        failure_types = {str(failure.get("assertion_type") or "") for failure in item.get("failures", [])}
+        if "scenario_runtime_error" in failure_types:
+            return "优先检查运行异常、调用链和日志，先修代码报错。"
+        if any(failure_type.startswith("profile_field_") for failure_type in failure_types):
+            return "优先检查字段提取、状态更新、收尾状态机或后处理覆盖。"
+        if any(
+            failure_type.startswith("response_") or failure_type.startswith("final_response_")
+            for failure_type in failure_types
+        ):
+            return "优先检查提示词、固定话术模板、规则改写和响应清洗。"
+        return "优先检查场景断言定义和对应业务逻辑。"
 
     def _write_report(self, report: Dict[str, Any]) -> None:
         self.report_dir.mkdir(parents=True, exist_ok=True)
@@ -539,9 +584,22 @@ class RealAIScenarioRunner:
             f"- 最长耗时: {summary['max_duration_seconds']}s",
             f"- Token: {summary['token_usage']['total_tokens']} (调用 {summary['token_usage']['call_count']} 次)",
             "",
-            "## 结果概览",
+            "## 失败归因汇总",
             "",
         ]
+
+        failure_breakdown = summary.get("failure_breakdown", {})
+        if failure_breakdown:
+            for key, count in sorted(failure_breakdown.items(), key=lambda item: item[0]):
+                lines.append(f"- `{key}`: {count}")
+        else:
+            lines.append("- 无失败归因。")
+
+        lines.extend([
+            "",
+            "## 结果概览",
+            "",
+        ])
 
         for item in report["results"]:
             status = "PASS" if item["passed"] else "FAIL"
@@ -557,9 +615,15 @@ class RealAIScenarioRunner:
         for item in failed_results:
             lines.append(f"### {item['scenario_id']}")
             lines.append("")
+            lines.append(f"- 场景文件: `{item.get('source_file', '-')}`")
             lines.append(f"- 分类: `{item['category']}`")
             lines.append(f"- 标签: `{', '.join(item.get('tags', [])) or '-'}`")
+            lines.append(f"- 描述: {item.get('description', '') or '-'}")
             lines.append(f"- 断言通过: {item['checks_passed']}/{item['checks_total']}")
+            lines.append(f"- 建议修改方向: {self._suggest_fix_area(item)}")
+            lines.append(
+                f"- 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file {item.get('source_file', report['scenario_file'])} --scenario-id {item['scenario_id']} --verbose`"
+            )
             lines.append("- 失败摘要:")
             for failure in item["failures"]:
                 turn_label = f"turn={failure['turn']}" if failure.get("turn") else "turn=-"

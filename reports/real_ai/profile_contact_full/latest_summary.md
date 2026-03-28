@@ -1,9 +1,9 @@
 # 完整方案真实 AI 回归汇总
 
-- 时间: 2026-03-27T02:32:31
+- 时间: 2026-03-27T23:17:32
 - 方案文档: `docs/05_PROFILE_COLLECTION_STRATEGY.md` + `docs/06_CONTACT_COLLECTION.md`
 - chat 场景目录: `/Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios`
-- chat 场景数: `266`
+- chat 场景数: `277`
 - 联系方式集成场景数: `21`
 - chat runner 退出码: `1`
 - contact runner 退出码: `0`

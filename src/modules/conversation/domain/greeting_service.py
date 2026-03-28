@@ -109,8 +109,19 @@ class GreetingService:
     def detect_greeting_type(self, text: str) -> Optional[str]:
         """检测纯问候类型。"""
         text_stripped = text.strip().lower()
-        if len(text_stripped) > 10:
+        if not text_stripped:
             return None
+        if len(text_stripped) > 24:
+            return None
+
+        text_stripped = re.sub(r"(呀|啊|呢|哈|啦|嘛|呐|喔|哦|噢)+", "", text_stripped)
+        text_stripped = re.sub(r"(在吗){2,}", "在吗", text_stripped)
+        text_stripped = re.sub(r"(在不){2,}", "在不", text_stripped)
+        text_stripped = re.sub(r"(你好){2,}", "你好", text_stripped)
+        text_stripped = re.sub(r"(hi){2,}", "hi", text_stripped)
+        text_stripped = re.sub(r"(hello){2,}", "hello", text_stripped)
+        text_stripped = re.sub(r"(哈喽){2,}", "哈喽", text_stripped)
+        text_stripped = re.sub(r"(嗨){2,}", "嗨", text_stripped)
 
         split_parts = [
             part

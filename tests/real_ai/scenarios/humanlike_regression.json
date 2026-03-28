@@ -338,6 +338,117 @@
       ]
     },
     {
+      "id": "humanlike_shadow_profile_location_to_occupation_bridge",
+      "category": "humanlike_memory",
+      "tags": [
+        "critical",
+        "memory",
+        "shadow_profile",
+        "bridge"
+      ],
+      "description": "用户刚给出所在地后，如果下一问转职业，应自然把地点带进问句，而不是裸问工作。",
+      "messages": [
+        "找对象",
+        "来自深圳"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "深圳",
+            "在深圳",
+            "深圳这边",
+            "深圳主要"
+          ]
+        },
+        {
+          "type": "response_contains_any",
+          "turn": 2,
+          "values": [
+            "工作",
+            "做什么",
+            "做哪方面"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_occupation_income_main_slot_prefers_occupation",
+      "category": "humanlike_transition",
+      "tags": [
+        "critical",
+        "transition",
+        "side_target"
+      ],
+      "description": "当系统上一轮问了工作和收入，用户这轮只答职业时，下一轮主线不应跑偏回重问工作或只追收入。",
+      "messages": [
+        "找对象",
+        "来自深圳",
+        "IT"
+      ],
+      "assertions": [
+        {
+          "type": "response_contains_any",
+          "turn": 3,
+          "values": [
+            "学历",
+            "本科",
+            "大专",
+            "研究生"
+          ]
+        },
+        {
+          "type": "response_not_contains_any",
+          "turn": 3,
+          "values": [
+            "做什么工作",
+            "哪方面工作",
+            "主要做什么"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanlike_age_collected_then_gender_marital_should_not_reask_age",
+      "category": "humanlike_transition",
+      "tags": [
+        "critical",
+        "no_repeat",
+        "bridge_guard"
+      ],
+      "description": "年龄已经收上后，用户再补性别和婚况时，系统应转去问择偶要求，不能再被 bridge 或交错追问带回年龄。",
+      "messages": [
+        "来自深圳呢，身高187",
+        "主要是做开发吧，月薪大概7万",
+        "本科",
+        "90后",
+        "男的，单身"
+      ],
+      "assertions": [
+        {
+          "type": "response_not_contains_any",
+          "turn": 5,
+          "values": [
+            "年龄段",
+            "多大",
+            "几岁",
+            "今年"
+          ]
+        },
+        {
+          "type": "response_contains_any",
+          "turn": 5,
+          "values": [
+            "另一半",
+            "要求",
+            "想找",
+            "看重"
+          ]
+        }
+      ]
+    },
+    {
       "id": "humanlike_memory_reuse_preference",
       "category": "humanlike_memory",
       "tags": [

@@ -53,3 +53,17 @@ async def test_track_ai_asked_fields_respects_cooldown_and_skip_guard(monkeypatc
     assert profile.get_ask_count("age") == 1
     # 开启防抖，不应自动标记跳过
     assert profile.skipped_fields.get("age", False) is False
+
+
+@pytest.mark.anyio
+async def test_track_ai_asked_fields_does_not_close_partner_requirement_on_ask():
+    user_service = AsyncMock()
+    profile = UserProfile(account_id="user_partner_req")
+    user_service.get_user_profile = AsyncMock(return_value=profile)
+    user_service.save_user_profile = AsyncMock(return_value=True)
+    service = AskTrackingService(user_service)
+
+    await service.track_ai_asked_fields("user_partner_req", "你对另一半有什么大致的要求不？")
+
+    assert profile.get_ask_count("partner_requirement") == 1
+    assert profile.is_active_ask_closed("partner_requirement") is False

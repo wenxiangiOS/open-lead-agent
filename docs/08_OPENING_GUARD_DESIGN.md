@@ -11,38 +11,78 @@
 - 不改字段收集优先级
 - 不改联系方式推进策略
 - 不改开场之外的主流程
-- 只在开场窗口内，让当前 AI 调用显式输出开场意图
+- 只在开场窗口内，让规则和当前 AI 调用共同完成更稳的分流
 
-## 核心原则
+## 最终核心原则
 
-**利用当前 AI 调用完成开场意图识别，不新增独立 AI 请求；识别结果接入现有生成链路，但不改整体对话策略。**
+**规则已经能稳定识别的开场，不走 AI；只有规则判不稳的开场，才利用当前这次 AI 调用顺带完成意图识别。**
 
 同时：
 
-**时间问候纠正、乱码、明显资料输入、明显边界/广告等确定性强的场景，继续由硬规则优先处理。**
+- **不开新的 AI 请求**
+- **不改整体对话策略**
+- **不重构主生成逻辑**
+- **只把模糊 case 留给当前 AI**
 
-## 优化目标
+## 关键现实约束
 
-把“开场”从现在的：
+当前主模型链路 prompt 较重，且远程调用存在波动。把所有开场都交给当前 AI，会放大：
 
-- 关键词命中
-- 主模型边理解边生成
-- 个别 case 靠补规则
+- 首轮时延
+- 超时概率
+- no-AI fallback 压力
 
-升级成：
+因此最终方案必须是：
 
-**在现有 AI 调用里显式完成开场意图判断，然后按现有链路执行。**
+- **规则强前置**
+- **当前 AI 只处理模糊 case**
+- **fallback 补强**
+- **一致性校验兜底**
+
+## 方案目标
+
+把开场识别做成一套稳定、低成本、可控的分流层。
+
+最终效果：
+
+- 确定性高的开场，规则直接处理
+- 模糊开场、混合开场，才交给当前 AI 调用识别
+- AI 超时或失败时，fallback 也不会掉回 `sex`
+- 开场识别有明确开始条件和结束条件，不会越界干扰主线
 
 ## 总体结构
 
 ```text
 用户输入
 -> 开场硬规则判断
--> 若未命中硬规则，再进入当前 AI 调用内的开场意图识别
+-> 若规则已稳定命中，则直接走现有执行链路
+-> 若规则判不稳，再进入当前 AI 调用内的开场意图识别
 -> 输出开场意图
 -> 映射到现有 TurnDecision / 现有执行链路
 -> 继续走现有生成逻辑
 ```
+
+## 资料桥接追问
+
+当用户在开场早期直接给出资料，且系统下一步主目标已经落到 `occupation`、同时 `monthly_income` 仍可主动追问时，不能只做“字段提取成功”，还要把这些刚给出的资料接到下一问里。
+
+这层优化采用：
+
+- **程序提供桥接约束**
+- **AI 自然生成表达**
+- **不写死模板话术**
+
+具体要求：
+
+- 用户刚给了 `location / marital_status` 这类资料时，下一问必须顺着这些信息继续聊
+- `occupation + monthly_income` 默认绑定一起问
+- 但表达必须自然口语化，不能退回泛化并列问法
+- 禁止忽略用户刚给的信息，直接裸问“平时是做什么工作的？你现在收入大概在哪个范围……”
+
+也就是说：
+
+- 程序只负责告诉模型“本轮必须顺着什么信息去问、工作和月薪要绑定”
+- 具体怎么说，仍然交给当前 AI 自然生成
 
 ## 开场识别开始条件
 
@@ -71,54 +111,86 @@
 
 一句话：
 
-**开场识别只负责完成“开场分流”，一旦分流完成，就停止。**
+**开场识别只负责完成开场分流，一旦主线明确，就停止。**
 
 ## 开场意图分类
 
-最终统一成 18 类。
+最终统一成这些意图，但不是每类都交给 AI。
 
-### 第一组：核心主分类
+### A. 规则优先类
+
+这些只要规则能稳定判断，就不走 AI：
 
 1. `opening_greeting`
-2. `opening_light_consult`
-3. `explicit_matchmaking_opening`
-4. `low_pressure_opening`
-5. `opening_faq`
-6. `opening_spam_or_promo`
-7. `opening_clarify`
-8. `opening_profile_provided`
-9. `opening_boundary_or_contact_refusal`
+2. `opening_clarify`
+3. `opening_profile_provided`
+4. `opening_boundary_or_contact_refusal`
+5. `opening_spam_or_promo`
+6. 时间问候纠正
+7. 明显 FAQ
 
-### 第二组：补充细分类
+典型例子：
 
-10. `opening_mixed_intent`
-11. `opening_emotional_or_defensive`
-12. `opening_reverse_question`
-13. `opening_proxy_inquiry`
-14. `opening_eligibility_concern`
-15. `opening_resource_request`
-16. `opening_ambiguous_short`
-17. `opening_test_or_playful`
-18. `opening_hybrid_promo_real`
+- `你好呀，在吗呀呀呀？` -> `opening_greeting`
+- `你好呀，在吗在吗呀呀呀？` -> `opening_greeting`
+- `你好呀，坏呼叫` -> `opening_clarify`
+- `男，深圳，90后` -> `opening_profile_provided`
+- `不给电话行不行` -> `opening_boundary_or_contact_refusal`
+- `怎么收费` -> `opening_faq`
+
+### B. AI 识别类
+
+这些是规则判不稳、容易混合、确实需要语义判断的场景：
+
+1. `explicit_matchmaking_opening`
+2. `low_pressure_opening`
+3. `opening_light_consult`
+4. `opening_mixed_intent`
+5. `opening_emotional_or_defensive`
+6. `opening_reverse_question`
+7. `opening_proxy_inquiry`
+8. `opening_eligibility_concern`
+9. `opening_resource_request`
+10. `opening_ambiguous_short`
+11. `opening_test_or_playful`
+12. `opening_hybrid_promo_real`
+
+典型例子：
+
+- `找对象`
+- `先了解下呢`
+- `我问问你情况呢`
+- `就是想先问问情况呢`
+- `找对象，怎么收费`
+- `离异的能聊吗`
 
 ## 规则层负责什么
 
-硬规则继续优先处理：
+规则层不是简单词库匹配，而是：
 
-- 时间问候纠正
-- 纯 greeting
-- 明显乱码 / 异常输入
-- 明显资料输入
-- 明显边界 / 联系方式拒绝
-- 明显广告 / 垃圾流量
+**归一化 + 去语气词 + 去重复 + 组合识别**
+
+例如：
+
+- `你好呀，在吗在吗呀呀呀？`
+  归一化后仍识别为 `opening_greeting`
+
+- `你好呀，坏呼叫`
+  识别为 `opening_clarify`
+
+- `我问问你情况呢`
+  如果规则层已能稳定判定，就直接落 `low_pressure_opening`
+  如果判不稳，再交给当前 AI
 
 一句话：
 
-**确定性高的问题继续让规则先判，AI 不抢这部分。**
+**规则层负责能用语言模式稳定归类的部分，而不是只认固定整句。**
 
 ## 当前 AI 调用如何承载识别
 
-在开场窗口内，不新增 AI 请求，而是在当前 AI 调用里增加结构化输出要求。
+不开新请求。
+
+只在开场窗口内、且规则层没能稳定归类时，才在当前 AI 调用里加结构化要求。
 
 建议输出格式：
 
@@ -131,22 +203,28 @@
 }
 ```
 
-重点是：
+重点：
 
-- 不额外多开一次请求
+- 继续只有一次 AI 调用
 - 让当前 AI 把它本来就在做的“理解”显式输出出来
+- 不把所有开场都拖进重模型
 
 ## 映射到现有执行链路
 
 - `opening_greeting` -> 现有 `opening_probe`
-- `opening_light_consult` -> 现有 `opening_probe`
+- `opening_clarify` -> 现有 `opening_clarify`
 - `explicit_matchmaking_opening` -> 现有 `opening_self_intro`
 - `low_pressure_opening` -> 现有 `opening_self_intro`，并强制 `ask_field=None`
+- `opening_light_consult` -> 现有 `opening_probe` 或 `opening_self_intro`
 - `opening_faq` -> 现有 FAQ 优先逻辑
-- `opening_spam_or_promo` -> 现有拦截/低响应/结束逻辑
-- `opening_clarify` -> 现有 `opening_clarify`
 - `opening_profile_provided` -> 现有字段提取 + 主线推进
 - `opening_boundary_or_contact_refusal` -> 现有 `boundary pause / soft hold / contact refusal`
+- `opening_spam_or_promo` -> 现有拦截/低响应/结束逻辑
+
+其他模糊类：
+
+- 按最接近的现有链路映射
+- 不新造大流程
 
 ## 行为约束
 
@@ -184,33 +262,39 @@
 
 - JSON 不完整
 - 字段缺失
-- 混入大量自然语言导致解析失败
+- 混入自然语言导致解析失败
 - 根本没有 `opening_intent`
 
 系统必须这样处理：
 
 - 丢弃结构化部分
 - 回复正文照常使用
-- 开场意图判断回退到硬规则 / 规则兜底
+- 开场意图判断回退到规则层 / 兜底逻辑
 - 记录日志：`opening_intent_parse_failed`
+
+一句话：
+
+**结构化输出可以失败，但整轮回复不能因为它失败。**
 
 ### 2. 回复与意图冲突的一致性校验
 
-如果结构化结果和回复动作冲突，必须以后者为异常，触发修正。
+如果结构化意图和回复动作冲突，必须以后者为异常，触发修正。
 
 例如：
 
-- `opening_intent = low_pressure_opening`
-- 但回复正文里出现 `你是男生还是女生`
+- `opening_greeting` 不能直接问 `男生还是女生`
+- `low_pressure_opening` 不能直接切字段
+- `opening_faq` 不能直接转资料采集
+- `opening_boundary_or_contact_refusal` 不能继续推电话/微信/资料
 
-则必须：
+如果冲突：
 
 - 优先以后处理修正文案
 - 或降级替换为安全回复
 
 一句话：
 
-**结构化标签必须真正约束最终回复。**
+**结构化标签必须真正约束最终回复，不是只做记录。**
 
 ### 3. mixed intent 优先级表
 
@@ -235,6 +319,47 @@
 `opening_light_consult`
 >
 `opening_greeting`
+
+典型例子：
+
+- `找对象，怎么收费`
+  - 主意图：`opening_faq`
+  - 次意图：`explicit_matchmaking_opening`
+
+- `不给电话行不行，我是男的`
+  - 主意图：`opening_boundary_or_contact_refusal`
+  - 次意图：`opening_profile_provided`
+
+- `先了解下，我在深圳`
+  - 主意图：`opening_profile_provided`
+  - 次意图：`low_pressure_opening`
+
+## fallback 补强要求
+
+只要当前 AI 超时或失败，就必须由 no-AI fallback 兜住下面这些高频开场，不能掉回 `sex`：
+
+- `你好呀，在吗呀呀呀？`
+- `你好呀，在吗在吗呀呀呀？`
+- `你好呀，坏呼叫`
+- `我问问你情况呢`
+- `就是想先问问情况呢`
+- `我先看看`
+
+目标：
+
+- greeting 仍然回 `opening_probe`
+- noisy greeting 仍然回 `opening_clarify`
+- 低压了解仍然回 `opening_self_intro`
+- 不再出现 fallback 直接追问 `男生还是女生`
+
+## 超时阈值
+
+默认 AI 超时阈值从原来的 `20s/25s` 提高到：
+
+- `CHAT_AI_TIMEOUT_SECONDS = 45`
+- `CHAT_AI_HARD_TIMEOUT_SECONDS = 50`
+
+这样做不是为了让所有开场都更依赖 AI，而是为了在确实进入当前 AI 调用时，减少主模型波动导致的误降级。
 
 ## 旧功能如何处理
 
@@ -265,136 +390,46 @@
 - 联系方式状态机
 - 开场之外的任何场景
 
+## 测试方案
+
+必须覆盖：
+
+- greeting 稳定性
+- greeting + 异常尾巴
+- 时间冲突
+- 明确找对象
+- 低压了解
+- FAQ 开场
+- 资料开场
+- 边界/联系方式拒绝
+- 广告
+- 混合意图
+
+其中新增重点样例：
+
+- `你好呀，在吗呀呀呀？`
+- `你好呀，在吗在吗呀呀呀？`
+- `你好呀，坏呼叫`
+- `我问问你情况呢`
+
 ## 最终结论
 
 最终正确方案不是：
 
-- 继续补词库
-- 也不是额外再发一次 AI 分类请求
+- 所有开场都走 AI
+- 也不是继续只靠词库
 
 而是：
 
-**利用当前 AI 调用，在开场窗口内显式输出开场意图；硬规则继续优先处理确定性问题；识别结果接入现有生成链路，但不改整体对话策略。**
+**规则已经能稳定识别的开场，不走 AI；只有规则判不稳的开场，才利用当前这次 AI 调用顺带完成意图识别。**
 
-- `pure_greeting_opening`
-- `opening_clarify`
-- `explicit_matchmaking_opening`
+再加上：
 
-这一组逻辑之后、通用 `general` 决策之前。
+- fallback 补强
+- 结构化失败恢复
+- 回复与意图冲突校验
+- mixed intent 优先级
 
-原因：
+一句话总结：
 
-- 结构最顺
-- 改动最小
-- 不影响现有主逻辑
-
-### 6. 后处理防呆
-
-为了防止后处理再次把回复洗成字段追问，建议增加一条保护：
-
-如果当前轮：
-
-- `intent == opening_self_intro`
-  或
-- `followup_topic == opening_self_intro`
-
-则后处理禁止补成：
-
-- `你是男生还是女生`
-- `你多大`
-- `你在哪个城市`
-- `什么学历`
-- `做什么工作`
-
-这是为了防止保护逻辑被后续流程覆盖。
-
-## 明确不动的部分
-
-本次优化明确不动：
-
-- 主生成逻辑
-- 主 prompt 主体
-- 整体对话策略
-- 资料收集主链路
-- 字段优先级
-- 联系方式推进逻辑
-- FAQ 主逻辑
-- 投诉/修复主逻辑
-- 边界暂停主逻辑
-- 全项目其他场景
-
-## 测试方案
-
-必须补测试。
-
-建议新增开场保护测试，覆盖：
-
-### 正例
-
-这些必须命中保护：
-
-- `你好 -> 先了解下呢`
-- `你好 -> 先看看`
-- `你好 -> 先聊聊吧`
-- `你好 -> 想先了解一下`
-- `你好 -> 先认识一下再说`
-
-断言：
-
-- 不得问 `男生还是女生`
-- 不得问 `多大`
-- 不得问 `哪个城市`
-- 不得问联系方式
-- 必须出现“介绍下自己 / 说说自己 / 先轻松聊聊”类表达
-
-### 负例
-
-这些不能误判：
-
-- `你好 -> 我是男生`
-- `你好 -> 深圳`
-- `你好 -> 本科`
-- `你好 -> 你们怎么安排`
-- `你好 -> 先别问这个`
-
-断言：
-
-- 不应统一落到“邀请自我介绍”
-
-## 预期收益
-
-本次只优化开场，所以收益主要体现在开场体验。
-
-### 开场场景内预期提升
-
-- 拟人化：`+12% ~ +20%`
-- 像真人程度：`+15% ~ +25%`
-- 开场对话质量：`+20% ~ +35%`
-- 开场误切字段率：`-70% ~ -90%`
-
-### 全项目平均预期提升
-
-因为只改开场，全项目平均提升相对有限：
-
-- 拟人化：`+3% ~ +6%`
-- 像真人程度：`+4% ~ +8%`
-- 对话质量：`+5% ~ +10%`
-
-说明：
-
-这些是目标区间，不是实测最终值。
-最终以开场回归集和人工评测结果为准。
-
-## 最终总结
-
-本次优化不是“加几个开场话术关键词”，也不是“重写对话系统”。
-
-本质上是：
-
-**在不动主生成逻辑、不改整体对话策略的前提下，为开场阶段增加一个低压了解意图保护层。**
-
-这个保护层的作用是：
-
-- 保留旧样例，但把它们从“唯一命中规则”调整为“测试样例 + 兜底样例 + 参考样例”
-- 当用户表达“先了解一下”时，阻止系统直接追问资料
-- 将动作纠偏为“先邀请用户简单介绍自己”
+**让规则兜住大多数稳定开场，让当前 AI 只处理真正模糊的开场，让失败时系统也不会掉回“男生还是女生”。**

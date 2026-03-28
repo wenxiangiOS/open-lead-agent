@@ -19,6 +19,8 @@ def test_render_field_question_for_sex_is_not_overly_hard_on_opening():
 
     assert "男生还是女生" in response
     assert all(token not in response for token in ["最基础", "先简单认识下"])
+    assert "先随便聊聊" not in response
+    assert any(token in response for token in ["在呢", "你好呀", "在的"])
 
 
 def test_render_field_question_for_sex_can_offer_open_self_intro_after_matchmaking_intent():
@@ -105,6 +107,46 @@ def test_render_field_question_for_partner_requirement_uses_more_natural_prefere
 
     assert "看重" in response
     assert "哪方面" in response
+
+
+def test_render_field_question_for_sex_uses_soft_confirmation_when_preference_strongly_implies_gender():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_sex_soft_confirm")
+    profile.partner_requirement = "温柔，文静，身材苗条，身高不低于160，漂亮点"
+
+    response = service.render_field_question("sex", profile=profile, stage="trust", user_message="温柔点")
+
+    assert "男生还是女生" not in response
+    assert "男生" in response
+    assert any(token in response for token in ("对吧", "是吧"))
+
+
+def test_render_field_question_for_sex_keeps_neutral_question_when_only_single_weak_height_cue():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_sex_weak_height")
+    profile.partner_requirement = "至少180"
+
+    response = service.render_field_question("sex", profile=profile, stage="trust", user_message="至少180")
+
+    assert "男生还是女生" in response
+
+
+def test_render_field_question_for_sex_handles_user_challenge_with_text_chat_style():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_sex_challenge")
+    profile.partner_requirement = "温柔，文静，苗条"
+
+    response = service.render_field_question(
+        "sex",
+        profile=profile,
+        stage="trust",
+        user_message="我这要求你还看不出来吗？",
+    )
+
+    assert "看出来" in response
+    assert "听出来" not in response
+    assert "男生" in response
+    assert "男生还是女生" not in response
 
 
 def test_render_field_question_for_marital_status_only_confirms_single_status():

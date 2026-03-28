@@ -131,7 +131,7 @@ class ProcessChatTurnUseCase:
                 _mark("new_session_reset", t0)
 
             if user_profile.conversation_ended and not is_new_user_session:
-                final_response = self.chat_service.ending_service.get_ending_response("already_ended") or "行，那先聊到这儿。"
+                final_response = self.chat_service.ending_service.get_ending_response("already_ended") or ""
                 final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
                 route_name = "already_ended"
                 response_channel = "model"
@@ -165,9 +165,16 @@ class ProcessChatTurnUseCase:
             t0 = time.perf_counter()
             conversation_context = await self.chat_service.dialogue_manager.get_conversation_context(account_id)
             _mark("context_load", t0)
+            recent_responses = conversation_context.get("recent_responses") or []
+            last_response = str(recent_responses[-1]).strip() if recent_responses else ""
+            decision_profile = self.chat_service._build_shadow_profile_for_decision(  # noqa: SLF001
+                user_profile,
+                request.question,
+                last_response=last_response,
+            )
             turn_decision = self.chat_service._build_turn_decision(  # noqa: SLF001
                 request.question,
-                user_profile,
+                decision_profile,
                 conversation_context=conversation_context,
             )
             response_channel = turn_decision.response_channel
@@ -213,11 +220,15 @@ class ProcessChatTurnUseCase:
             _mark("refusal_detection", t0)
 
             if response_channel == "quick_faq":
-                final_response = self.chat_service.user_question_service.get_quick_faq_response(  # noqa: SLF001
-                    request.question,
-                    repeat_count=1,
-                    recent_responses=conversation_context.get("recent_responses") or (),
-                ) or await self.chat_service._build_no_ai_response(account_id, user_profile, request.question)  # noqa: SLF001
+                faq_intent = self.chat_service.user_question_service.detect_quick_faq_intent(request.question)  # noqa: SLF001
+                if faq_intent == "timeline":
+                    final_response = self.chat_service.expectation_service.get_matching_timeline_response(decision_profile)  # noqa: SLF001
+                else:
+                    final_response = self.chat_service.user_question_service.get_quick_faq_response(  # noqa: SLF001
+                        request.question,
+                        repeat_count=1,
+                        recent_responses=conversation_context.get("recent_responses") or (),
+                    ) or await self.chat_service._build_no_ai_response(account_id, user_profile, request.question)  # noqa: SLF001
                 final_response = self.chat_service._apply_priority_question_guard(  # noqa: SLF001
                     final_response,
                     turn_decision,
@@ -226,7 +237,7 @@ class ProcessChatTurnUseCase:
                 final_response = self.chat_service._apply_context_ack_policy(  # noqa: SLF001
                     final_response,
                     turn_decision,
-                    user_profile,
+                    decision_profile,
                     request.question,
                 )
                 final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
@@ -287,6 +298,45 @@ class ProcessChatTurnUseCase:
                 user_profile = await self.chat_service.user_service.get_user_profile(account_id)
                 _mark("profile_reload", t0)
                 route_name = "boundary_pause"
+                payload = await self.chat_service._build_chat_response(  # noqa: SLF001
+                    account_id,
+                    user_profile,
+                    final_response,
+                    {"all_fields": []},
+                    request.dialogId,
+                    dict(user_profile.field_ask_count) if user_profile.field_ask_count else {},
+                    response_route=route_name,
+                )
+                payload = self._sync_payload_response(payload, final_response)
+                payload = _attach_route_meta(payload, route_name)
+                _log_turn(route_name, True)
+                return payload
+
+            if turn_decision.risk == "withdraw":
+                user_profile.increment_ask_count("conversation_end_intent")
+                final_response, should_close = self.chat_service._build_withdraw_response(  # noqa: SLF001
+                    user_profile,
+                    user_message=request.question,
+                )
+                final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                if should_close:
+                    user_profile.conversation_ended = True
+                    user_profile.needs_bridge_back = False
+                    user_profile.last_side_topic_type = None
+                await self.chat_service.user_service.save_user_profile(account_id, user_profile)
+                t0 = time.perf_counter()
+                await self.chat_service._update_conversation_state(  # noqa: SLF001
+                    account_id,
+                    request.question,
+                    final_response,
+                    final_response,
+                    track_asked_fields=False,
+                )
+                _mark("state_update", t0)
+                t0 = time.perf_counter()
+                user_profile = await self.chat_service.user_service.get_user_profile(account_id)
+                _mark("profile_reload", t0)
+                route_name = "withdraw_close" if should_close else "withdraw_retain"
                 payload = await self.chat_service._build_chat_response(  # noqa: SLF001
                     account_id,
                     user_profile,
@@ -369,13 +419,24 @@ class ProcessChatTurnUseCase:
             # 使用完整 prompt
             main_prompt = self.chat_service.dialogue_manager.build_main_dialogue_prompt(
                 request.question,
-                user_profile,
+                decision_profile,
                 conversation_context,
                 prioritize_user_question=turn_decision.prioritize_user_question,
                 primary_move=turn_decision.primary_move,
                 allow_contact_target=turn_decision.allow_contact_target,
                 allow_medium_target=turn_decision.allow_medium_target,
             )
+            bridge_instruction = self.chat_service._build_profile_bridge_generation_instruction(  # noqa: SLF001
+                user_message=request.question,
+                user_profile=decision_profile,
+                turn_decision=turn_decision,
+                conversation_context=conversation_context,
+            )
+            if bridge_instruction:
+                main_prompt = self.chat_service._augment_prompt_for_profile_bridge_followup(  # noqa: SLF001
+                    main_prompt,
+                    bridge_instruction,
+                )
             opening_intent_detection_enabled = self.chat_service._should_run_opening_intent_detection(  # noqa: SLF001
                 conversation_context,
                 user_profile,
@@ -435,6 +496,16 @@ class ProcessChatTurnUseCase:
                     user_profile=user_profile,
                 )
                 _mark("short_answer_bridge", t0)
+                t0 = time.perf_counter()
+                ai_response = await self.chat_service._enforce_profile_bridge_response(  # noqa: SLF001
+                    ai_response,
+                    account_id=account_id,
+                    user_message=request.question,
+                    user_profile=user_profile,
+                    turn_decision=turn_decision,
+                    conversation_context=conversation_context,
+                )
+                _mark("profile_bridge_enforce", t0)
             else:
                 self.chat_service._last_opening_intent_signal = None  # noqa: SLF001
 
@@ -460,6 +531,7 @@ class ProcessChatTurnUseCase:
                     }
             _mark("extract_fuse", t0)
             extracted_fields_count = len(extracted_data or {})
+            contact_gate_before = self.chat_service.collection_policy.can_enter_contact(user_profile)  # noqa: SLF001
 
             t0 = time.perf_counter()
             profile_result = await self.chat_service.profile_collection_coordinator.process_collection(
@@ -476,6 +548,10 @@ class ProcessChatTurnUseCase:
 
             for field_info in collection_result.get("all_fields", []):
                 if field_info.get("field") == "partner_requirement":
+                    latest_profile = await self.chat_service.user_service.get_user_profile(account_id)
+                    latest_profile.close_active_ask("partner_requirement")
+                    await self.chat_service.user_service.save_user_profile(account_id, latest_profile)
+                    user_profile = latest_profile
                     await self.chat_service.input_fallback_service.reset_confirm_count(account_id)
                     break
 
@@ -506,7 +582,16 @@ class ProcessChatTurnUseCase:
                 if ai_ending_response:
                     response_to_clean = ai_ending_response
                     ending_info["response"] = ai_ending_response
+            raw_response_len = len(str(response_to_clean or ""))
             final_response = self.chat_service._clean_response(response_to_clean)  # noqa: SLF001
+            cleaned_response_len = len(str(final_response or ""))
+            logger.info(
+                "[response_lengths] raw_len=%s cleaned_len=%s has_extract=%s has_opening_intent=%s",
+                raw_response_len,
+                cleaned_response_len,
+                int("<extract>" in str(response_to_clean or "")),
+                int("<opening_intent>" in str(response_to_clean or "")),
+            )
             final_response = self.chat_service._enforce_opening_intent_consistency(  # noqa: SLF001
                 final_response,
                 getattr(self.chat_service, "_last_opening_intent_signal", None),
@@ -598,6 +683,14 @@ class ProcessChatTurnUseCase:
                 user_message=request.question,
                 allow_medium_target=turn_decision.allow_medium_target,
             )
+            final_response = self.chat_service._avoid_reasking_already_collected_fields(  # noqa: SLF001
+                final_response,
+                user_profile,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+                allow_medium_target=turn_decision.allow_medium_target,
+            )
             if not self.chat_service._is_delivery_viable(final_response):  # noqa: SLF001
                 fallback_response = await self.chat_service._build_no_ai_response(  # noqa: SLF001
                     account_id,
@@ -680,6 +773,14 @@ class ProcessChatTurnUseCase:
                     user_message=request.question,
                     allow_medium_target=turn_decision.allow_medium_target,
                 )
+                final_response = self.chat_service._avoid_reasking_already_collected_fields(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    user_message=request.question,
+                    response_channel=turn_decision.response_channel,
+                    primary_move=turn_decision.primary_move,
+                    allow_medium_target=turn_decision.allow_medium_target,
+                )
                 final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
                     final_response,
                     user_profile,
@@ -703,6 +804,7 @@ class ProcessChatTurnUseCase:
                 collection_result,
                 user_message=request.question,
             )
+            previous_asked_field = user_profile.last_asked_field
             final_response = self.chat_service._enforce_core_mainline_followup(  # noqa: SLF001
                 final_response,
                 user_profile,
@@ -716,6 +818,71 @@ class ProcessChatTurnUseCase:
                 final_response,
                 user_profile,
                 ask_field=turn_decision.ask_field,
+                collection_result=collection_result,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+            )
+            final_response = self.chat_service._enforce_pending_partner_requirement_followup(  # noqa: SLF001
+                final_response,
+                user_profile,
+                ask_field=turn_decision.ask_field,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+            )
+            final_response = self.chat_service._prepend_multi_field_ack_transition(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+                ask_field=turn_decision.ask_field,
+                followup_topic=turn_decision.followup_topic,
+            )
+            final_response = self.chat_service._prepend_single_field_ack_transition(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+                ask_field=turn_decision.ask_field,
+                followup_topic=turn_decision.followup_topic,
+            )
+            final_response = self.chat_service._append_safe_short_answer_followup(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+                previous_asked_field=previous_asked_field,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+                ask_field=turn_decision.ask_field,
+                followup_topic=turn_decision.followup_topic,
+            )
+            final_response = self.chat_service._handoff_to_contact_after_core_completion(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result=collection_result,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+                contact_gate_before=contact_gate_before,
+            )
+            final_response = self.chat_service._handoff_to_pending_target_after_core_completion(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result=collection_result,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+                contact_gate_before=contact_gate_before,
+            )
+            final_response = self.chat_service._handoff_to_contact_after_medium_completion(  # noqa: SLF001
+                final_response,
+                user_profile,
                 collection_result=collection_result,
                 user_message=request.question,
                 response_channel=turn_decision.response_channel,
@@ -764,6 +931,8 @@ class ProcessChatTurnUseCase:
                         final_response = f"{bridge_prefix} {final_response}"
                 logger.info(f"[bridge_back] 已应用桥接前缀，最终回复长度={len(final_response)}")
 
+            final_response = self.chat_service._strip_broken_edge_fragments(final_response)  # noqa: SLF001
+
             delivery_ok = self.chat_service._is_delivery_viable(final_response)  # noqa: SLF001
             if not delivery_ok:
                 final_response = self.chat_service._build_no_ai_response(  # noqa: SLF001
@@ -783,7 +952,6 @@ class ProcessChatTurnUseCase:
                 )
                 _mark("contact_ask_record", t0)
 
-            previous_asked_field = user_profile.last_asked_field
             field_ask_count_before = dict(user_profile.field_ask_count) if user_profile.field_ask_count else {}
             t0 = time.perf_counter()
             should_track_asked_fields = (
@@ -855,7 +1023,7 @@ class ProcessChatTurnUseCase:
 
             ending_info = collection_result.get("ending_info") if isinstance(collection_result, dict) else None
             if isinstance(ending_info, dict) and ending_info.get("scenario") == "both_rejected":
-                final_response = "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
+                final_response = self.chat_service.ending_service.get_ending_response("both_rejected") or final_response
 
             payload = self._sync_payload_response(payload, final_response)
             payload = _attach_route_meta(payload, route_name)

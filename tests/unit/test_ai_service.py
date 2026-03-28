@@ -42,3 +42,17 @@ async def test_generate_response_resets_client_on_generic_error():
         await service.generate_response("hi", "sys", timeout=0.1)
 
     service._reset_client.assert_awaited()
+
+
+def test_resolve_timeout_settings_derives_from_chat_ai_timeout(monkeypatch):
+    monkeypatch.delenv("AI_HTTP_TOTAL_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("CHAT_AI_HARD_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("CONCURRENCY_REQUEST_TIMEOUT", raising=False)
+    monkeypatch.setenv("CHAT_AI_TIMEOUT_SECONDS", "80")
+
+    settings = AIService.resolve_timeout_settings()
+
+    assert settings["chat_ai_timeout"] == 80
+    assert settings["http_total_timeout"] == 85
+    assert settings["chat_ai_hard_timeout"] == 90
+    assert settings["request_timeout"] == 100

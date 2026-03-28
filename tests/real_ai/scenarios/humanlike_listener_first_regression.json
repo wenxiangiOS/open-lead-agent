@@ -56,6 +56,32 @@
       ]
     },
     {
+      "id": "listener_first_noisy_greeting_probe_intent",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "opening_greeting"],
+      "description": "带重复语气词和重复“在吗”的开场问候，应仍然走 opening_probe，不应直接切字段。",
+      "messages": [
+        "你好呀，在吗在吗呀呀呀？"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["找对象", "了解下", "看看情况", "问问情况"] },
+        { "type": "final_response_not_contains_any", "values": ["男生还是女生", "你今年多大", "你在哪个城市"] }
+      ]
+    },
+    {
+      "id": "listener_first_noisy_greeting_clarify",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "opening_clarify"],
+      "description": "开场出现 greeting 加异常尾巴时，应优先轻澄清，不应直接进入资料追问。",
+      "messages": [
+        "你好呀，坏呼叫"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["没看懂", "没太接住", "没看明白", "没反应过来"] },
+        { "type": "final_response_not_contains_any", "values": ["男生还是女生", "你今年多大", "你在哪个城市"] }
+      ]
+    },
+    {
       "id": "listener_first_opening_probe_particle_soft_intent_self_intro",
       "category": "humanlike_listener_first",
       "tags": ["critical", "humanlike", "listener_first", "opening_clarify", "open_self_intro"],
@@ -93,6 +119,21 @@
       "messages": [
         "你好",
         "就是想先问问情况呢"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 1, "values": ["找对象", "了解下", "问问情况", "聊聊"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["介绍下自己", "简单说说自己", "顺着了解", "大概情况"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["男生还是女生", "你今年多大", "你在哪个城市"] }
+      ]
+    },
+    {
+      "id": "listener_first_opening_probe_wo_wenwen_qingkuang_self_intro",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "open_self_intro"],
+      "description": "开场探询后，用户回复“我问问你情况呢”这类低压了解表达，下一轮仍应给开放自述入口，而不是直接切字段。",
+      "messages": [
+        "你好",
+        "我问问你情况呢"
       ],
       "assertions": [
         { "type": "response_contains_any", "turn": 1, "values": ["找对象", "了解下", "问问情况", "聊聊"] },

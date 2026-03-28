@@ -9,6 +9,69 @@ from src.models.user_profile import UserProfile
 class DialogueExpressionService:
     """负责将结构化意图翻译成更自然的人类化表达。"""
 
+    STRONG_SEEK_FEMALE_CUES = (
+        "找女生", "找女孩子", "找小姐姐", "找个女生", "找个女朋友", "找老婆", "喜欢女生", "想找女性",
+    )
+    STRONG_SEEK_MALE_CUES = (
+        "找男生", "找男孩子", "找小哥哥", "找个男生", "找个男朋友", "找老公", "喜欢男生", "想找男性",
+    )
+    WEAK_SEEK_FEMALE_CUES = {
+        "温柔": 2.0,
+        "文静": 2.0,
+        "贤惠": 3.0,
+        "顾家": 2.0,
+        "身材苗条": 3.0,
+        "苗条": 3.0,
+        "漂亮": 2.0,
+        "长相清秀": 2.0,
+        "气质好": 2.0,
+        "爱干净": 1.5,
+        "会照顾人": 1.5,
+        "会做饭": 2.0,
+        "不强势": 2.0,
+        "性格软一点": 2.0,
+        "小鸟依人": 2.0,
+        "甜一点": 1.5,
+        "可爱一点": 1.5,
+        "温婉": 2.0,
+        "善解人意": 2.0,
+        "脾气好": 1.5,
+        "女生味一点": 2.0,
+    }
+    WEAK_SEEK_MALE_CUES = {
+        "成熟稳重": 2.0,
+        "有担当": 3.0,
+        "有责任心": 3.0,
+        "有安全感": 2.0,
+        "上进": 2.0,
+        "事业心强": 2.0,
+        "可靠": 2.0,
+        "体贴": 2.0,
+        "幽默": 1.5,
+        "不幼稚": 2.0,
+        "成熟点": 2.0,
+        "比我大一点": 2.0,
+        "有主见": 2.0,
+        "会规划生活": 1.5,
+        "有经济基础": 2.0,
+        "有房有车": 2.0,
+        "大气一点": 1.5,
+        "高一点": 1.0,
+        "个子高一点": 1.0,
+        "比我高": 1.0,
+        "身高高一点": 1.0,
+    }
+    GENDER_CHALLENGE_PATTERNS = (
+        r"这你还看不出来",
+        r"这还看不出来",
+        r"你还看不出来",
+        r"还要问",
+        r"还不知道",
+        r"你还不知道",
+        r"我这要求",
+    )
+    SOFT_GENDER_CONFIRM_THRESHOLD = 3.0
+
     def __init__(self) -> None:
         self._cursor: Dict[str, int] = {}
 
@@ -43,6 +106,12 @@ class DialogueExpressionService:
     OPENING_INTENT_BRIDGES = (
         "好呀，你也可以先简单介绍下自己，我顺着了解会更自然一点。或者我先问你一个小问题，你这边是男生还是女生呀？",
         "行呀，那我先认识下你。你也可以先简单说说自己，我这边顺着了解会更顺一点；要不我先问你，你这边是男生还是女生呀？",
+    )
+
+    GREETING_RESUME_SEX_PROMPTS = (
+        "在呢，你这边是男生还是女生呀？",
+        "你好呀，我在呢。你这边是男生还是女生呀？",
+        "在的，我接着了解下，你这边是男生还是女生呀？",
     )
 
     CONTACT_PROMPTS = (
@@ -82,6 +151,13 @@ class DialogueExpressionService:
         ),
     }
 
+    MID_CONVERSATION_CORE_FIELD_PROMPTS = {
+        "sex": (
+            "你这边是男生还是女生呀？",
+            "我顺手确认下，你这边是男生还是女生呀？",
+        ),
+    }
+
     def render_field_question(
         self,
         field: Optional[str],
@@ -94,30 +170,62 @@ class DialogueExpressionService:
             return "你继续说，我顺着往下了解。"
         if field == "contact":
             return self.render_contact_question(profile=profile, stage=stage, user_message=user_message)
+        if field == "sex":
+            soft_confirmation = self._build_soft_gender_confirmation_prompt(profile, user_message=user_message)
+            if soft_confirmation:
+                return soft_confirmation
         if field == "sex" and self._looks_like_opening_matchmaking_intent(user_message):
             return self._next_variant("opening:intent_bridge", self.OPENING_INTENT_BRIDGES)
+        if field == "sex" and self._looks_like_short_greeting(user_message):
+            return self._next_variant("greeting:resume_sex", self.GREETING_RESUME_SEX_PROMPTS)
         if field == "partner_requirement":
+            bridged_preference = self._build_bridged_partner_requirement_prompt(profile)
+            if bridged_preference:
+                return bridged_preference
             return "你对另一半大概有什么要求呀？比如年龄、城市、性格这些，你会更看重哪方面？"
         if field == "marital_status":
+            bridged_marital = self._build_bridged_marital_status_prompt(profile)
+            if bridged_marital:
+                return bridged_marital
             return self._maybe_add_reason(
                 "marital_status",
                 "我顺手确认一下，你现在是单身状态吗？",
             )
         if field == "monthly_income":
+            bridged_income = self._build_bridged_income_prompt(profile)
+            if bridged_income:
+                return bridged_income
             return self._maybe_add_reason(
                 "monthly_income",
                 "如果你方便的话，我再轻问一句，你月收入大概在哪个区间？不方便说也没关系。",
             )
-        prompts = self.CORE_FIELD_PROMPTS.get(field)
+        prompts = self._get_core_field_prompts(field, stage=stage)
         if not prompts:
             return "你继续说，我顺着往下了解。"
         if field == "occupation":
-            contextual_occupation = self._build_contextual_occupation_prompt(user_message)
+            contextual_occupation = self._build_contextual_occupation_prompt(user_message, profile=profile)
             if contextual_occupation:
                 return contextual_occupation
+        if field == "age":
+            if profile and (getattr(profile, "age", None) or str(getattr(profile, "age_label", "") or "").strip()):
+                bridged_marital = self._build_bridged_marital_status_prompt(profile)
+                if bridged_marital:
+                    return bridged_marital
+                return self._maybe_add_reason(
+                    "marital_status",
+                    "我顺手确认一下，你现在是单身状态吗？",
+                )
+            bridged_age = self._build_bridged_age_prompt(profile)
+            if bridged_age:
+                return bridged_age
         base = self._next_variant(f"core:{field}", prompts)
         base = self._maybe_add_reason(field, base)
         return self._maybe_add_transition_prefix(field, base, user_message=user_message)
+
+    def _get_core_field_prompts(self, field: str, *, stage: str) -> Optional[tuple[str, ...]]:
+        if field == "sex" and stage != "opening":
+            return self.MID_CONVERSATION_CORE_FIELD_PROMPTS.get(field) or self.CORE_FIELD_PROMPTS.get(field)
+        return self.CORE_FIELD_PROMPTS.get(field)
 
     def render_contact_question(
         self,
@@ -168,6 +276,137 @@ class DialogueExpressionService:
             return base.replace("？", f"？{reason}")
         return f"{base} {reason}"
 
+    def _build_soft_gender_confirmation_prompt(
+        self,
+        profile: Optional[UserProfile],
+        *,
+        user_message: str = "",
+    ) -> Optional[str]:
+        if not profile or getattr(profile, "sex", None):
+            return None
+
+        preference = str(getattr(profile, "partner_requirement", "") or "").strip()
+        if not preference:
+            return None
+
+        inference = self._infer_gender_from_preference(preference)
+        if inference["guess"] == "unknown" or inference["confidence"] == "weak":
+            return None
+
+        guess_label = "男生" if inference["guess"] == "male" else "女生"
+        is_challenge = self._looks_like_gender_confirmation_challenge(user_message)
+
+        if is_challenge:
+            lead = self._next_variant(
+                f"sex:challenge:lead:{guess_label}",
+                ("哈哈", "你这么说也有道理", "这个嘛，被你发现了"),
+            )
+            inference_ack = self._next_variant(
+                f"sex:challenge:ack:{guess_label}",
+                ("这个我大概能看出来", "方向上我其实大概能看出来", "这个方向我心里大概有数"),
+            )
+            reason = self._next_variant(
+                f"sex:challenge:reason:{guess_label}",
+                ("不过这种我还是会确认一下", "但这种我一般还是会问准一点", "不过我还是得确认清楚点"),
+            )
+            example = self._next_variant(
+                f"sex:challenge:example:{guess_label}",
+                (
+                    "也有男生来找男朋友的",
+                    "也有女生来找女朋友的",
+                    "也会遇到同向在了解的情况",
+                ),
+            )
+            confirm = self._next_variant(
+                f"sex:challenge:confirm:{guess_label}",
+                (
+                    f"你这边是{guess_label}对吧？",
+                    f"你这边是{guess_label}在了解，对吧？",
+                    f"所以我理解得对的话，你这边是{guess_label}，是吧？",
+                ),
+            )
+            return f"{lead}，{inference_ack}，{reason}，{example}。{confirm}"
+
+        prefix = self._next_variant(
+            f"sex:soft:prefix:{guess_label}",
+            ("我再确认下", "我顺手确认一下", "我这边确认一下"),
+        )
+        confirm = self._next_variant(
+            f"sex:soft:confirm:{guess_label}",
+            (
+                f"你这边是{guess_label}对吧？",
+                f"你这边是{guess_label}在了解，对吧？",
+                f"我理解得对的话，你这边是{guess_label}，是吧？",
+            ),
+        )
+        return f"{prefix}，{confirm}"
+
+    def _infer_gender_from_preference(self, preference_text: str) -> Dict[str, object]:
+        text = re.sub(r"\s+", "", str(preference_text or ""))
+        if not text:
+            return {"guess": "unknown", "confidence": "weak", "seek_female_score": 0.0, "seek_male_score": 0.0}
+
+        if any(cue in text for cue in self.STRONG_SEEK_FEMALE_CUES):
+            return {"guess": "male", "confidence": "strong", "seek_female_score": 100.0, "seek_male_score": 0.0}
+        if any(cue in text for cue in self.STRONG_SEEK_MALE_CUES):
+            return {"guess": "female", "confidence": "strong", "seek_female_score": 0.0, "seek_male_score": 100.0}
+
+        seek_female_score = sum(score for cue, score in self.WEAK_SEEK_FEMALE_CUES.items() if cue in text)
+        seek_male_score = sum(score for cue, score in self.WEAK_SEEK_MALE_CUES.items() if cue in text)
+        seek_male_score += self._score_height_cues(text, seeking_male=True)
+        seek_female_score += self._score_height_cues(text, seeking_male=False)
+
+        if seek_female_score >= self.SOFT_GENDER_CONFIRM_THRESHOLD and seek_female_score > seek_male_score:
+            return {
+                "guess": "male",
+                "confidence": "medium",
+                "seek_female_score": seek_female_score,
+                "seek_male_score": seek_male_score,
+            }
+        if seek_male_score >= self.SOFT_GENDER_CONFIRM_THRESHOLD and seek_male_score > seek_female_score:
+            return {
+                "guess": "female",
+                "confidence": "medium",
+                "seek_female_score": seek_female_score,
+                "seek_male_score": seek_male_score,
+            }
+        return {
+            "guess": "unknown",
+            "confidence": "weak",
+            "seek_female_score": seek_female_score,
+            "seek_male_score": seek_male_score,
+        }
+
+    @staticmethod
+    def _score_height_cues(text: str, *, seeking_male: bool) -> float:
+        score = 0.0
+        if seeking_male:
+            if re.search(r"(至少|不低于)?183(?:cm|CM|厘米)?(?:以上|\+)?", text):
+                score += 2.5
+            elif re.search(r"(至少|不低于)?180(?:cm|CM|厘米)?(?:以上|\+)?", text):
+                score += 2.0
+            elif re.search(r"(至少|不低于)?178(?:cm|CM|厘米)?(?:以上|\+)?", text):
+                score += 1.5
+            elif re.search(r"(至少|不低于)?175(?:cm|CM|厘米)?(?:以上|\+)?", text):
+                score += 1.0
+            elif re.search(r"(至少|不低于)?170(?:cm|CM|厘米)?(?:以上|\+)?", text):
+                score += 0.5
+            return score
+
+        if "160左右" in text or "165左右" in text:
+            score += 0.5
+        if "娇小一点" in text or "小个子一点" in text:
+            score += 1.0
+        if "不太高" in text or "不要太高" in text:
+            score += 0.5
+        return score
+
+    def _looks_like_gender_confirmation_challenge(self, user_message: str) -> bool:
+        text = str(user_message or "").strip()
+        if not text:
+            return False
+        return any(re.search(pattern, text) for pattern in self.GENDER_CHALLENGE_PATTERNS)
+
     def _next_variant(self, key: str, candidates: tuple[str, ...]) -> str:
         if not candidates:
             return ""
@@ -187,12 +426,69 @@ class DialogueExpressionService:
         return True
 
     @staticmethod
-    def _build_contextual_occupation_prompt(user_message: str) -> Optional[str]:
-        message = str(user_message or "").strip()
-        if not message:
+    def _looks_like_short_greeting(user_message: str) -> bool:
+        normalized = re.sub(r"[\s，,。！？!?~～、呀啊呢哈啦]+", "", str(user_message or "").lower())
+        if not normalized:
+            return False
+        return normalized in {"你好", "您好", "嗨", "哈喽", "hi", "hello", "在吗"}
+
+    def _build_bridged_income_prompt(self, profile: Optional[UserProfile]) -> Optional[str]:
+        occupation = str(getattr(profile, "occupation", "") or "").strip()
+        if not occupation:
             return None
+        variants = (
+            f"做{occupation}的话，收入这块大概在什么区间呀？",
+            f"你做{occupation}这行的话，收入大概在哪个范围？",
+        )
+        return self._next_variant("bridge:income", variants)
+
+    def _build_bridged_age_prompt(self, profile: Optional[UserProfile]) -> Optional[str]:
+        education = str(getattr(profile, "education", "") or "").strip()
+        if not education:
+            return None
+        age = getattr(profile, "age", None)
+        age_label = str(getattr(profile, "age_label", "") or "").strip()
+        if age or age_label:
+            return None
+        variants = (
+            f"{education}这边我知道了，那你现在大概什么年龄段呀？",
+            f"{education}这点我清楚了，你今年大概多大呀？",
+        )
+        return self._next_variant("bridge:age", variants)
+
+    def _build_bridged_marital_status_prompt(self, profile: Optional[UserProfile]) -> Optional[str]:
+        age_label = str(getattr(profile, "age_label", "") or "").strip()
+        if not age_label:
+            age = getattr(profile, "age", None)
+            age_label = f"{age}岁" if age else ""
+        if not age_label:
+            return None
+        variants = (
+            f"{age_label}是吧，那你现在是单身状态在了解吗？",
+            f"这个年龄段我知道了，那你现在感情状态是单身吗？",
+        )
+        return self._next_variant("bridge:marital", variants)
+
+    def _build_bridged_partner_requirement_prompt(self, profile: Optional[UserProfile]) -> Optional[str]:
+        marital_status = str(getattr(profile, "marital_status", "") or "").strip()
+        if not marital_status:
+            return None
+        variants = (
+            f"{marital_status}状态我知道了，那你对另一半大概有什么要求呀？",
+            f"好，这个状态我清楚了。你会更看重对方哪一点呀？",
+        )
+        return self._next_variant("bridge:partner_requirement", variants)
+
+    def _build_contextual_occupation_prompt(self, user_message: str, *, profile: Optional[UserProfile] = None) -> Optional[str]:
+        message = str(user_message or "").strip()
         city_match = re.search(r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)", message)
+        if not city_match and profile:
+            city_match = re.search(r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)", str(getattr(profile, "location", "") or ""))
         if not city_match:
             return None
         city = city_match.group(1)
-        return f"在{city}这边是吧。你平时也是在{city}工作吗，主要做什么呀？"
+        variants = (
+            f"那你现在在{city}主要做哪方面工作呀？",
+            f"你现在在{city}这边主要做什么呀？",
+        )
+        return self._next_variant("bridge:occupation", variants)

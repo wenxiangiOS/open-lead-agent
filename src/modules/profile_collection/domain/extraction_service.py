@@ -288,13 +288,58 @@ class ExtractionService:
         explicit_patterns = {
             "sex": r"(我是|本人|我)\s*(男生|女生|男的|女的|男|女)",
             "age": r"(我\s*\d{1,3}\s*岁|我是一?个?\d{1,3}岁|出生于|我是\d{2}后|我是\d{4}年)",
-            "location": r"(我在|我住在|我现在在|我在.*(工作|生活)|我是.*的)",
+            "location": r"(我在|我住在|我现在在|我目前在|我人在|我在.*(工作|生活)|我是.*的)",
             "education": r"(我是|学历|读到|本科|大专|硕士|博士|研究生)",
             "occupation": r"(我是|我做|从事|职业是|工作是|做.*工作)",
-            "marital_status": r"(我是|目前|现在).*(单身|未婚|离异|已婚|分居)",
+            "marital_status": r"((我是|目前|现在|我)\s*(单身|未婚|离异|已婚|分居)|离过婚|已经离婚)",
         }
         pattern = explicit_patterns.get(field)
         return bool(pattern and re.search(pattern, text))
+
+    @classmethod
+    def _has_explicit_field_correction_signal(
+        cls,
+        field: str,
+        user_message: str,
+        current_value: Any,
+        new_value: Any,
+    ) -> bool:
+        """识别“不是A，是B / 我不在A，在B”这类明确更正，允许覆盖稳定字段。"""
+        text = str(user_message or "").strip()
+        current = "" if current_value is None else str(current_value).strip()
+        new = "" if new_value is None else str(new_value).strip()
+        if not text or not current or not new:
+            return False
+        if cls._is_effectively_same_value(current, new):
+            return False
+
+        if field == "location":
+            patterns = (
+                rf"(不是|不在){re.escape(current)}.*(是|在){re.escape(new)}",
+                rf"{re.escape(current)}.*(说错|搞错)",
+                rf"(改成|改为).*(?:在)?{re.escape(new)}",
+            )
+            return any(re.search(pattern, text) for pattern in patterns)
+
+        if field == "marital_status":
+            if "离异" in new and any(token in text for token in ("我离异", "我是离异", "离过婚", "已经离婚")):
+                return True
+            if "单身" in new and any(token in text for token in ("我单身", "我是单身", "现在单身")):
+                return True
+            patterns = (
+                rf"(不是|不算){re.escape(current)}.*{re.escape(new)}",
+                rf"{re.escape(current)}.*(说错|搞错)",
+            )
+            return any(re.search(pattern, text) for pattern in patterns)
+
+        if field in {"education", "occupation"}:
+            patterns = (
+                rf"(不是|不做){re.escape(current)}.*(是|做){re.escape(new)}",
+                rf"{re.escape(current)}.*(说错|搞错)",
+            )
+            return any(re.search(pattern, text) for pattern in patterns)
+
+        return False
 
     def _parse_age(self, value) -> Optional[int]:
         """
@@ -376,6 +421,12 @@ class ExtractionService:
         message = str(user_message or "").strip()
         if not message:
             return None
+        compact_message = re.sub(r"\s+", "", message)
+        compact_message = re.sub(
+            r"(^|[，,])我(?=(温柔|性格好|聊得来|合适|人好|高挑|高一点|同城优先|成熟稳重|三观合拍))",
+            r"\1",
+            compact_message,
+        )
 
         values: List[str] = []
         patterns = [
@@ -386,14 +437,19 @@ class ExtractionService:
             r"(身高至少\d{2,3})",
             r"(身高不低于\d{2,3})",
             r"(至少\d{2,3})",
-            r"(温柔(?:一点|些)?(?:的)?)",
+            r"(温柔(?:一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?)",
+            r"(温柔就行(?:了)?(?:吧|呀|呢)?)",
+            r"(性格好就行(?:了)?(?:吧|呀|呢)?)",
+            r"(聊得来就行(?:了)?(?:吧|呀|呢)?)",
+            r"(合适就行(?:了)?(?:吧|呀|呢)?)",
+            r"(人好就行(?:了)?(?:吧|呀|呢)?)",
             r"(气质(?:好|佳)?(?:一点|些)?(?:的)?)",
             r"(同城优先)",
             r"(成熟稳重)",
             r"(三观合拍)",
         ]
         for pattern in patterns:
-            matches = re.findall(pattern, message)
+            matches = re.findall(pattern, compact_message)
             for matched in matches:
                 cleaned = str(matched).strip("，,。；; ")
                 if cleaned and cleaned not in values:
@@ -407,7 +463,12 @@ class ExtractionService:
             value = re.sub(r"^不超过(\d{1,2})岁$", r"年龄不超过\1岁", value)
             value = re.sub(r"^(\d{1,2})岁以下$", r"年龄不超过\1岁", value)
             value = re.sub(r"^至少(\d{2,3})$", r"身高至少\1", value)
-            value = re.sub(r"(温柔)(一点|些)?(?:的)?$", r"\1", value)
+            value = re.sub(r"(温柔)(一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?$", r"\1", value)
+            value = re.sub(r"^(温柔)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+            value = re.sub(r"^(性格好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+            value = re.sub(r"^(聊得来)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+            value = re.sub(r"^(合适)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+            value = re.sub(r"^(人好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"(气质)(好|佳)?(一点|些)?(?:的)?$", r"\1", value)
             if value not in normalized:
                 normalized.append(value)
@@ -667,7 +728,10 @@ class ExtractionService:
                         r"我叫[^，,。！？!\s]{1,8}\s*[，,、 ]\s*(男生|女生|男的|女的|男|女)",
                         user_message or "",
                     ) or re.search(
-                        r"^\s*(男生|女生|男的|女的|男|女)\s*(呀|呢|哈|哦|啊)?\s*$",
+                        r"^\s*(男生|女生|男的|女的|男|女)\s*(?:呀|呢|哈|哦|啊)?\s*$",
+                        user_message or "",
+                    ) or re.search(
+                        r"^\s*(男生|女生|男的|女的|男|女)\s*[，,、 ]\s*(?:单身|未婚|离异|已婚|分居)",
                         user_message or "",
                     )
                     if not explicit_self_sex:
@@ -750,6 +814,12 @@ class ExtractionService:
                     and current_value
                     and not self._is_effectively_same_value(current_value, value)
                     and not self._has_explicit_self_update_signal(mapped_field, user_message)
+                    and not self._has_explicit_field_correction_signal(
+                        mapped_field,
+                        user_message,
+                        current_value,
+                        value,
+                    )
                 ):
                     logger.info(
                         f"[字段稳定保护] 跳过 {mapped_field} 改写: current={current_value}, new={value}"

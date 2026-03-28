@@ -320,10 +320,18 @@ class ProfileCollectionPolicy:
         if self.can_actively_ask(profile, "partner_requirement"):
             if main_target == "marital_status":
                 return "partner_requirement"
+            if main_target in {"age", "education", "occupation", "location"} and (
+                message_count >= 5 or self.is_profile_sufficient_for_contact(profile)
+            ):
+                return "partner_requirement"
             if any(keyword in user_message for keyword in self.PARTNER_REQUIREMENT_TRIGGER_KEYWORDS):
                 return "partner_requirement"
 
         if self.can_actively_ask(profile, "marital_status"):
+            if main_target in {"age", "location", "education", "occupation", "sex"} and (
+                message_count >= 5 or self.is_profile_sufficient_for_contact(profile)
+            ):
+                return "marital_status"
             if any(keyword in user_message for keyword in self.MARITAL_STATUS_TRIGGER_KEYWORDS):
                 return "marital_status"
 
@@ -575,6 +583,18 @@ class ProfileCollectionPolicy:
         for field in self.MEDIUM_PRIORITY_ORDER:
             if not self.is_medium_field_covered(profile, field) and self.can_actively_ask(profile, field):
                 return field
+        return None
+
+    def get_medium_transition_host(self, profile: UserProfile, medium_field: str) -> Optional[str]:
+        """为剩余中等字段寻找更自然的融合宿主。"""
+        host_orders = {
+            "monthly_income": ("occupation", "education"),
+            "partner_requirement": ("age", "location", "education", "occupation", "sex"),
+            "marital_status": ("sex", "age", "location", "education", "occupation"),
+        }
+        for host in host_orders.get(medium_field, ()):
+            if getattr(profile, host, None) or profile.collection_progress.get(host):
+                return host
         return None
 
     def get_next_mode(

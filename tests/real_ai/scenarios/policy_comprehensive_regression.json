@@ -705,6 +705,66 @@
       ]
     },
     {
+      "id": "policy_opening_multi_field_shadow_profile_skips_location_age",
+      "category": "policy_opening",
+      "tags": ["critical", "opening", "shadow_profile", "multi_field"],
+      "description": "首轮同句给出所在地和年龄时，当前轮决策应基于最新状态，不再回头追问 location/age。",
+      "messages": [
+        "我自己介绍下吧，我来自深圳，今年29岁"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳" },
+        { "type": "profile_field_equals", "field": "age", "expected": 29 },
+        { "type": "final_response_contains_any", "values": ["学历", "工作", "做什么", "做哪方面"] },
+        { "type": "final_response_not_contains_any", "values": ["你在哪", "在哪里", "哪个城市", "你今年多大", "几岁", "年龄段"] }
+      ]
+    },
+    {
+      "id": "policy_withdraw_first_time_without_contact_retains_once",
+      "category": "policy_withdraw",
+      "tags": ["critical", "withdraw", "retention"],
+      "description": "未拿到联系方式时，用户第一次说不聊了，应轻挽留一次，不继续追字段也不推进联系方式。",
+      "messages": [
+        "找对象",
+        "我在深圳，今年29岁",
+        "不聊了"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 3, "values": ["怎么了", "顾虑", "担心", "不想继续聊", "不想继续"] },
+        { "type": "response_not_contains_any", "turn": 3, "values": ["电话", "微信", "联系方式", "学历", "工作"] }
+      ]
+    },
+    {
+      "id": "policy_withdraw_second_time_without_contact_soft_closes",
+      "category": "policy_withdraw",
+      "tags": ["critical", "withdraw", "soft_close"],
+      "description": "未拿到联系方式时，第一次轻挽留后，用户再次表达不想聊，应直接轻收尾，不再二次追问顾虑。",
+      "messages": [
+        "找对象",
+        "我在深圳，今年29岁",
+        "不聊了",
+        "还是先不聊了"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 4, "values": ["先这样", "不打扰", "先收住", "想继续聊", "再来找我"] },
+        { "type": "response_not_contains_any", "turn": 4, "values": ["怎么了", "顾虑", "担心", "电话", "微信", "联系方式"] }
+      ]
+    },
+    {
+      "id": "policy_withdraw_after_contact_collected_closes_immediately",
+      "category": "policy_withdraw",
+      "tags": ["critical", "withdraw", "contact_complete"],
+      "description": "已经拿到联系方式后，用户第一次说不聊了，应直接业务收尾，不再挽留或继续问资料。",
+      "messages": [
+        "我是男的，90后，在深圳，本科，做IT的，单身，想找温柔点的，我电话17688654321",
+        "不聊了"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["等好消息", "提前约时间", "不打扰", "联系前"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["怎么了", "顾虑", "担心", "电话", "微信", "学历", "工作"] }
+      ]
+    },
+    {
       "id": "policy_mixed_location_and_boundary",
       "category": "policy_mixed",
       "tags": ["mixed", "boundary"],

@@ -30,8 +30,8 @@ endings:
       keywords: ["分居中", "正在分居", "分居状态", "分居的", "处于分居"]
     useAiEnding: false
     templates:
-      - "我先跟你说一下，分居中的状态目前还不适合继续往下推进，我们这边就先聊到这里。"
-      - "你现在还在分居阶段，这种情况我这边先不继续往下推进了，等状态更明确些再说也行。"
+      - "嗯嗯理解～分居中的话暂时还不符合我们的服务条件呢～等手续都办妥了再来找我吧，祝你顺利～"
+      - "好的呢～那等手续都办妥了再来找我吧，祝你顺利～"
     profileUpdates:
       conversation_ended: true
 
@@ -42,7 +42,7 @@ endings:
       field: under_limit
     useAiEnding: false
     templates:
-      - "我先和你说清楚，这边当前服务有年龄范围限制，所以我们先聊到这里。"
+      - "哇你才这个年纪呀😊我们的服务面向24岁以上的单身人士哦～等你再长大一点，变得更成熟了再来找我吧！现在好好读书/工作，未来一定会遇到更合适的人的～"
     profileUpdates:
       conversation_ended: true
 
@@ -53,7 +53,7 @@ endings:
       keywords: ["同性恋", "我喜欢男生", "我喜欢女生", "我喜欢男的", "喜欢同性", "我是les", "les群体", "我是gay", "gay群体", "同志"]
     useAiEnding: false
     templates:
-      - "我先和你说明一下，目前这边的服务范围和你的需求方向不太一致，所以这次先聊到这里。"
+      - "谢谢你的坦诚呀😊我们这边是做异性相亲服务的，可能不太适合你的需求呢～建议你可以去看看一些专门的交友平台，希望你能找到属于你的幸福！祝你好运～"
     profileUpdates:
       conversation_ended: true
 
@@ -64,7 +64,7 @@ endings:
       keywords: ["已经结婚", "已婚", "我有老公", "我有老婆", "我结婚了", "有家室"]
     useAiEnding: false
     templates:
-      - "我先和你确认一下，已婚状态这边就不继续往下推进了，我们先聊到这里。"
+      - "哎呀～原来你已经结婚了呀😊 那我们这边可能帮不了你了呢～我们只服务单身人士哦，祝你婚姻幸福！"
     profileUpdates:
       conversation_ended: true
       already_married: true
@@ -97,7 +97,7 @@ endings:
         - "帮孩子"
     useAiEnding: false
     templates:
-      - "如果是帮朋友或家里人来问，这边暂时不按这个流程继续推进，我们先聊到这里。"
+      - "好的呀～不过建议让你的朋友/家人直接来和我聊会更好呢😊 这样我能更准确地了解TA的需求，帮TA找到更合适的人选～"
     profileUpdates:
       proxy_user: true
       conversation_ended: true
@@ -113,7 +113,7 @@ endings:
           values: [300, 400, 500, 50, 30, 20, 10]
     useAiEnding: false
     templates:
-      - "我这边先收一下，这次的信息看起来不太适合继续往下推进，我们先聊到这里。"
+      - "哈哈，这个信息有点意思😊 不过我们还是要认真对待相亲这件事的～如果你是真心想找对象，请告诉我真实的信息哦！"
     profileUpdates:
       conversation_ended: true
 
@@ -173,7 +173,8 @@ endings:
         - "还没办好"
     useAiEnding: false
     templates:
-      - "离婚手续还没办妥的话，这边暂时不继续往下推进，等状态明确之后再说会更合适。"
+      - "嗯嗯理解～分居中的话暂时还不符合我们的服务条件呢～等手续都办妥了再来找我吧，祝你顺利～"
+      - "好的呢～那等手续都办妥了再来找我吧，祝你顺利～"
     profileUpdates:
       conversation_ended: true
 
@@ -183,7 +184,7 @@ endings:
       type: manual  # 由代码逻辑决定
     useAiEnding: false
     templates:
-      - "好，那我们今天就先聊到这里，之后你想继续的时候再来找我就行。"
+      - "嗯嗯，可能暂时不太方便呢，咱们先这样哈～如果后续有任何需要和帮助，欢迎随时找我呀～"
 
   already_ended:
     description: 对话已结束后继续发消息
@@ -193,7 +194,7 @@ endings:
       value: true
     useAiEnding: false
     templates:
-      - "行，那先聊到这儿。"
+      - "好，那先这样哈，后面想聊了再来找我。"
 
   # ==================== AI 生成场景 ====================
 
@@ -202,7 +203,7 @@ endings:
     detection:
       type: manual  # 由代码逻辑决定（所有字段已收集完成）
     useAiEnding: true
-    extraInstructions: "信息收集已完成，请用温暖自然的语气收尾，表达祝福，让用户感受到诚意。不要使用固定的收尾话术，要结合用户的具体情况来个性化回复。不要出现“我记下了你的微信/手机号”“之后第一时间通过微信联系你”这类直接暴露信息收集动作的说法。"
+    extraInstructions: "信息收集已完成。若用户还没留下任何有效联系方式，请用轻松自然的语气收尾，可参考“嗯嗯好的呀～那先这样哈～如果后续有任何需要和帮助，欢迎随时找我呀～祝你早日脱单🥰”。不要暴露系统、流程或信息收集动作。若用户已经留下有效联系方式，则由业务规则收尾，不要重复生成“等好消息/多久联系”这类内容。"
     profileUpdates:
       conversation_ended: true
 
@@ -210,7 +211,8 @@ endings:
     description: 双方联系方式都被拒绝
     detection:
       type: manual  # 由代码逻辑决定（rejected_phone && rejected_wechat）
-    useAiEnding: true
-    extraInstructions: "用户不愿留下任何联系方式，请用理解和尊重的语气收尾，表达如果以后改变主意随时欢迎回来，不要显得失望或强迫。"
+    useAiEnding: false
+    templates:
+      - "好的呢～那有需要再联系我哈，祝你生活愉快～"
     profileUpdates:
       conversation_ended: true

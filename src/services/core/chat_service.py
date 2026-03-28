@@ -111,20 +111,56 @@ ABUSE_GUARD_PATTERNS = (
     r"智障",
 )
 BOUNDARY_PAUSE_PATTERNS = (
+    r"不给电话",
     r"不方便",
     r"不想留",
     r"不太想说",
+    r"不太想展开",
     r"先不说",
     r"先不留",
     r"暂时不留",
     r"先别问我这些",
     r"先别问这些",
+    r"问得太细",
+    r"问这么细",
     r"先不聊资料",
     r"先别聊资料",
     r"先不聊这个",
     r"先聊这个",
     r"换个话题",
     r"先聊别的",
+)
+WITHDRAW_STRONG_PATTERNS = (
+    r"(先)?不聊了",
+    r"不想(再)?聊了",
+    r"不想(再)?说了",
+    r"(先)?不说了",
+    r"不想继续(聊|说|了解)?了",
+    r"算了(吧)?",
+    r"(就)?先这样(吧)?",
+    r"(先)?到这(儿)?吧",
+    r"(今天)?先到这(儿)?吧",
+    r"(改天|回头|下次)(再|再来)?说",
+    r"(暂时)?不考虑了",
+    r"没必要继续了",
+    r"别问了",
+    r"不想回答了",
+)
+WITHDRAW_SOFT_PATTERNS = (
+    r"先这样",
+    r"先停一下",
+    r"先暂停吧",
+    r"晚点再聊",
+    r"有空再聊",
+    r"我先忙",
+    r"现在不方便聊",
+    r"我先去忙了",
+    r"之后再说",
+    r"我再想想",
+    r"我考虑考虑",
+    r"先不往下说了",
+    r"先不往下聊了",
+    r"这个先不展开了",
 )
 TOPIC_SHIFT_PATTERNS = (
     r"先不聊资料",
@@ -167,6 +203,11 @@ PREFERENCE_REUSE_PATTERNS = (
     r"偏向",
 )
 COMPLAINT_PATTERNS = (
+    r"问这么多",
+    r"怎么问这么多",
+    r"怎么问这么多信息",
+    r"问这么多信息",
+    r"信息问这么多",
     r"问太多",
     r"问的太多",
     r"问太多了",
@@ -311,19 +352,33 @@ PREFERENCE_REUSE_ACK_VARIANTS = (
     "像{preference}这种感觉，你是比较在意的。",
 )
 BOUNDARY_ACK_VARIANTS = (
-    "好，这块我先不往下追。",
-    "行，这个点我先收住。",
-    "没关系，我们先按你舒服的节奏来。",
+    "好，这块我先不追问。",
+    "行，这个点我先收住，先不追问。",
+    "没关系，这块我先不追问，我们先按你舒服的节奏来。",
 )
 TOPIC_SHIFT_ACK_VARIANTS = (
-    "好，那先顺着你现在更想聊的这个说。",
-    "可以，我们先不聊资料。",
+    "好，那先顺着你现在更想聊的这个说，资料这块我先不追问。",
+    "可以，资料这块我们先不追问。",
     "行，那就先聊你现在更在意的。",
 )
 PROFILE_PARTIAL_BOUNDARY_ACK_VARIANTS = (
     "{field_ack} 这块你要是现在不想展开，我们就先不追问。",
     "{field_ack} 我先接住，这一轮先不往这上面压。",
     "{field_ack} 这个我知道了，我们先按你舒服的节奏来。",
+)
+OPENING_PROFILE_ACK_VARIANTS = (
+    "{field_ack} 这点我知道了。",
+    "好，{field_ack}",
+    "{field_ack} 我先接住了。",
+)
+WITHDRAW_RETAIN_VARIANTS = (
+    "怎么啦，是哪块让你有点不想继续聊呀？",
+    "没关系，我先不往下问了。你要是有顾虑，也可以直接告诉我。",
+    "是我刚才问得有点快了，还是你对这件事本身还有点担心呀？",
+)
+WITHDRAW_SOFT_CLOSE_VARIANTS = (
+    "好，那我先不打扰你了，咱们先这样。后面你想继续聊了再来找我就行。",
+    "没关系，那这轮我先收住，后面你要是想继续再来找我。",
 )
 NO_REPEAT_PARTNER_REQUIREMENT_STATEMENT = "这个条件我知道了，后面我会顺着这个方向聊，不重复追问。"
 PARTNER_REQUIREMENT_ASK_VARIANTS = (
@@ -421,6 +476,10 @@ DELIVERY_DANGLING_ENDINGS = (
     "后续要是",
     "留个常用微信也行，我们",
     "方便的话，留个常用微信也行，我们",
+    "哈哈，原来",
+    "原来",
+    "这样的话",
+    "所以说",
 )
 
 class ChatService:
@@ -667,6 +726,35 @@ class ChatService:
                 return False
         return self._matches_any_pattern(message, BOUNDARY_PAUSE_PATTERNS)
 
+    @staticmethod
+    def _looks_like_fake_info_message(user_message: str) -> bool:
+        message = str(user_message or "").strip()
+        if not message:
+            return False
+
+        age_match = re.search(r"(?:今年|我今年|年龄|岁数)?\s*(\d{1,4})\s*岁", message)
+        if age_match:
+            age_value = int(age_match.group(1))
+            if age_value <= 10 or age_value >= 120:
+                return True
+
+        height_cm_match = re.search(r"(?:身高|高)\s*(\d{2,3})\s*(?:cm|厘米)?", message, re.IGNORECASE)
+        if height_cm_match:
+            height_value = int(height_cm_match.group(1))
+            if height_value <= 80 or height_value >= 260:
+                return True
+
+        height_meter_match = re.search(r"(?:身高|高)\s*(\d(?:\.\d+)?)\s*米", message)
+        if height_meter_match:
+            try:
+                meter_value = float(height_meter_match.group(1))
+            except ValueError:
+                meter_value = 0.0
+            if meter_value >= 2.6 or meter_value <= 0.8:
+                return True
+
+        return False
+
     def _is_complaint_message(self, user_message: str) -> bool:
         """
         检测用户抱怨问太多/重复问的输入。
@@ -712,6 +800,54 @@ class ChatService:
 
         return None
 
+    def _classify_withdraw_intent(self, user_message: str) -> Optional[str]:
+        message = (user_message or "").strip()
+        if not message:
+            return None
+        if self.user_question_service.detect_quick_faq_intent(message):
+            return None
+        if self._matches_any_pattern(message, WITHDRAW_STRONG_PATTERNS):
+            return "strong"
+        if self._matches_any_pattern(message, WITHDRAW_SOFT_PATTERNS):
+            return "soft"
+        return None
+
+    def _is_withdraw_or_stop_message(self, user_message: str) -> bool:
+        return self._classify_withdraw_intent(user_message) is not None
+
+    @staticmethod
+    def _has_any_valid_contact(user_profile: Optional[UserProfile]) -> bool:
+        if not user_profile:
+            return False
+        return bool(
+            (user_profile.phone and user_profile.phone_collected)
+            or (user_profile.wechat and user_profile.wechat_collected)
+            or user_profile.collection_progress.get("contact", False)
+        )
+
+    def _reached_question_ceiling(self, user_profile: UserProfile) -> bool:
+        core_ready = all(
+            self.collection_policy.is_collected(user_profile, field)
+            or user_profile.get_ask_count(field) >= 2
+            for field in ASK_GUARD_CORE_FIELDS
+        )
+        medium_ready = all(
+            self.collection_policy.is_collected(user_profile, field)
+            or user_profile.get_ask_count(field) >= 1
+            for field in ASK_GUARD_MEDIUM_FIELDS
+        )
+        return core_ready and medium_ready
+
+    def _build_withdraw_response(self, user_profile: UserProfile, *, user_message: str = "") -> tuple[str, bool]:
+        if self._has_any_valid_contact(user_profile):
+            return self.expectation_service.get_contact_completion_response(user_profile), True
+
+        withdraw_count = user_profile.get_ask_count("conversation_end_intent")
+        if self._reached_question_ceiling(user_profile) or withdraw_count >= 2:
+            return random.choice(WITHDRAW_SOFT_CLOSE_VARIANTS), True
+
+        return random.choice(WITHDRAW_RETAIN_VARIANTS), False
+
     def _build_turn_decision(
         self,
         user_message: str,
@@ -752,7 +888,7 @@ class ChatService:
             message_count == 0
             and self._should_use_opening_clarify(message)
             and not opening_profile_fields
-            and not self.greeting_service.is_greeting(message)
+            and not self._is_stable_opening_greeting(message)
             and not self._is_explicit_matchmaking_intent_message(message)
             and not self.user_question_service.detect_quick_faq_intent(message)
             and not self._is_boundary_pause_triggered(message, user_profile)
@@ -775,7 +911,13 @@ class ChatService:
         )
         pure_greeting_opening = (
             message_count == 0
-            and self.greeting_service.is_greeting(message)
+            and self._is_stable_opening_greeting(message)
+            and not opening_profile_fields
+            and not self._is_explicit_matchmaking_intent_message(message)
+        )
+        noisy_greeting_clarify = (
+            message_count == 0
+            and self._is_noisy_opening_clarify_message(message)
             and not opening_profile_fields
             and not self._is_explicit_matchmaking_intent_message(message)
         )
@@ -784,6 +926,31 @@ class ChatService:
         risk = "none"
         next_action = "continue"
         contact_context = self._has_active_contact_context(user_profile, user_message=message)
+        withdraw_intent = self._classify_withdraw_intent(message)
+
+        if withdraw_intent and not self._is_risk_guard_triggered(message):
+            return TurnDecision(
+                intent="withdraw_or_stop",
+                risk="withdraw",
+                stage=stage,
+                next_action="continue",
+                primary_move="soft_hold",
+                ask_field=None,
+                prioritize_user_question=False,
+                allow_contact_target=False,
+                allow_medium_target=False,
+                response_channel="quick_faq",
+                tone_policy={
+                    "ack_budget_per_n_turns": 3,
+                    "max_question_per_turn": 1,
+                    "enforce_contact_transition": False,
+                    "core_streak_max": 1,
+                },
+                followup_topic=None,
+                context_ack_required=False,
+                context_ack_type=None,
+                context_ack_payload={},
+            )
 
         if pure_greeting_opening:
             return TurnDecision(
@@ -807,6 +974,27 @@ class ChatService:
             )
 
         if opening_clarify:
+            return TurnDecision(
+                intent="opening_clarify",
+                risk="none",
+                stage=stage,
+                next_action="continue",
+                primary_move="answer_then_pause",
+                ask_field=None,
+                prioritize_user_question=True,
+                allow_contact_target=False,
+                allow_medium_target=False,
+                response_channel="quick_faq",
+                tone_policy={
+                    "ack_budget_per_n_turns": 3,
+                    "max_question_per_turn": 1,
+                    "enforce_contact_transition": False,
+                    "core_streak_max": 3,
+                },
+                followup_topic="opening_clarify",
+            )
+
+        if noisy_greeting_clarify:
             return TurnDecision(
                 intent="opening_clarify",
                 risk="none",
@@ -899,8 +1087,10 @@ class ChatService:
                 followup_topic="opening_self_intro",
             )
 
-        # 联系方式澄清/纠错优先视作联系方式上下文，不走 FAQ 分支，避免把微信/电话修正洗回资料追问。
-        if contact_context and intent != "general":
+        # 联系方式上下文里，仅联系方式相关 FAQ 降级回主线；
+        # 像“多久联系我”这类 timeline 问题仍应优先答疑。
+        direct_exchange_faq = any(marker in message for marker in ("直接加", "对方微信", "互加", "直接联系对方"))
+        if contact_context and intent in {"contact_exchange", "contact_why"} and not direct_exchange_faq:
             intent = "general"
 
         # 统一走主模型路径，避免轻量路径与主路径在字段状态和回复一致性上分叉。
@@ -1252,6 +1442,11 @@ class ChatService:
         if message_count >= 1 and user_profile.partner_requirement and any(token in message for token in ("推荐", "合适", "这类", "这种")):
             return "preference_reuse"
 
+        if message_count <= 1:
+            lightweight_preference = self._extract_simple_partner_requirement(message)
+            if deterministic_fields or lightweight_preference:
+                return "opening_profile_ack"
+
         return None
 
     def _build_context_ack_payload(
@@ -1273,6 +1468,8 @@ class ChatService:
             payload["preference"] = self._render_preference_for_ack(str(user_profile.partner_requirement or "").strip())
         elif followup_topic == "profile_partial_with_boundary":
             payload["field_ack"] = self._build_lightweight_field_ack_from_message(user_message, user_profile)
+        elif followup_topic == "opening_profile_ack":
+            payload["field_ack"] = self._build_opening_profile_ack_from_message(user_message)
         return payload
 
     @staticmethod
@@ -1330,6 +1527,13 @@ class ChatService:
             variants = tuple(v.format(field_ack=field_ack) for v in PROFILE_PARTIAL_BOUNDARY_ACK_VARIANTS)
             return self._pick_seeded_variant("context:partial_boundary", variants, seed_hint)
 
+        if ack_type == "opening_profile_ack":
+            field_ack = str(payload.get("field_ack") or self._build_opening_profile_ack_from_message(user_message)).strip()
+            if not field_ack:
+                return ""
+            variants = tuple(v.format(field_ack=field_ack) for v in OPENING_PROFILE_ACK_VARIANTS)
+            return self._pick_seeded_variant("context:opening_profile_ack", variants, seed_hint)
+
         return ""
 
     def _response_has_context_ack(
@@ -1356,6 +1560,9 @@ class ChatService:
             pref_tokens = [token for token in re.split(r"[，,、\s]+", preference) if token]
             pref_tokens.extend(["看重", "偏向", "合拍", "推荐"])
             return any(token and token in text for token in pref_tokens)
+        if ack_type == "opening_profile_ack":
+            field_ack = str(payload.get("field_ack") or "").strip()
+            return bool(field_ack) and any(token and token in text for token in (field_ack, "知道了", "接住", "这点"))
         if ack_type in {"boundary_pause", "topic_shift", "profile_partial_with_boundary"}:
             boundary_tokens = ("先不追", "不勉强", "没关系", "先不聊", "先收住", "舒服的节奏", "先顺着")
             if ack_type == "profile_partial_with_boundary":
@@ -1517,10 +1724,10 @@ class ChatService:
         if "电话" in message and "不方便" in message:
             return "行，电话这块你现在不方便也没事。等你哪天觉得方便了再说，按你方便的方式来就行。"
         if self._matches_any_pattern(message, TOPIC_SHIFT_PATTERNS):
-            return "好，那就先顺着你现在更想聊的这个来。"
+            return "好，那就先顺着你现在更想聊的这个来，资料这块我先不追问。"
         if "隐私" in message or "不太方便" in message or "先不留" in message:
             return "行，你这会儿不太想展开我能理解。隐私这块你放心，我们就顺着你舒服的节奏来。"
-        return "行，我明白你这会儿不太方便。那我们先顺着你舒服一点的节奏来。"
+        return "行，我明白你这会儿不太方便。这块我先不追问，我们先顺着你舒服一点的节奏来。"
 
     def _get_complaint_repair_response(self, user_message: str) -> str:
         """
@@ -1537,7 +1744,13 @@ class ChatService:
         if "查户口" in message or "问这么细" in message or "问得太细" in message:
             return (
                 "是，刚才那样问确实容易让人烦。"
-                "这个我收住，你想接着聊什么就顺着说。"
+                "没关系，这个我先收住，你想接着聊什么就顺着说。"
+            )
+        if any(token in message for token in ("问这么多", "问这么多信息", "怎么问这么多")):
+            return (
+                "能理解你会觉得我一下子问得有点多。"
+                "主要也是想把你的情况先摸得更清楚一点，这样后面聊合适方向会更准。"
+                "不过这轮我先收一下，你想继续聊什么我就顺着来。"
             )
         if "重复" in message or "又问" in message or "问一遍" in message:
             return (
@@ -1657,6 +1870,299 @@ class ChatService:
             )
         return self._build_policy_field_prompt(next_field, user_profile, user_message=user_message)
 
+    def _avoid_reasking_already_collected_fields(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        *,
+        user_message: str = "",
+        response_channel: str = "model",
+        primary_move: str = "",
+        allow_medium_target: bool = True,
+    ) -> str:
+        """凡是已经收集完成的字段，不允许在后续回复里再次追问。"""
+        text = str(response or "").strip()
+        if not text or response_channel != "model":
+            return text
+        if primary_move in {"repair_and_release", "answer_then_pause", "soft_hold", "ack_only", "confirm_status_only"}:
+            return text
+
+        asked_fields = self._detect_asked_fields_in_response(text)
+        if not asked_fields:
+            return text
+
+        covered_fields = {
+            field for field in ASK_GUARD_MANAGED_FIELDS
+            if self.collection_policy.is_collected(user_profile, field)
+        }
+        repeated_fields = asked_fields & covered_fields
+        if not repeated_fields:
+            return text
+
+        effective_uncovered_priority = (
+            "partner_requirement",
+            "monthly_income",
+            "marital_status",
+            "occupation",
+            "education",
+            "location",
+            "age",
+            "sex",
+        )
+        for candidate in effective_uncovered_priority:
+            if candidate in asked_fields and candidate not in covered_fields and self.collection_policy.can_actively_ask(user_profile, candidate):
+                logger.info(
+                    "[重问纠偏] 回复包含已收字段 %s，但仍有未收字段 %s，优先改为未收字段",
+                    sorted(repeated_fields),
+                    candidate,
+                )
+                if candidate in ASK_GUARD_MEDIUM_FIELDS:
+                    host_field = self.collection_policy.get_medium_transition_host(user_profile, candidate)
+                    if host_field:
+                        return self._build_interleaving_followup(
+                            user_profile,
+                            user_message,
+                            main_target=host_field,
+                            preferred_side_target=candidate,
+                            allow_medium_target=allow_medium_target,
+                        )
+                return self._build_policy_field_prompt(candidate, user_profile, user_message=user_message)
+
+        decision = self.collection_policy.decide(
+            user_profile,
+            user_message=user_message,
+            allow_contact_target=True,
+            allow_medium_target=allow_medium_target,
+        )
+
+        if decision.main_target:
+            logger.info(
+                "[重问纠偏] 回复追问了已收字段 %s，改为当前未收目标 %s",
+                sorted(repeated_fields),
+                decision.main_target,
+            )
+            return self._build_interleaving_followup(
+                user_profile,
+                user_message,
+                main_target=decision.main_target,
+                preferred_side_target=decision.side_target,
+                allow_medium_target=allow_medium_target,
+            )
+
+        forced_target = decision.forced_cover_target
+        if forced_target and self.collection_policy.can_actively_ask(user_profile, forced_target):
+            logger.info(
+                "[重问纠偏] 回复追问了已收字段 %s，改为剩余覆盖目标 %s",
+                sorted(repeated_fields),
+                forced_target,
+            )
+            host_field = self.collection_policy.get_medium_transition_host(user_profile, forced_target)
+            if host_field:
+                return self._build_interleaving_followup(
+                    user_profile,
+                    user_message,
+                    main_target=host_field,
+                    preferred_side_target=forced_target,
+                    allow_medium_target=allow_medium_target,
+                )
+            return self._build_policy_field_prompt(forced_target, user_profile, user_message=user_message)
+
+        if self.collection_policy.can_enter_contact(user_profile):
+            logger.info(
+                "[重问纠偏] 回复追问了已收字段 %s，改为联系方式入口",
+                sorted(repeated_fields),
+            )
+            return self._build_policy_field_prompt("contact", user_profile, user_message=user_message)
+
+        return text
+
+    def _append_safe_short_answer_followup(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        collection_result: Dict[str, Any],
+        *,
+        previous_asked_field: Optional[str],
+        user_message: str = "",
+        response_channel: str = "model",
+        primary_move: str = "",
+        ask_field: Optional[str] = None,
+        followup_topic: Optional[str] = None,
+    ) -> str:
+        """短答命中上一轮字段且当前回复停住时，安全续问下一个核心字段。"""
+        text = str(response or "").strip()
+        if not text or response_channel != "model" or primary_move != "light_followup":
+            return text
+        if ask_field or followup_topic:
+            return text
+        if self.collection_policy.has_divorce_confirmation_pending(user_profile):
+            return text
+        if self._should_lock_divorce_confirmation(user_profile, user_message):
+            return text
+        if self._has_active_contact_context(user_profile, collection_result=collection_result, user_message=user_message):
+            return text
+
+        collected_fields = {
+            str(item.get("field") or "").strip()
+            for item in (collection_result.get("all_fields") or [])
+            if isinstance(item, dict)
+        }
+        if not previous_asked_field or previous_asked_field not in collected_fields:
+            return text
+        if previous_asked_field not in ASK_GUARD_CORE_FIELDS:
+            return text
+
+        asked_fields = self._detect_asked_fields_in_response(text)
+        if asked_fields:
+            return text
+
+        decision = self.collection_policy.decide(
+            user_profile,
+            user_message=user_message,
+            allow_contact_target=False,
+            allow_medium_target=False,
+        )
+        next_field = decision.main_target
+        safe_followup_fields = {"age", "location", "education", "occupation"}
+        if not next_field or next_field == previous_asked_field or next_field not in safe_followup_fields:
+            return text
+        if not self.collection_policy.can_actively_ask(user_profile, next_field):
+            return text
+
+        followup = self._build_policy_field_prompt(next_field, user_profile, user_message=user_message).strip()
+        if not followup:
+            return text
+
+        logger.info(
+            "[短答续问] 上一轮字段 %s 已命中，本轮轻确认后续问 %s",
+            previous_asked_field,
+            next_field,
+        )
+        if text.endswith(("。", "！", "？", ".", "!", "?")):
+            return f"{text} {followup}".strip()
+        return f"{text}。 {followup}".strip()
+
+    def _prepend_multi_field_ack_transition(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        collection_result: Dict[str, Any],
+        *,
+        user_message: str = "",
+        response_channel: str = "model",
+        primary_move: str = "",
+        ask_field: Optional[str] = None,
+        followup_topic: Optional[str] = None,
+    ) -> str:
+        """本轮提取到多个资料字段时，先轻承接一个点，再进入下一问。"""
+        text = str(response or "").strip()
+        if not text or response_channel != "model" or primary_move not in {"ack_and_ask", "light_followup"}:
+            return text
+        if not ask_field or followup_topic:
+            return text
+        if self.collection_policy.has_divorce_confirmation_pending(user_profile):
+            return text
+        if self._should_lock_divorce_confirmation(user_profile, user_message):
+            return text
+        if self._has_active_contact_context(user_profile, collection_result=collection_result, user_message=user_message):
+            return text
+
+        all_fields = [
+            item for item in (collection_result or {}).get("all_fields", [])
+            if isinstance(item, dict) and str(item.get("field") or "").strip()
+        ]
+        if len(all_fields) < 2:
+            return text
+
+        asked_fields = self._detect_asked_fields_in_response(text)
+        if ask_field not in asked_fields:
+            return text
+
+        candidate_order = ("occupation", "location", "marital_status", "education", "age", "sex")
+        chosen_ack = ""
+        for field_name in candidate_order:
+            matched = next((item for item in all_fields if str(item.get("field") or "").strip() == field_name), None)
+            if not matched:
+                continue
+            ack = self._build_contextual_short_ack(field_name, matched.get("value"))
+            if ack:
+                chosen_ack = ack.strip()
+                break
+
+        if not chosen_ack:
+            return text
+
+        normalized_text = text.replace(" ", "")
+        normalized_ack = chosen_ack.replace(" ", "")
+        if normalized_ack in normalized_text:
+            return text
+        if self._response_already_acks_field(text, field_name, matched.get("value")):
+            return text
+
+        logger.info(
+            "[多字段承接] 本轮提取到多个字段，先承接 %s 再追问 %s",
+            chosen_ack,
+            ask_field,
+        )
+        return f"{chosen_ack} {text}".strip()
+
+    def _prepend_single_field_ack_transition(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        collection_result: Dict[str, Any],
+        *,
+        user_message: str = "",
+        response_channel: str = "model",
+        primary_move: str = "",
+        ask_field: Optional[str] = None,
+        followup_topic: Optional[str] = None,
+    ) -> str:
+        """单字段短答已命中且后续仍在追问时，补一个轻承接。"""
+        text = str(response or "").strip()
+        if not text or response_channel != "model" or primary_move not in {"ack_and_ask", "light_followup"}:
+            return text
+        if not ask_field or followup_topic:
+            return text
+        if not self._is_short_answer(user_message):
+            return text
+        if self.collection_policy.has_divorce_confirmation_pending(user_profile):
+            return text
+        if self._should_lock_divorce_confirmation(user_profile, user_message):
+            return text
+        if self._has_active_contact_context(user_profile, collection_result=collection_result, user_message=user_message):
+            return text
+
+        all_fields = [
+            item for item in (collection_result or {}).get("all_fields", [])
+            if isinstance(item, dict) and str(item.get("field") or "").strip()
+        ]
+        if len(all_fields) != 1:
+            return text
+
+        asked_fields = self._detect_asked_fields_in_response(text)
+        if ask_field not in asked_fields:
+            return text
+
+        field_name = str(all_fields[0].get("field") or "").strip()
+        ack = self._build_contextual_short_ack(field_name, all_fields[0].get("value")).strip()
+        if not ack:
+            return text
+
+        normalized_text = text.replace(" ", "")
+        normalized_ack = ack.replace(" ", "")
+        if normalized_ack in normalized_text:
+            return text
+        if self._response_already_acks_field(text, field_name, all_fields[0].get("value")):
+            return text
+
+        logger.info(
+            "[单字段承接] 本轮提取到 %s，先承接再追问 %s",
+            field_name,
+            ask_field,
+        )
+        return f"{ack} {text}".strip()
+
     def _ensure_humanlike_memory_ack(self, user_message: str, user_profile: UserProfile, response: str) -> str:
         message = str(user_message or "").strip()
         if not response:
@@ -1743,10 +2249,9 @@ class ChatService:
         ai_start_time = time.perf_counter()
         chosen_model = self._select_model_for_turn(user_message, prompt)
         response_max_tokens = self._select_max_tokens_for_turn(user_message, prompt)
-        soft_timeout = max(0.5, self._env_float("CHAT_AI_TIMEOUT_SECONDS", 20.0))
-        hard_timeout = self._env_float("CHAT_AI_HARD_TIMEOUT_SECONDS", 25.0)
-        if hard_timeout <= soft_timeout:
-            hard_timeout = soft_timeout + 0.5
+        timeout_settings = self.ai_service.resolve_timeout_settings()
+        soft_timeout = max(0.5, float(timeout_settings["chat_ai_timeout"]))
+        hard_timeout = float(timeout_settings["chat_ai_hard_timeout"])
         logger.info(
             f"[⏱️ 性能] 开始调用AI: account_id={account_id}, model={chosen_model}, prompt_chars={len(prompt) if prompt else 0}, max_tokens={response_max_tokens}, soft_timeout={soft_timeout:.1f}s, hard_timeout={hard_timeout:.1f}s"
         )
@@ -1806,6 +2311,53 @@ class ChatService:
             return False
         return True
 
+    @staticmethod
+    def _normalize_opening_probe_text(user_message: str) -> str:
+        message = str(user_message or "").strip().lower()
+        if not message:
+            return ""
+        normalized = re.sub(r"[\s,，。！？!?~～、:：;；\"'`()（）]+", "", message)
+        normalized = re.sub(r"(呀|啊|呢|哈|啦|嘛|呐|喔|哦|噢)+", "", normalized)
+        normalized = re.sub(r"(在吗){2,}", "在吗", normalized)
+        normalized = re.sub(r"(在不){2,}", "在不", normalized)
+        normalized = re.sub(r"(你好){2,}", "你好", normalized)
+        normalized = re.sub(r"(hi){2,}", "hi", normalized)
+        normalized = re.sub(r"(hello){2,}", "hello", normalized)
+        return normalized
+
+    def _is_stable_opening_greeting(self, user_message: str) -> bool:
+        message = str(user_message or "").strip()
+        if not message:
+            return False
+        if self.greeting_service.is_greeting(message):
+            return True
+        normalized = self._normalize_opening_probe_text(message)
+        if not normalized:
+            return False
+        greeting_tokens = ("你好", "您好", "hi", "hello", "哈喽", "嗨", "在吗", "在不", "早上好", "下午好", "晚上好")
+        if any(token in normalized for token in greeting_tokens):
+            remainder = normalized
+            for token in greeting_tokens:
+                remainder = remainder.replace(token, "")
+            return remainder == ""
+        return False
+
+    def _is_noisy_opening_clarify_message(self, user_message: str) -> bool:
+        message = str(user_message or "").strip()
+        if not message:
+            return False
+        if self._should_use_opening_clarify(message):
+            return True
+        normalized = self._normalize_opening_probe_text(message)
+        if not normalized:
+            return False
+        if any(token in normalized for token in ("你好", "您好", "在吗", "在不")):
+            stripped = normalized
+            for token in ("你好", "您好", "在吗", "在不"):
+                stripped = stripped.replace(token, "")
+            return bool(stripped) and not self.greeting_service.is_greeting(stripped)
+        return False
+
     def _augment_prompt_for_opening_intent_detection(self, prompt: str) -> str:
         instruction = """
 【开场意图识别】
@@ -1840,6 +2392,165 @@ class ChatService:
 5. 如果是 opening_boundary_or_contact_refusal，先接住边界，不要推进电话微信或资料。
 """
         return f"{instruction.strip()}\n\n{prompt}"
+
+    def _build_profile_bridge_generation_instruction(
+        self,
+        *,
+        user_message: str,
+        user_profile: UserProfile,
+        turn_decision: TurnDecision,
+        conversation_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """为“用户刚给资料 -> 顺着资料追问主字段+相近字段”场景补充生成约束。"""
+        bridge_bundle = self._resolve_profile_bridge_bundle(
+            user_message=user_message,
+            user_profile=user_profile,
+            turn_decision=turn_decision,
+            conversation_context=conversation_context,
+        )
+        if not bridge_bundle:
+            return ""
+
+        bridge_context = bridge_bundle["context"]
+        main_prompt_label = bridge_bundle["main_prompt_label"]
+        side_prompt_labels = bridge_bundle["side_prompt_labels"]
+        summary = "；".join(f"{key}={value}" for key, value in bridge_context.items())
+        required_fields = "；".join([main_prompt_label, *side_prompt_labels])
+        return (
+            "【当前轮生成模式：PROFILE_BRIDGE（高优先级）】\n"
+            "这条模式优先级高于通用的泛化融合追问风格。\n"
+            f"用户这轮刚提供了这些信息：{summary}。\n"
+            "本轮请顺着这些已给信息继续聊，不要先机械复述资料，也不要脱离上下文直接裸问。\n"
+            f"本轮必须同时问到这些内容：{required_fields}。\n"
+            "要求：\n"
+            f"1. 以“{main_prompt_label}”为主问题，并把“{'；'.join(side_prompt_labels)}”自然带在同一句或紧邻句里一起问。\n"
+            "2. 问法必须利用用户刚给的信息做桥接，比如顺着城市或当前状态继续聊，但不要写成固定模板。\n"
+            "3. 如果回复里没有利用上面至少一项刚给信息，就算本轮生成不合格。\n"
+            "4. 不要漏掉必须一起带出的相近字段，不要只问主字段。\n"
+            "5. 保持口语化、像顺着聊下去，优先 1 句完成，不要列表，不要复述全部资料。\n"
+        )
+
+    def _resolve_profile_bridge_bundle(
+        self,
+        *,
+        user_message: str,
+        user_profile: UserProfile,
+        turn_decision: TurnDecision,
+        conversation_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """解析桥接模式所需的上下文和必带相近字段。"""
+        bridge_context = self._extract_profile_bridge_context(
+            user_message=user_message,
+            user_profile=user_profile,
+            turn_decision=turn_decision,
+            conversation_context=conversation_context,
+        )
+        if not bridge_context:
+            return {}
+
+        main_target = str(getattr(turn_decision, "ask_field", "") or "").strip()
+        if not main_target:
+            return {}
+        side_targets: list[str] = []
+        main_prompt_label = ""
+        side_prompt_labels: list[str] = []
+
+        side_target = ""
+        if getattr(turn_decision, "allow_medium_target", False):
+            policy_decision = self.collection_policy.decide(
+                user_profile,
+                user_message=user_message,
+                message_count=int((conversation_context or {}).get("message_count", 0)),
+                allow_contact_target=False,
+                allow_medium_target=True,
+                prioritize_user_question=getattr(turn_decision, "prioritize_user_question", False),
+                primary_move=getattr(turn_decision, "primary_move", "ack_and_ask"),
+            )
+            if policy_decision.main_target == main_target:
+                side_target = str(policy_decision.side_target or "").strip()
+        if not side_target:
+            return {}
+
+        prompt_label_map = {
+            "occupation": "工作/做什么",
+            "education": "学历/教育背景",
+            "age": "年龄/年龄段",
+            "location": "城市/常住地",
+            "marital_status": "现在是否单身/婚况",
+        }
+        side_label_map = {
+            "monthly_income": "月薪/收入区间",
+            "partner_requirement": "择偶要求/更看重哪一点",
+            "marital_status": "感情状态/是否单身",
+        }
+        if not self.collection_policy.can_actively_ask(user_profile, side_target):
+            return {}
+        main_prompt_label = prompt_label_map.get(main_target, "")
+        side_prompt_label = side_label_map.get(side_target, "")
+        if not main_prompt_label or not side_prompt_label:
+            return {}
+        side_targets = [side_target]
+        side_prompt_labels = [side_prompt_label]
+
+        return {
+            "context": bridge_context,
+            "main_target": main_target,
+            "side_targets": side_targets,
+            "main_prompt_label": main_prompt_label,
+            "side_prompt_labels": side_prompt_labels,
+        }
+
+    def _extract_profile_bridge_context(
+        self,
+        *,
+        user_message: str,
+        user_profile: UserProfile,
+        turn_decision: TurnDecision,
+        conversation_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        """提取可用于桥接追问的本轮新增资料。"""
+        if turn_decision.response_channel != "model":
+            return {}
+        if not turn_decision.ask_field:
+            return {}
+
+        message_count = int((conversation_context or {}).get("message_count", 0))
+        if message_count > 3:
+            return {}
+
+        extracted = self._extract_deterministic_profile_fields(user_message)
+        extracted = self._apply_extraction_guards(extracted, user_message)
+        if not extracted:
+            extracted = {}
+        if not extracted.get("marital_status"):
+            message = str(user_message or "").strip()
+            if re.search(r"(目前|现在)?一个人(生活|过|在)?", message) or "单着" in message:
+                extracted["marital_status"] = "单身"
+        if turn_decision.ask_field == "occupation" and extracted.get("occupation"):
+            return {}
+        if turn_decision.ask_field == "marital_status" and extracted.get("marital_status"):
+            return {}
+
+        bridge_bits: Dict[str, str] = {}
+        location = str(extracted.get("location") or "").strip()
+        marital_status = str(extracted.get("marital_status") or "").strip()
+        occupation = str(extracted.get("occupation") or "").strip()
+        education = str(extracted.get("education") or "").strip()
+        if location:
+            bridge_bits["城市"] = location
+        if marital_status:
+            bridge_bits["当前状态"] = marital_status
+        if occupation:
+            bridge_bits["工作"] = occupation
+        if education:
+            bridge_bits["学历"] = education
+        return bridge_bits
+
+    @staticmethod
+    def _augment_prompt_for_profile_bridge_followup(prompt: str, bridge_instruction: str) -> str:
+        if not bridge_instruction:
+            return prompt
+        return f"{bridge_instruction.strip()}\n\n{prompt}"
 
     @staticmethod
     def _extract_opening_intent_block(response: str) -> tuple[OpeningIntentSignal | None, str]:
@@ -2025,7 +2736,7 @@ class ChatService:
                 message=prompt,
                 system_prompt="你是一个说中文的AI助手，请只输出重写后的中文回复。",
                 max_tokens=160,
-                timeout=max(0.5, self._env_float("CHAT_AI_TIMEOUT_SECONDS", 20.0)),
+                timeout=max(0.5, float(self.ai_service.resolve_timeout_settings()["chat_ai_timeout"])),
                 model_name=self._select_model_for_turn(user_message, prompt),
             )
             return self._clean_response(rewritten).strip()
@@ -2152,7 +2863,10 @@ class ChatService:
                 return False
             return any(
                 token in segment
-                for token in ("明白了", "知道了", "是吧", "我知道了", "我记住了", "好嘞", "好，", "好。", "好的", "收到", "你这边是", "你是")
+                for token in (
+                    "明白了", "知道了", "是吧", "我知道了", "我记住了", "好嘞", "好，", "好。", "好的", "收到",
+                    "你这边是", "你是", "嗯嗯我知道啦", "你说的这些我都记下啦", "这个我知道了", "这个点我记住了",
+                )
             )
 
         def question_segment_repeats_ack(segment: str, field: Optional[str]) -> bool:
@@ -2166,6 +2880,15 @@ class ChatService:
         for part in parts:
             current_field = detect_ack_field(part)
             current_is_ack = is_ack_segment(part)
+            if collapsed and previous_is_ack and current_is_ack:
+                if previous_field and not current_field:
+                    previous_is_ack = current_is_ack
+                    continue
+                if current_field and not previous_field:
+                    collapsed[-1] = part
+                    previous_field = current_field
+                    previous_is_ack = current_is_ack
+                    continue
             if collapsed and previous_is_ack and current_is_ack and previous_field and current_field == previous_field:
                 collapsed[-1] = part
                 previous_field = current_field
@@ -2371,7 +3094,7 @@ class ChatService:
         """
         检测 AI 回复中明确追问的字段（用于短答槽位绑定）。
 
-        优先级：monthly_income > age > location > education > occupation > marital_status
+        优先级：monthly_income > partner_requirement > sex > age > location > education > occupation > marital_status
 
         Args:
             ai_response: AI 回复文本
@@ -2383,15 +3106,53 @@ class ChatService:
         if not text:
             return None
 
-        # 按优先级检测
-        # 收入（最高优先级，因为容易与其他数字混淆）
+        detection_text = text
+
+        occupation_patterns = [
+            r"做什么工作", r"职业", r"从事", r"做哪行", r"做哪方面工作", r"主要做哪方面工作",
+        ]
         income_patterns = [
             r"月收入", r"收入", r"月薪", r"工资", r"赚", r"多少钱",
             r"收入.*[？?]", r"月薪.*[？?]",
         ]
+        asks_occupation = any(re.search(pattern, detection_text) for pattern in occupation_patterns)
+        asks_income = any(re.search(pattern, detection_text) for pattern in income_patterns)
+        if asks_occupation and asks_income:
+            return "occupation"
+
+        # 按优先级检测
+        # 收入（最高优先级，因为容易与其他数字混淆）
         for pattern in income_patterns:
-            if re.search(pattern, text):
+            if re.search(pattern, detection_text):
                 return "monthly_income"
+
+        partner_requirement_patterns = [
+            r"另一半",
+            r"有什么要求",
+            r"看重哪",
+            r"更在意哪",
+            r"想找个什么样",
+            r"择偶",
+        ]
+        for pattern in partner_requirement_patterns:
+            if re.search(pattern, detection_text):
+                return "partner_requirement"
+
+        # 性别
+        sex_patterns = [
+            r"男生还是女生",
+            r"男的还是女的",
+            r"你是男",
+            r"你是女",
+            r"性别",
+            r"你这边是男生",
+            r"你这边是女生",
+            r"男生对吧",
+            r"女生对吧",
+        ]
+        for pattern in sex_patterns:
+            if re.search(pattern, detection_text):
+                return "sex"
 
         # 年龄
         age_patterns = [
@@ -2399,7 +3160,7 @@ class ChatService:
             r"年纪", r"年龄.*[？?]",
         ]
         for pattern in age_patterns:
-            if re.search(pattern, text):
+            if re.search(pattern, detection_text):
                 return "age"
 
         # 城市
@@ -2408,7 +3169,7 @@ class ChatService:
             r"城市.*[？?]", r"哪里.*[？?]",
         ]
         for pattern in location_patterns:
-            if re.search(pattern, text):
+            if re.search(pattern, detection_text):
                 return "location"
 
         # 学历
@@ -2417,15 +3178,15 @@ class ChatService:
             r"学历.*[？?]",
         ]
         for pattern in education_patterns:
-            if re.search(pattern, text):
+            if re.search(pattern, detection_text):
                 return "education"
 
         # 职业
         occupation_patterns = [
-            r"做什么工作", r"职业", r"工作.*[？?]", r"从事", r"做哪行",
+            r"做什么工作", r"职业", r"工作.*[？?]", r"从事", r"做哪行", r"做哪方面工作", r"主要做哪方面工作",
         ]
         for pattern in occupation_patterns:
-            if re.search(pattern, text):
+            if re.search(pattern, detection_text):
                 return "occupation"
 
         # 婚姻状态
@@ -2433,7 +3194,7 @@ class ChatService:
             r"婚", r"单身", r"离异", r"未婚", r"结婚", r"婚姻",
         ]
         for pattern in marital_patterns:
-            if re.search(pattern, text):
+            if re.search(pattern, detection_text):
                 return "marital_status"
 
         return None
@@ -2507,6 +3268,13 @@ class ChatService:
         # process_extracted_data 通过 user_service 持久化字段，刷新后再做收尾判断，
         # 否则同一轮新收集到的年龄/身高/联系方式会被旧 profile 漏掉。
         user_profile = await self.user_service.get_user_profile(account_id)
+
+        if self._looks_like_fake_info_message(user_message):
+            ending_info = self.ending_service.build_ending_info("fake_info", user_profile)
+            await self.user_service.save_user_profile(account_id, user_profile)
+            collection_result["ending_info"] = ending_info
+            logger.info("[收尾检测] 命中虚假信息硬兜底 fake_info")
+            return collection_result
 
         # === 使用统一的收尾服务检测收尾场景 ===
         # 调用 check_and_get_ending，参数顺序：user_message, profile, collection_result
@@ -2747,7 +3515,7 @@ class ChatService:
                 await self.user_service.save_user_profile(account_id, user_profile)
 
                 if user_profile.rejected_phone or user_profile.rejected_wechat:
-                    ending_response = "好的，信息我先记下了。那先这样，有需要再联系我。"
+                    ending_response = self.expectation_service.get_contact_completion_response(user_profile)
                     collection_result['ending_info']['use_ai'] = False
                     collection_result['ending_info']['response'] = ending_response
                     return ending_response
@@ -2757,8 +3525,8 @@ class ChatService:
 
             if next_action.value in {"none", "end"} and contact_collected:
                 if user_profile.rejected_phone or user_profile.rejected_wechat:
-                    return "好的，信息我先记下了。那先这样，有需要再联系我。"
-                return "好的，信息我先记下了。"
+                    return self.expectation_service.get_contact_completion_response(user_profile)
+                return self.expectation_service.get_contact_completion_response(user_profile)
 
             # === 资料未达到可服务阈值，继续收集重要字段 ===
             decision = self.collection_policy.decide(
@@ -2834,8 +3602,8 @@ class ChatService:
                 return ai_response
             if next_action.value in {"none", "end"} and contact_collected:
                 if user_profile.rejected_phone or user_profile.rejected_wechat:
-                    return "好的，信息我先记下了。那先这样，有需要再联系我。"
-                return "好的，信息我先记下了。"
+                    return self.expectation_service.get_contact_completion_response(user_profile)
+                return self.expectation_service.get_contact_completion_response(user_profile)
             else:
                 # === 资料未达到可服务阈值，继续收集重要字段 ===
                 decision = self.collection_policy.decide(
@@ -2976,7 +3744,32 @@ class ChatService:
     def _clean_response(self, response: str) -> str:
         """清理回复（移除 XML 标签）"""
         import re
-        return re.sub(r'<extract>.*?</extract>', '', response, flags=re.DOTALL).strip()
+        text = re.sub(r'<extract>.*?</extract>', '', response, flags=re.DOTALL).strip()
+        text = re.sub(r"^(?:了|啦|呀|呢|哈|啊)[。．]\s*", "", text)
+        text = re.sub(r"([。！？!?])\s*(哈哈，原来|原来|这样的话|所以说)\s*$", r"\1", text)
+        text = re.sub(r"^(哈哈，原来|原来|这样的话|所以说)\s*$", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        text = self._strip_broken_edge_fragments(text)
+        return text
+
+    @staticmethod
+    def _strip_broken_edge_fragments(response: str) -> str:
+        """剔除裁剪后残留的句首碎片，避免出现“了。你是哪年的呀？”这类脏前缀。"""
+        text = str(response or "").strip()
+        if not text:
+            return text
+
+        text = re.sub(r"^(?:(?:了|啦|呀|呢|哈|啊|哦|嗯)[。．！？!?]\s*)+", "", text).strip()
+
+        sentence_match = re.match(r"^([^。！？!?]{1,4}[。！？!?])\s*(.+)$", text)
+        if sentence_match:
+            first_sentence = sentence_match.group(1).strip()
+            remainder = sentence_match.group(2).strip()
+            first_body = re.sub(r"[。！？!?]", "", first_sentence).strip()
+            if first_body in {"了", "啦", "呀", "呢", "哈", "啊", "哦", "嗯"}:
+                text = remainder
+
+        return re.sub(r"\s+", " ", text).strip()
 
     @staticmethod
     def _build_contact_collection_ack(contact_type: str) -> str:
@@ -3002,6 +3795,17 @@ class ChatService:
         return "好，微信我看到了。我们接着聊你的情况就行。"
 
     @staticmethod
+    def _build_phone_persuasion_fallback() -> str:
+        """电话二次争取的软性兜底，不用固定句式硬复读。"""
+        variants = (
+            "你要是现在不太方便细说也没事。留个常用手机号就行，后面真有合适的，我们也能及时联系到你。",
+            "电话这块我轻轻问一句就行。你要是方便的话，留个常用手机号，后面有合适的也好继续联系你。",
+            "你要是担心电话不方便，我这边就不说太满了。只是留个常用手机号，后面沟通起来会顺一点。",
+            "不想留太多也没关系。给个常用手机号就行，后面要是真有合适的方向，我们也能联系上你。",
+        )
+        return random.choice(variants)
+
+    @staticmethod
     def _build_dual_contact_ack() -> str:
         """电话和微信都已收齐时返回稳定确认，避免沿用旧询问态回复。"""
         return "好，电话和微信我都看到了。还有其他要求的话也可以继续说。"
@@ -3018,16 +3822,25 @@ class ChatService:
             return preset_response
 
         if scenario == "both_rejected":
-            return "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
+            return self._get_both_rejected_ending_response()
         if scenario == "already_ended":
-            return self.ending_service.get_ending_response("already_ended") or "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
+            return self._get_already_ended_response()
 
         if self.contact_service.should_end_conversation(user_profile):
-            return "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
+            return self._get_both_rejected_ending_response()
 
         if user_profile.conversation_ended and user_profile.rejected_phone and user_profile.rejected_wechat:
-            return "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
+            return self._get_both_rejected_ending_response()
         return None
+
+    def _get_already_ended_response(self) -> str:
+        return self.ending_service.get_ending_response("already_ended") or ""
+
+    def _get_both_rejected_ending_response(self) -> str:
+        return self.ending_service.get_ending_response("both_rejected") or ""
+
+    def _get_contact_completion_ending_response(self, user_profile: UserProfile) -> str:
+        return self.expectation_service.get_contact_completion_response(user_profile)
 
     @staticmethod
     def _contains_contact_push_markers(response: str) -> bool:
@@ -3060,7 +3873,7 @@ class ChatService:
             return response
 
         if self._contains_contact_push_markers(response) or "？" in response or "?" in response:
-            return "行，那先聊到这儿。"
+            return self._get_already_ended_response()
         return response
 
     def _enforce_contact_outcome_policy(
@@ -3082,21 +3895,31 @@ class ChatService:
         ending_info = result.get("ending_info") if isinstance(result, dict) else None
 
         scenario = str((ending_info or {}).get("scenario") or "").strip()
-        if scenario in {"both_rejected", "already_ended"} or self.contact_service.should_end_conversation(user_profile):
-            return "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
+        if scenario == "both_rejected":
+            return self._get_both_rejected_ending_response()
+        if scenario == "already_ended" or self.contact_service.should_end_conversation(user_profile):
+            return self._get_already_ended_response()
 
         if scenario == "normal_complete":
             if response:
                 return response
-            if user_profile.rejected_phone or user_profile.rejected_wechat:
-                return "好的，信息我先记下了。那先这样，有需要再联系我。"
-            return "好的，信息我先记下了。"
+            return self._get_contact_completion_ending_response(user_profile)
 
         try:
             next_action = self.contact_service.get_next_action(user_profile, user_message)
             action_value = getattr(next_action, "value", str(next_action))
         except Exception:
             return response
+
+        has_any_contact = bool(
+            (user_profile.phone_collected and user_profile.phone)
+            or (user_profile.wechat_collected and user_profile.wechat)
+            or user_profile.collection_progress.get("contact", False)
+        )
+        if action_value in {"none", "", None, "end"} and has_any_contact and (
+            user_profile.rejected_phone or user_profile.rejected_wechat
+        ):
+            return self._get_contact_completion_ending_response(user_profile)
 
         if action_value == "ask_wechat":
             if self._response_matches_contact_action(response, "ask_wechat"):
@@ -3120,14 +3943,12 @@ class ChatService:
         if action_value == "persuade_phone":
             if self._response_matches_contact_action(response, "persuade_phone"):
                 return response
-            return "我明白，你要是担心电话不方便，我就再轻问一次。留个常用手机号就行，方便后面联系你。"
+            return self._build_phone_persuasion_fallback()
 
         if action_value in {"none", "", None} and {"phone", "contact", "wechat"} & collected_fields:
             if response:
                 return response
-            if user_profile.rejected_phone or user_profile.rejected_wechat:
-                return "好的，信息我先记下了。那先这样，有需要再联系我。"
-            return "好的，信息我先记下了。"
+            return self._get_contact_completion_ending_response(user_profile)
 
         return response
 
@@ -3196,9 +4017,11 @@ class ChatService:
             return "你要是更习惯微信的话，留个常用微信就行，后面沟通也方便一些。"
 
         if action_value == "persuade_phone":
-            if self._response_mentions_phone_request(response):
+            if self._response_mentions_phone_request(response) and any(
+                token in response for token in ("联系", "沟通", "合适")
+            ) and "再轻问一次" not in response:
                 return response
-            return "我明白，你要是担心电话不方便，我就再轻问一次。留个常用手机号就行，方便后面联系你。"
+            return self._build_phone_persuasion_fallback()
 
         return response
 
@@ -3732,14 +4555,65 @@ class ChatService:
 
         return extracted
 
+    def _build_shadow_profile_for_decision(
+        self,
+        user_profile: UserProfile,
+        user_message: str,
+        *,
+        last_response: str = "",
+    ) -> UserProfile:
+        """
+        基于用户当前输入生成只用于“本轮决策/问句生成”的临时画像副本。
+
+        目的：
+        - 让决策器看到“用户这句话说完之后”的最新状态
+        - 不直接改真实 profile，不影响正式落库
+        """
+        shadow_profile = user_profile.model_copy(deep=True)
+        extracted = self._extract_deterministic_profile_fields(user_message)
+        extracted = self._apply_extraction_guards(extracted, user_message, last_response=last_response)
+        if not extracted:
+            return shadow_profile
+
+        for field, value in extracted.items():
+            if value in (None, ""):
+                continue
+            if field == "age_label":
+                shadow_profile.age_label = str(value).strip()
+                continue
+            if hasattr(shadow_profile, field):
+                shadow_profile.update_field(field, value)
+                if field in shadow_profile.collection_progress:
+                    shadow_profile.collection_progress[field] = True
+
+        if extracted.get("age") and not shadow_profile.collection_progress.get("age"):
+            shadow_profile.collection_progress["age"] = True
+        if extracted.get("partner_requirement"):
+            shadow_profile.collection_progress["partner_requirement"] = True
+        if extracted.get("monthly_income"):
+            shadow_profile.collection_progress["monthly_income"] = True
+        return shadow_profile
+
     @staticmethod
     def _extract_simple_partner_requirement(user_message: str) -> Optional[str]:
         """轻量提取明确的择偶偏好短答。"""
         message = (user_message or "").strip()
         if not message:
             return None
+        compact_message = re.sub(r"\s+", "", message)
+        compact_message = re.sub(
+            r"(^|[，,])我(?=(温柔|性格好|聊得来|合适|人好|高挑|高一点|同城优先|成熟稳重|三观合拍))",
+            r"\1",
+            compact_message,
+        )
 
         patterns = [
+            r"(温柔(?:一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?)",
+            r"(温柔就行(?:了)?(?:吧|呀|呢)?)",
+            r"(性格好就行(?:了)?(?:吧|呀|呢)?)",
+            r"(聊得来就行(?:了)?(?:吧|呀|呢)?)",
+            r"(合适就行(?:了)?(?:吧|呀|呢)?)",
+            r"(人好就行(?:了)?(?:吧|呀|呢)?)",
             r"(高挑)",
             r"(高一点)",
             r"(同城优先)",
@@ -3753,11 +4627,20 @@ class ChatService:
         ]
         values = []
         for pattern in patterns:
-            match = re.search(pattern, message)
+            match = re.search(pattern, compact_message)
             if match:
                 values.append(match.group(1).strip())
         if values:
-            return "，".join(dict.fromkeys(values))
+            normalized = []
+            for value in dict.fromkeys(values):
+                value = re.sub(r"(温柔)(一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?$", r"\1", value)
+                value = re.sub(r"^(温柔)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+                value = re.sub(r"^(性格好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+                value = re.sub(r"^(聊得来)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+                value = re.sub(r"^(合适)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+                value = re.sub(r"^(人好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+                normalized.append(value)
+            return "，".join(normalized)
         return None
 
     @staticmethod
@@ -3766,6 +4649,10 @@ class ChatService:
         message = (user_message or "").strip().lower()
         if not message:
             return None
+
+        # 体重/重量表达里常见 kg/公斤/斤，避免把 90kg 错提成 90k 收入。
+        sanitized_message = re.sub(r"\d+(?:\.\d+)?\s*kg\b", " ", message, flags=re.IGNORECASE)
+        sanitized_message = re.sub(r"\d+(?:\.\d+)?\s*(?:公斤|斤)\b", " ", sanitized_message, flags=re.IGNORECASE)
 
         patterns = [
             r"((?:税前|税后)?\s*\d+(?:\.\d+)?\s*(?:k|w|万)(?:\+|左右|上下)?)",
@@ -3776,10 +4663,60 @@ class ChatService:
             r"((?:一|二|两|三|四|五|六|七|八|九|十|\d)+(?:万|千)上下)",
         ]
         for pattern in patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
+            match = re.search(pattern, sanitized_message, re.IGNORECASE)
             if match:
                 return re.sub(r"\s+", "", match.group(1))
         return None
+
+    @staticmethod
+    def _last_response_asked_partner_requirement(last_response: str) -> bool:
+        text = str(last_response or "").strip()
+        if not text:
+            return False
+        markers = (
+            "对另一半",
+            "有什么要求",
+            "更看重",
+            "看重哪方面",
+            "想找什么样",
+            "择偶要求",
+            "喜欢什么样",
+        )
+        return any(marker in text for marker in markers)
+
+    def _build_partner_requirement_fallback_followup(
+        self,
+        user_profile: UserProfile,
+        *,
+        user_message: str,
+    ) -> str:
+        preference = self._extract_simple_partner_requirement(user_message)
+        if not preference:
+            return "你继续说，我先顺着听"
+
+        shadow_profile = user_profile.model_copy(deep=True)
+        shadow_profile.partner_requirement = preference
+        shadow_profile.collection_progress["partner_requirement"] = True
+        shadow_profile.close_active_ask("partner_requirement")
+
+        rendered_preference = self._render_preference_for_ack(preference)
+        ack = random.choice(
+            tuple(v.format(preference=rendered_preference) for v in FAST_PATH_PREFERENCE_ACK_VARIANTS)
+        ).strip()
+
+        decision = self.collection_policy.decide(
+            shadow_profile,
+            user_message=user_message,
+            allow_contact_target=False,
+            allow_medium_target=True,
+            prioritize_user_question=False,
+            primary_move="ack_and_ask",
+        )
+        next_field = decision.main_target
+        if next_field and next_field not in {"partner_requirement", "contact"}:
+            followup = self._build_policy_field_prompt(next_field, shadow_profile, user_message=user_message)
+            return f"{ack} {followup}".strip()
+        return ack
 
     def _build_lightweight_field_ack_from_message(
         self,
@@ -3819,6 +4756,32 @@ class ChatService:
             if ack:
                 return ack
 
+        return ""
+
+    def _build_opening_profile_ack_from_message(self, user_message: str) -> str:
+        message = str(user_message or "").strip()
+        if not message:
+            return ""
+
+        extracted = self._extract_deterministic_profile_fields(message)
+        extracted = self._apply_extraction_guards(extracted, message)
+        preference = self._extract_simple_partner_requirement(message) or ""
+
+        if extracted.get("sex"):
+            return "好，你这边是男生。" if "男" in str(extracted["sex"]) else "好，你这边是女生。"
+        if extracted.get("location"):
+            return f"好，{str(extracted['location']).strip()}这边我知道了。"
+        if extracted.get("education"):
+            return f"好，{str(extracted['education']).strip()}这点我知道了。"
+        if extracted.get("occupation"):
+            occupation = self._render_occupation_for_ack(str(extracted["occupation"]).strip())
+            return f"好，做{occupation}这点我知道了。"
+        if extracted.get("age_label") or extracted.get("age"):
+            age_text = str(extracted.get("age_label") or extracted.get("age") or "").strip()
+            return f"好，{self._render_age_value(age_text)}我知道了。"
+        if preference:
+            natural_preference = self._render_preference_for_ack(preference)
+            return f"好，你更偏向{natural_preference}这类。"
         return ""
 
     @staticmethod
@@ -3886,43 +4849,22 @@ class ChatService:
             return random.choice(variants)
 
         if field in {"age", "age_label"}:
-            rendered = ChatService._render_age_value(text) if field == "age" else text
-            variants = (
-                f"{rendered}是吧。",
-                f"好，{rendered}我知道了。",
-                f"明白，{rendered}。",
-            )
-            return random.choice(variants)
+            return ""
 
         if field == "location":
-            variants = (
-                f"{text}呀，知道了。",
-                f"在{text}这边是吧。",
-                f"{text}我知道了。",
-            )
-            return random.choice(variants)
+            return ""
 
         if field == "education":
-            variants = (
-                f"{text}是吧。",
-                f"好，{text}我知道了。",
-                f"{text}这边明白了。",
-            )
-            return random.choice(variants)
+            return ""
 
         if field == "occupation":
-            variants = (
-                f"做{text}是吧。",
-                f"好，{text}这块我知道了。",
-                f"{text}方向，明白了。",
-            )
-            return random.choice(variants)
+            return ""
 
         if field == "marital_status":
             if "离异" in text:
                 return "好，这个状态我知道了。"
             if "单身" in text or "未婚" in text:
-                return "好，现在单身状态我知道了。"
+                return "好，这个状态我知道了。"
         return ""
 
     def _format_fast_path_ack(self, field: str, value: Any) -> str:
@@ -3979,7 +4921,15 @@ class ChatService:
                         break
 
             pattern_map = {
-                "sex": (r"男生还是女生", r"男生吗还是女生", r"性别"),
+                "sex": (
+                    r"男生还是女生",
+                    r"男生吗还是女生",
+                    r"性别",
+                    r"你这边是男生",
+                    r"你这边是女生",
+                    r"男生对吧",
+                    r"女生对吧",
+                ),
                 "age": (r"多大", r"几岁", r"年龄", r"年纪"),
                 "location": (r"哪个城市", r"什么城市", r"在哪个城市", r"在哪边", r"哪里生活"),
                 "education": (r"学历",),
@@ -3992,6 +4942,28 @@ class ChatService:
 
         return asked_fields
 
+    @staticmethod
+    def _response_already_acks_field(response: str, field_name: str, value: Any) -> bool:
+        text = str(response or "").strip()
+        rendered = str(value or "").strip()
+        if not text or not rendered:
+            return False
+
+        if field_name == "location":
+            return rendered in text and any(marker in text for marker in ("这边", "知道", "是吧", "挺好", "常住", "生活"))
+        if field_name == "occupation":
+            return rendered in text and any(marker in text for marker in ("工作", "做", "方向", "知道", "明白"))
+        if field_name == "education":
+            return rendered in text and any(marker in text for marker in ("学历", "知道", "明白", "是吧"))
+        if field_name == "marital_status":
+            return rendered in text and any(marker in text for marker in ("状态", "婚况", "知道", "明白"))
+        if field_name == "age":
+            return rendered in text and any(marker in text for marker in ("岁", "知道", "明白", "是吧"))
+        if field_name == "sex":
+            return any(marker in text for marker in ("男生", "女生", "男的", "女的", "性别"))
+
+        return rendered in text
+
     def _build_interleaving_followup(
         self,
         user_profile: UserProfile,
@@ -4002,6 +4974,23 @@ class ChatService:
         allow_medium_target: bool = True,
     ) -> str:
         ack = self._build_lightweight_field_ack_from_message(user_message, user_profile)
+        if main_target and self.collection_policy.is_collected(user_profile, main_target):
+            logger.info(
+                "[交错追问] 主目标 %s 已收集，降级为 side-target/直接追问模式",
+                main_target,
+            )
+            main_target = None
+        bridge_bundle = self._resolve_profile_bridge_bundle(
+            user_message=user_message,
+            user_profile=user_profile,
+            turn_decision=TurnDecision(
+                ask_field=main_target,
+                response_channel="model",
+                allow_medium_target=allow_medium_target,
+            ),
+            conversation_context={"message_count": 0},
+        )
+        bridge_context = bridge_bundle.get("context") if bridge_bundle else {}
 
         main_prompt = ""
         if main_target:
@@ -4013,25 +5002,32 @@ class ChatService:
             and preferred_side_target == "partner_requirement"
             and self.collection_policy.can_actively_ask(user_profile, "partner_requirement")
         ):
-            if main_target in {"education", "occupation"}:
+            if bridge_context:
+                side_prompt = random.choice(PARTNER_REQUIREMENT_ASK_VARIANTS)
+            elif main_target in {"education", "occupation"}:
                 return self._build_fused_partner_requirement_prompt(main_target)
-            side_prompt = random.choice(PARTNER_REQUIREMENT_ASK_VARIANTS)
+            else:
+                side_prompt = random.choice(PARTNER_REQUIREMENT_ASK_VARIANTS)
         elif (
             allow_medium_target
             and preferred_side_target == "monthly_income"
             and self.collection_policy.can_actively_ask(user_profile, "monthly_income")
         ):
             if main_target == "occupation":
-                return self._build_fused_income_prompt(main_target)
-            side_prompt = random.choice(INCOME_ASK_VARIANTS)
+                if bridge_context:
+                    side_prompt = random.choice(INCOME_ASK_VARIANTS)
+                else:
+                    return self._build_fused_income_prompt(main_target)
+            else:
+                side_prompt = random.choice(INCOME_ASK_VARIANTS)
         elif (
             allow_medium_target
             and preferred_side_target == "marital_status"
             and self.collection_policy.can_actively_ask(user_profile, "marital_status")
         ):
-            if main_target in {"education", "occupation"}:
+            if main_target in {"age", "location", "education", "occupation"}:
                 return self._build_fused_marital_status_prompt(main_target)
-            side_prompt = "我顺手确认一下，你现在是单身状态吗？"
+            side_prompt = "感情状态这边我也顺手确认一下，你现在是单身状态吗？"
         elif allow_medium_target and preferred_side_target:
             side_prompt = self._build_policy_field_prompt(preferred_side_target, user_profile, user_message=user_message)
 
@@ -4047,6 +5043,137 @@ class ChatService:
         if ack:
             return f"{ack} {prompt}".strip()
         return prompt
+
+    async def _enforce_profile_bridge_response(
+        self,
+        response: str,
+        *,
+        account_id: str,
+        user_message: str,
+        user_profile: UserProfile,
+        turn_decision: TurnDecision,
+        conversation_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        text = str(response or "").strip()
+        if not text or turn_decision.response_channel != "model":
+            return text
+
+        bridge_bundle = self._resolve_profile_bridge_bundle(
+            user_message=user_message,
+            user_profile=user_profile,
+            turn_decision=turn_decision,
+            conversation_context=conversation_context,
+        )
+        if not bridge_bundle:
+            return text
+
+        natural_response, extract_block = self._split_response_and_extract(text)
+        if not natural_response:
+            return text
+
+        asked_fields = self._detect_asked_fields_in_response(natural_response)
+        main_target = str(bridge_bundle["main_target"])
+        side_targets = set(bridge_bundle["side_targets"])
+        has_splice_markers = self._contains_profile_bridge_splice_markers(natural_response)
+        if main_target in asked_fields and side_targets.issubset(asked_fields) and not has_splice_markers:
+            return text
+
+        missing_side_targets = sorted(side_targets - asked_fields)
+        logger.info(
+            "[profile_bridge] enforce_needed main=%s missing=%s asked=%s splice=%s",
+            main_target,
+            missing_side_targets,
+            sorted(asked_fields),
+            int(has_splice_markers),
+        )
+
+        rewritten = await self._rewrite_response_for_profile_bridge(
+            natural_response=natural_response,
+            account_id=account_id,
+            user_message=user_message,
+            bridge_bundle=bridge_bundle,
+            conversation_context=conversation_context,
+        )
+        if not rewritten:
+            fallback = self._build_interleaving_followup(
+                user_profile,
+                user_message,
+                main_target=main_target,
+                preferred_side_target=next(iter(side_targets)) if side_targets else None,
+                allow_medium_target=turn_decision.allow_medium_target,
+            ).strip()
+            if fallback:
+                if extract_block:
+                    return f"{fallback}\n{extract_block}"
+                return fallback
+            return text
+        if extract_block:
+            return f"{rewritten}\n{extract_block}"
+        return rewritten
+
+    @staticmethod
+    def _contains_profile_bridge_splice_markers(text: str) -> bool:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return False
+        markers = (
+            "再补一个小问题",
+            "我再补一个小问题",
+            "如果你方便的话",
+            "不方便说也没关系",
+            "顺手说个大概",
+            "顺手说说",
+            "也可以一起说说",
+            "另外我也顺手问下",
+            "另外我也想顺手问下",
+        )
+        return any(marker in normalized for marker in markers)
+
+    async def _rewrite_response_for_profile_bridge(
+        self,
+        *,
+        natural_response: str,
+        account_id: str,
+        user_message: str,
+        bridge_bundle: Dict[str, Any],
+        conversation_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        bridge_context = bridge_bundle.get("context") or {}
+        summary = "；".join(f"{key}={value}" for key, value in bridge_context.items()) or "-"
+        main_prompt_label = str(bridge_bundle.get("main_prompt_label") or "-")
+        side_prompt_labels = "；".join(bridge_bundle.get("side_prompt_labels") or []) or "-"
+        recent_responses = (conversation_context or {}).get("recent_responses") or []
+        recent_text = " / ".join(
+            self._clean_response(item) for item in recent_responses[-2:] if str(item or "").strip()
+        ) or "-"
+        prompt = (
+            "你在继续同一轮婚恋咨询聊天，请只重写给用户看的一句或两句中文回复，不要输出extract，不要解释原因。\n"
+            "当前是 PROFILE_BRIDGE 高优先级模式。\n"
+            f"用户这轮刚给的信息：{summary}\n"
+            f"本轮主问题必须问到：{main_prompt_label}\n"
+            f"本轮必须一起带出：{side_prompt_labels}\n"
+            "要求：\n"
+            "1. 必须顺着用户刚给的信息继续聊，至少利用其中一项。\n"
+            "2. 不要机械复述资料，不要写成固定模板，不要变成列表。\n"
+            "3. 主问题和必带相近字段都要问到，不能只保留主问题。\n"
+            "4. 不要使用补问式拼接表达，例如“再补一个小问题”“如果你方便的话”“不方便说也没关系”“也可以一起说说”。\n"
+            "5. 要把主问题和相近字段自然融合，优先 1 句完成，最多 2 句。\n"
+            f"用户原话：{user_message or '-'}\n"
+            f"最近两轮回复：{recent_text}\n"
+            f"待重写原句：{natural_response or '-'}\n"
+        )
+        try:
+            rewritten = await self.ai_service.generate_response(
+                message=prompt,
+                system_prompt="你是一个说中文的AI助手，请只输出重写后的中文回复。",
+                max_tokens=180,
+                timeout=max(0.5, float(self.ai_service.resolve_timeout_settings()["chat_ai_timeout"])),
+                model_name=self._select_model_for_turn(user_message, prompt),
+            )
+            return self._clean_response(rewritten).strip()
+        except Exception as exc:
+            logger.warning("[profile_bridge] AI 重写失败: %s", exc)
+            return ""
 
     @staticmethod
     def _looks_like_contact_value(user_message: str) -> bool:
@@ -4091,6 +5218,16 @@ class ChatService:
         except Exception:
             action_value = "none"
 
+        has_any_contact = bool(
+            (user_profile.phone_collected and user_profile.phone)
+            or (user_profile.wechat_collected and user_profile.wechat)
+            or user_profile.collection_progress.get("contact", False)
+        )
+        if action_value in {"none", "end"} and has_any_contact and (
+            user_profile.rejected_phone or user_profile.rejected_wechat
+        ):
+            return self._get_contact_completion_ending_response(user_profile)
+
         if action_value == "ask_wechat":
             return "没关系，你要是觉得微信更方便，留个微信也可以。"
         if action_value == "persuade_wechat":
@@ -4098,7 +5235,7 @@ class ChatService:
         if action_value == "ask_phone":
             return "没关系，这块我们先不急。你要是方便的话，留个手机号就行。"
         if action_value == "persuade_phone":
-            return "没关系，我再轻问一次。你要是方便的话，留个常用手机号就行，后面联系你也顺一点。"
+            return "我懂，你现在可能不太想留电话。只是后面要是真有合适的，留个常用手机号也方便继续联系上你。"
         if self._contains_contact_push_markers(text):
             return "没关系，这块我们先不急，继续聊别的也可以。"
         if not any(marker in text for marker in ("没关系", "不急", "不勉强", "理解", "那我们先")):
@@ -4390,6 +5527,51 @@ class ChatService:
 
         return text
 
+    def _enforce_pending_partner_requirement_followup(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        *,
+        ask_field: Optional[str],
+        user_message: str = "",
+        response_channel: str = "model",
+        primary_move: str = "ack_and_ask",
+    ) -> str:
+        """当 partner_requirement 仍阻挡联系方式时，本轮必须真问出来。"""
+        text = str(response or "").strip()
+        if not text or response_channel != "model":
+            return text
+        if ask_field != "partner_requirement":
+            return text
+        if primary_move in {"repair_and_release", "answer_then_pause", "soft_hold", "ack_only", "confirm_status_only"}:
+            return text
+        if self._is_boundary_pause_triggered(user_message, user_profile):
+            return text
+        if self._is_risk_guard_triggered(user_message):
+            return text
+        if self.collection_policy.should_block_preference_ask(user_profile, ""):
+            return text
+        if not self.collection_policy.can_actively_ask(user_profile, "partner_requirement"):
+            return text
+
+        asked_fields = self._detect_asked_fields_in_response(text)
+        if "partner_requirement" in asked_fields:
+            return text
+
+        hold_markers = (
+            "这个点我不重复绕了",
+            "你想聊别的就顺着说",
+            "你继续说",
+            "顺着往下了解",
+            "顺着听",
+            "接着往下聊",
+            "先收住",
+        )
+        if asked_fields or any(marker in text for marker in hold_markers):
+            return self._build_policy_field_prompt("partner_requirement", user_profile, user_message=user_message)
+
+        return text
+
     def _resolve_effective_followup_field(
         self,
         user_profile: UserProfile,
@@ -4466,6 +5648,204 @@ class ChatService:
             return self._build_policy_field_prompt("contact", user_profile, user_message=user_message)
 
         return text
+
+    def _handoff_to_contact_after_core_completion(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        *,
+        collection_result: Optional[Dict[str, Any]] = None,
+        user_message: str = "",
+        response_channel: str = "model",
+        primary_move: str = "",
+        contact_gate_before: bool = False,
+    ) -> str:
+        """本轮刚补齐最后一个核心字段时，同轮直接切到联系方式入口。"""
+        text = str(response or "").strip()
+        if not text or response_channel != "model":
+            return text
+        if primary_move in {"repair_and_release", "answer_then_pause", "soft_hold", "ack_only", "confirm_status_only"}:
+            return text
+        if contact_gate_before:
+            return text
+        if self._is_withdraw_or_stop_message(user_message):
+            return text
+        if not self.collection_policy.can_enter_contact(user_profile):
+            return text
+        if self._contains_contact_push_markers(text):
+            return text
+        if self._is_boundary_pause_triggered(user_message, user_profile):
+            return text
+        if self._is_risk_guard_triggered(user_message):
+            return text
+        if (collection_result or {}).get("divorce_confirmation_cleared"):
+            return text
+        if self._is_resume_profile_collection_message(user_message):
+            return text
+        if self.collection_policy.has_divorce_confirmation_pending(user_profile):
+            return text
+        if self._should_lock_divorce_confirmation(user_profile, user_message):
+            return text
+        if self._has_active_contact_context(user_profile, collection_result=collection_result, user_message=user_message):
+            return text
+
+        all_fields = [
+            item for item in (collection_result or {}).get("all_fields", [])
+            if isinstance(item, dict) and str(item.get("field") or "").strip()
+        ]
+        if not all_fields:
+            return text
+
+        collected_fields = {
+            str(item.get("field") or "").strip()
+            for item in all_fields
+        }
+        if not collected_fields & ASK_GUARD_CORE_FIELDS:
+            return text
+
+        try:
+            next_action = self.contact_service.get_next_action(user_profile, user_message)
+            action_value = getattr(next_action, "value", str(next_action))
+        except Exception:
+            action_value = "none"
+
+        if action_value == "ask_phone":
+            if user_profile.wechat_collected and user_profile.wechat:
+                return self._build_contact_followup_response("ask_phone", "wechat")
+            return self._build_policy_field_prompt("contact", user_profile, user_message=user_message)
+        if action_value == "persuade_phone":
+            return self._build_contact_followup_response("persuade_phone", "wechat")
+        if action_value == "ask_wechat":
+            if user_profile.phone_collected and user_profile.phone:
+                return self._build_contact_followup_response("ask_wechat", "phone")
+            return self._build_policy_field_prompt("contact", user_profile, user_message=user_message)
+        if action_value == "persuade_wechat":
+            return self._build_contact_followup_response("persuade_wechat", "phone")
+
+        if action_value in {"none", "", None}:
+            return self._build_policy_field_prompt("contact", user_profile, user_message=user_message)
+        return text
+
+    def _handoff_to_pending_target_after_core_completion(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        *,
+        collection_result: Optional[Dict[str, Any]] = None,
+        user_message: str = "",
+        response_channel: str = "model",
+        primary_move: str = "",
+        contact_gate_before: bool = False,
+    ) -> str:
+        """最后一个核心字段刚补齐但联系方式仍未开放时，统一切到剩余中等目标。"""
+        text = str(response or "").strip()
+        if not text or response_channel != "model":
+            return text
+        if primary_move in {"repair_and_release", "answer_then_pause", "soft_hold", "ack_only", "confirm_status_only"}:
+            return text
+        if self.collection_policy.can_enter_contact(user_profile):
+            return text
+        if self._is_withdraw_or_stop_message(user_message):
+            return text
+        if self._contains_contact_push_markers(text):
+            return text
+        if self._is_boundary_pause_triggered(user_message, user_profile):
+            return text
+        if self._is_risk_guard_triggered(user_message):
+            return text
+        if (collection_result or {}).get("divorce_confirmation_cleared"):
+            return text
+        if self._is_resume_profile_collection_message(user_message):
+            return text
+        if self.collection_policy.has_divorce_confirmation_pending(user_profile):
+            return text
+        if self._should_lock_divorce_confirmation(user_profile, user_message):
+            return text
+        if self._has_active_contact_context(user_profile, collection_result=collection_result, user_message=user_message):
+            return text
+
+        all_fields = [
+            item for item in (collection_result or {}).get("all_fields", [])
+            if isinstance(item, dict) and str(item.get("field") or "").strip()
+        ]
+        collected_fields = {str(item.get("field") or "").strip() for item in all_fields}
+        if not (collected_fields & ASK_GUARD_CORE_FIELDS):
+            return text
+        if self.collection_policy.get_uncovered_core_fields(user_profile):
+            return text
+
+        if self.collection_policy.can_actively_ask(user_profile, "partner_requirement"):
+            host_field = self.collection_policy.get_medium_transition_host(user_profile, "partner_requirement")
+            if host_field:
+                return self._build_interleaving_followup(
+                    user_profile,
+                    user_message,
+                    main_target=host_field,
+                    preferred_side_target="partner_requirement",
+                    allow_medium_target=True,
+                )
+            return self._build_policy_field_prompt("partner_requirement", user_profile, user_message=user_message)
+        if self.collection_policy.can_actively_ask(user_profile, "marital_status"):
+            host_field = self.collection_policy.get_medium_transition_host(user_profile, "marital_status")
+            if host_field:
+                return self._build_interleaving_followup(
+                    user_profile,
+                    user_message,
+                    main_target=host_field,
+                    preferred_side_target="marital_status",
+                    allow_medium_target=True,
+                )
+            return self._build_policy_field_prompt("marital_status", user_profile, user_message=user_message)
+        if self.collection_policy.can_actively_ask(user_profile, "monthly_income"):
+            return self._build_policy_field_prompt("monthly_income", user_profile, user_message=user_message)
+        return text
+
+    def _handoff_to_contact_after_medium_completion(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        *,
+        collection_result: Optional[Dict[str, Any]] = None,
+        user_message: str = "",
+        response_channel: str = "model",
+        primary_move: str = "",
+    ) -> str:
+        """本轮补齐最后一个中等字段后，同轮直接切到联系方式。"""
+        text = str(response or "").strip()
+        if not text or response_channel != "model":
+            return text
+        if primary_move in {"repair_and_release", "answer_then_pause", "soft_hold", "ack_only", "confirm_status_only"}:
+            return text
+        if self._is_withdraw_or_stop_message(user_message):
+            return text
+        if self._contains_contact_push_markers(text):
+            return text
+        if self._is_contact_like_user_message(user_message):
+            return text
+        if self._is_boundary_pause_triggered(user_message, user_profile):
+            return text
+        if self._is_risk_guard_triggered(user_message):
+            return text
+        if (collection_result or {}).get("divorce_confirmation_cleared"):
+            return text
+        if self._is_resume_profile_collection_message(user_message):
+            return text
+        if not self.collection_policy.can_enter_contact(user_profile):
+            return text
+
+        all_fields = [
+            item for item in (collection_result or {}).get("all_fields", [])
+            if isinstance(item, dict) and str(item.get("field") or "").strip()
+        ]
+        collected_fields = {str(item.get("field") or "").strip() for item in all_fields}
+        if "partner_requirement" not in collected_fields:
+            return text
+        if self.collection_policy.get_uncovered_core_fields(user_profile):
+            return text
+        if self.collection_policy.get_uncovered_medium_fields(user_profile):
+            return text
+
+        return self._build_policy_field_prompt("contact", user_profile, user_message=user_message)
 
     @staticmethod
     def _render_age_value(value: str) -> str:
@@ -4571,8 +5951,11 @@ class ChatService:
         except Exception:
             last_response = ""
 
+        if self.collection_policy.has_divorce_confirmation_pending(user_profile) or self._should_lock_divorce_confirmation(user_profile, message):
+            return self._build_divorce_confirmation_response()
+
         if (
-            self.greeting_service.is_greeting(message)
+            self._is_stable_opening_greeting(message)
             and not opening_fields
             and not self._is_explicit_matchmaking_intent_message(message)
         ):
@@ -4580,7 +5963,18 @@ class ChatService:
 
         if (
             not opening_fields
-            and not self.greeting_service.is_greeting(message)
+            and not self._is_explicit_matchmaking_intent_message(message)
+            and not self.user_question_service.detect_quick_faq_intent(message)
+            and not self._is_boundary_pause_triggered(message, user_profile)
+            and not self._is_risk_guard_triggered(message)
+            and not last_response
+            and self._is_noisy_opening_clarify_message(message)
+        ):
+            return self.greeting_service.get_opening_clarify_response(seed_hint=seed_hint)
+
+        if (
+            not opening_fields
+            and not self._is_stable_opening_greeting(message)
             and not self._is_explicit_matchmaking_intent_message(message)
             and not self.user_question_service.detect_quick_faq_intent(message)
             and not self._is_boundary_pause_triggered(message, user_profile)
@@ -4635,8 +6029,13 @@ class ChatService:
         if faq_response:
             return faq_response
 
-        if self.collection_policy.has_divorce_confirmation_pending(user_profile) or self._should_lock_divorce_confirmation(user_profile, message):
-            return self._build_divorce_confirmation_response()
+        if self._last_response_asked_partner_requirement(last_response):
+            preference = self._extract_simple_partner_requirement(message)
+            if preference:
+                return self._build_partner_requirement_fallback_followup(
+                    user_profile,
+                    user_message=message,
+                )
 
         try:
             next_action = self.contact_service.get_next_action(user_profile, message)
@@ -4653,7 +6052,7 @@ class ChatService:
                     return self._build_contact_followup_response("ask_phone", "wechat")
                 return "方便留个电话吗？后面沟通会方便些。"
             if action_value == "persuade_phone":
-                return "我明白，你要是担心电话不方便，我就再轻问一次。留个常用手机号就行，方便后面联系你。"
+                return self._build_phone_persuasion_fallback()
             if action_value == "ask_wechat":
                 if user_profile.phone_collected and user_profile.phone:
                     return self._build_contact_followup_response("ask_wechat", "phone")
@@ -4661,7 +6060,7 @@ class ChatService:
             if action_value == "persuade_wechat":
                 return "你要是更习惯微信的话，留个常用微信就行，后面沟通也方便一些。"
             if action_value == "end":
-                return "好的，那先这样哈，有需要再联系我，祝你生活愉快。"
+                return self._get_both_rejected_ending_response()
             if action_value in {"none", "", None}:
                 if (
                     (user_profile.phone_collected and user_profile.phone)
@@ -4670,8 +6069,8 @@ class ChatService:
                     or user_profile.rejected_wechat
                 ):
                     if user_profile.rejected_phone or user_profile.rejected_wechat:
-                        return "好的，信息我先记下了。那先这样，有需要再联系我。"
-                    return "好的，信息我先记下了。"
+                        return self._get_contact_completion_ending_response(user_profile)
+                    return self._get_contact_completion_ending_response(user_profile)
                 return self._build_policy_field_prompt("contact", user_profile, user_message=message)
 
         decision = self.collection_policy.decide(
@@ -4803,6 +6202,9 @@ class ChatService:
                                    （使用"增加前"的值，这样用户还有机会回答当前问题）
         """
         response = self._sanitize_forbidden_sales_phrases(response)
+        latest_profile = await self.user_service.get_user_profile(account_id)
+        if isinstance(latest_profile, UserProfile):
+            user_profile = latest_profile
         if response_route:
             await self._simulate_non_ai_human_delay(response, route=response_route)
 
@@ -4933,6 +6335,11 @@ class ChatService:
         text = re.sub(r"^好[，,\s]*(男生|女生)是吧[。.]?\s*", "", text)
         text = re.sub(r"^(你是|是)(男生|女生)(?:啦|呀|哈|啊)?[。.]?\s*", "", text)
         text = re.sub(r"^你在[^。！？!?]{0,20}是吧[。.]?\s*", "", text)
+        # 压掉轮轮复述型开头，避免“本科是吧 / 90后是吧 / 做美容是吧 / 在深圳这边是吧”过重。
+        text = re.sub(r"^(?:好[，,\s]*)?(?:在)?[^。！？!?]{1,8}这边是吧[。.]?\s*", "", text)
+        text = re.sub(r"^(?:好[，,\s]*)?(?:做)?[^。！？!?]{1,10}(?:是吧|我知道了|这块我知道了|方向，明白了)[。.]?\s*", "", text)
+        text = re.sub(r"^(?:好[，,\s]*)?(?:90后|80后|00后|\d{2}岁)(?:呀[，,]?)?(?:知道了|明白了|我知道了|是吧)?[。.]?\s*", "", text)
+        text = re.sub(r"^(?:好[，,\s]*)?(?:本科|大专|硕士|博士)(?:这边明白了|我知道了|是吧)?[。.]?\s*", "", text)
 
         blacklist_patterns = [
             r"同城脱单联盟",
@@ -5011,9 +6418,13 @@ class ChatService:
         text = re.sub(r"^哈哈好的[，,\s]*", "好，", text)
         text = re.sub(r"^哈哈[，,\s]*", "", text)
         text = re.sub(r"联系电话不([。！？!?]?)", r"联系电话吗\1", text)
+        text = re.sub(r"^(?:了|啦|呀|呢|哈|啊)[。．]\s*", "", text)
+        text = re.sub(r"([。！？!?])\s*(哈哈，原来|原来|这样的话|所以说)\s*$", r"\1", text)
+        text = re.sub(r"^(哈哈，原来|原来|这样的话|所以说)\s*$", "", text)
         text = re.sub(r"[，,。]{2,}", "。", text)
         text = re.sub(r"([。！？!?])([^\s])", r"\1 \2", text)
         text = re.sub(r"\s+", " ", text).strip(" ，,。")
+        text = ChatService._strip_broken_edge_fragments(text)
         return text
 
     @staticmethod

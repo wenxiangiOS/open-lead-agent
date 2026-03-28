@@ -89,3 +89,10 @@ def test_get_quick_faq_response_contact_why_avoids_collection_tone():
     assert "顺着联系到你" not in response
     assert "登记" not in response
     assert "流程" not in response
+
+
+def test_detect_quick_faq_intent_timeline_question():
+    service = UserQuestionService()
+    intent = service.detect_quick_faq_intent("多久联系我呢？")
+
+    assert intent == "timeline"
