@@ -26,6 +26,10 @@ class TurnIntentClassifier:
         "先看看情况",
         "先问问情况",
         "认真聊聊",
+        "简单介绍下自己",
+        "简单说说自己",
+        "讲讲自己的情况",
+        "顺着了解",
     )
 
     _LEGACY_SOFT_OPENING_EXAMPLES = {

@@ -96,3 +96,10 @@ def test_detect_quick_faq_intent_timeline_question():
     intent = service.detect_quick_faq_intent("多久联系我呢？")
 
     assert intent == "timeline"
+
+
+def test_detect_quick_faq_intent_timeline_natural_phrase_without_question_cue():
+    service = UserQuestionService()
+    intent = service.detect_quick_faq_intent("你们多久会联系我呀")
+
+    assert intent == "timeline"

@@ -466,6 +466,19 @@
       "assertions": [
         { "type": "final_response_contains_any", "values": ["深圳", "女生", "偏向", "同城"] }
       ]
+    },
+    {
+      "id": "listener_first_service_confirmation_uses_open_self_intro",
+      "category": "humanlike_listener_first",
+      "tags": ["critical", "humanlike", "listener_first", "faq", "open_self_intro"],
+      "description": "用户首轮确认是不是帮忙介绍对象时，应直接答服务性质并给开放自述入口，不要慢速进主模型后改问性别。",
+      "messages": [
+        "你们帮帮忙介绍对象吗？"
+      ],
+      "assertions": [
+        { "type": "final_response_contains_any", "values": ["介绍下自己", "说说自己", "讲讲自己", "顺着了解"] },
+        { "type": "final_response_not_contains_any", "values": ["男生还是女生", "你今年多大", "你在哪个城市", "留个电话"] }
+      ]
     }
   ]
 }

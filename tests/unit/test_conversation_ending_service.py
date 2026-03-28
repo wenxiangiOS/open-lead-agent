@@ -121,10 +121,25 @@ class TestConversationEndingService:
         profile.age = 30
         profile.location = "北京"
         profile.education = "本科"
+        profile.occupation = "IT"
         profile.marital_status = "单身"
+        profile.partner_requirement = "温柔"
+        profile.monthly_income = "2万"
         profile.phone = "13812345678"
         profile.phone_collected = True
-        profile.collection_progress["contact"] = True
+        profile.collection_progress.update(
+            {
+                "sex": True,
+                "age": True,
+                "location": True,
+                "education": True,
+                "occupation": True,
+                "marital_status": True,
+                "partner_requirement": True,
+                "monthly_income": True,
+                "contact": True,
+            }
+        )
         result = self.service.check_manual_scenario('normal_complete', profile)
         assert result == True
 
@@ -133,6 +148,9 @@ class TestConversationEndingService:
         profile = UserProfile(account_id="test")
         profile.sex = "男"
         profile.age = 30
+        profile.phone = "13812345678"
+        profile.phone_collected = True
+        profile.collection_progress["contact"] = True
         # 缺少其他字段
         result = self.service.check_manual_scenario('normal_complete', profile)
         assert result == False
@@ -160,7 +178,7 @@ class TestConversationEndingService:
 
     def test_should_use_ai_ending_both_rejected(self):
         """AI生成 - 双方被拒绝"""
-        assert self.service.should_use_ai_ending('both_rejected') == True
+        assert self.service.should_use_ai_ending('both_rejected') == False
 
     def test_should_use_ai_ending_separation(self):
         """预设话术 - 分居"""

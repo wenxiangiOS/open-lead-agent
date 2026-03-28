@@ -111,6 +111,13 @@ class UserProfile(BaseModel):
     wechat_collected: bool = Field(default=False, description="微信是否已收集")
     phone_ask_count: int = Field(default=0, description="电话询问次数（0-2）")
     wechat_ask_count: int = Field(default=0, description="微信询问次数（0-2）")
+    phone_effective_ask_count: int = Field(default=0, description="电话有效询问次数（用于联系方式流程完成判断）")
+    wechat_effective_ask_count: int = Field(default=0, description="微信有效询问次数（用于联系方式流程完成判断）")
+    phone_invalid_input_retry_count: int = Field(default=0, description="电话无效输入重试次数")
+    wechat_invalid_input_retry_count: int = Field(default=0, description="微信无效输入重试次数")
+    phone_invalid_input_closed: bool = Field(default=False, description="电话是否因连续无效输入而关闭主动追问")
+    wechat_invalid_input_closed: bool = Field(default=False, description="微信是否因连续无效输入而关闭主动追问")
+    contact_complete: bool = Field(default=False, description="联系方式流程是否已完成（电话流程和微信流程都已完成）")
     last_contact_request_type: Optional[str] = Field(default=None, description="最近一次真实展示给用户的联系方式类型（phone/wechat）")
     is_hongkong_user: Optional[bool] = Field(default=None, description="是否是香港用户（缓存）")
 
@@ -122,6 +129,7 @@ class UserProfile(BaseModel):
     conversation_ended: bool = Field(default=False, description="对话是否已结束")
     divorce_confirmed: bool = Field(default=False, description="离异手续是否已确认办妥")
     divorce_confirmation_pending: bool = Field(default=False, description="离异后是否仍待确认手续状态")
+    pending_sex_confirmation: Optional[str] = Field(default=None, description="待确认的性别候选（男/女）")
     needs_bridge_back: bool = Field(default=False, description="FAQ/边界轮后是否需要桥接回主线")
     last_side_topic_type: Optional[str] = Field(None, description="最近支线话题类型 (faq_photo/faq_contact/faq_process/boundary/complaint)")
     complaint_cooldown_until: Optional[int] = Field(None, description="complaint cooldown 结束的消息序号")
@@ -343,6 +351,8 @@ class UserProfile(BaseModel):
                 self.collection_progress[field_name] = True
                 # 字段成功收集后，重置追问计数
                 self.reset_ask_count(field_name)
+                if field_name == 'sex':
+                    self.pending_sex_confirmation = None
 
                 # 特殊处理：phone 和 wechat 字段收集成功后更新状态
                 if field_name == 'phone':
@@ -808,6 +818,7 @@ class UserProfile(BaseModel):
             "conversation_ended": self.conversation_ended,
             "divorce_confirmed": self.divorce_confirmed,
             "divorce_confirmation_pending": self.divorce_confirmation_pending,
+            "pending_sex_confirmation": self.pending_sex_confirmation,
             "age_under_limit": self.age_under_limit,
             "lgbt_user": self.lgbt_user,
             "already_married": self.already_married,

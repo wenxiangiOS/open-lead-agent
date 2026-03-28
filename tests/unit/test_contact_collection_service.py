@@ -134,6 +134,36 @@ class TestContactCollectionService:
         profile = UserProfile(account_id="test", location="北京")
         profile.phone_collected = True
         profile.wechat_ask_count = 1
+        profile.wechat_effective_ask_count = 1
+        assert self.service.get_next_action(profile) == NextAction.NONE
+
+    def test_is_contact_complete_non_hk_after_phone_collected_and_wechat_asked_once(self):
+        """非香港用户电话已收后，微信有效问满1次即视为联系方式流程完成。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone = "13800138000"
+        profile.phone_collected = True
+        profile.wechat_ask_count = 1
+        profile.wechat_effective_ask_count = 1
+
+        assert self.service.is_contact_complete(profile) is True
+
+    def test_is_contact_complete_when_both_channels_maxed_without_collection(self):
+        """电话和微信都有效问满时，即使都未收集也应视为联系方式流程完成。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 2
+        profile.phone_effective_ask_count = 2
+        profile.wechat_ask_count = 2
+        profile.wechat_effective_ask_count = 2
+
+        assert self.service.is_contact_complete(profile) is True
+
+    def test_get_next_action_none_when_wechat_invalid_input_closed_after_phone_collected(self):
+        """电话已收且微信因连续无效输入关闭后，不应继续主动追微信。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone = "13800138000"
+        profile.phone_collected = True
+        profile.wechat_invalid_input_closed = True
+
         assert self.service.get_next_action(profile) == NextAction.NONE
 
     def test_get_next_action_prefers_wechat_over_phone(self):
@@ -230,6 +260,16 @@ class TestContactCollectionService:
 
         assert action == NextAction.PERSUADE_PHONE
         assert "电话" in instruction
+
+    def test_build_instruction_none_without_contact_complete_keeps_empty_instruction(self):
+        """NONE 只有在联系方式流程真的完成后才视为已处理完毕。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone = "13800138000"
+        profile.phone_collected = True
+
+        instruction, action = self.service.build_instruction(profile)
+        assert action == NextAction.ASK_WECHAT
+        assert instruction
 
     # ==================== detect_refusal 测试 ====================
 
@@ -534,3 +574,11 @@ class TestContactCollectionService:
         self.service.record_collection(profile, 'wechat', 'test_wx')
         assert profile.wechat == 'test_wx'
         assert profile.wechat_collected == True
+
+    def test_record_invalid_input_closes_wechat_after_three_attempts(self):
+        """连续三次微信无效输入后，应关闭主动微信追问。"""
+        profile = UserProfile(account_id="test", location="北京")
+        assert self.service.record_invalid_input(profile, 'wechat') == 1
+        assert self.service.record_invalid_input(profile, 'wechat') == 2
+        assert self.service.record_invalid_input(profile, 'wechat') == 3
+        assert profile.wechat_invalid_input_closed is True

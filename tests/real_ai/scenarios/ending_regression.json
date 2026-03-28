@@ -45,6 +45,25 @@
       ]
     },
     {
+      "id": "ending_both_contact_refused_without_contact_no_promise",
+      "category": "ending",
+      "tags": ["critical", "ending_gate", "contact_phone", "contact_wechat", "no_contact"],
+      "description": "一个联系方式都没拿到且电话微信都已拒绝时，可以收尾，但不能承诺后续联系用户。",
+      "messages": [
+        "我是女生，90后，在深圳，本科，运营，单身，月入2万，想找脾气好的男生",
+        "不留电话",
+        "还是不留电话",
+        "微信也不留",
+        "还是不留微信"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": true },
+        { "type": "profile_field_falsey", "field": "phone" },
+        { "type": "profile_field_falsey", "field": "wechat" },
+        { "type": "final_response_not_contains_any", "values": ["联系你", "通知你", "给你发消息", "第一时间联系", "等好消息", "提前约时间", "牵线同事"] }
+      ]
+    },
+    {
       "id": "ending_age_under_limit",
       "category": "ending",
       "tags": ["critical", "ending_gate"],

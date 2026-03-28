@@ -206,6 +206,35 @@
       ]
     },
     {
+      "id": "faq_priority_timeline_natural_opening",
+      "category": "faq",
+      "tags": ["critical", "faq_priority", "timeline", "paraphrase"],
+      "description": "用户在开场用自然话术问多久会联系我时，应先答疑，不得过早承诺联系或切联系方式。",
+      "messages": [
+        "你好",
+        "你们多久会联系我呀"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["基本情况", "聊清楚", "推进", "后面"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["联系你", "牵线同事", "第一时间联系", "留电话", "留微信"] }
+      ]
+    },
+    {
+      "id": "faq_priority_timeline_mid_profile_resume_field",
+      "category": "faq",
+      "tags": ["critical", "faq_priority", "timeline", "resume_profile"],
+      "description": "用户在资料收集中途问多久联系时，应先答疑，再回当前资料主线，而不是回开场或承诺马上联系。",
+      "messages": [
+        "我是男生，深圳，90后，本科，IT",
+        "你们多久会联系我呀"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 2, "values": ["基本情况", "聊清楚", "推进", "后面"] },
+        { "type": "response_contains_any", "turn": 2, "values": ["单身", "婚况", "另一半", "看重", "收入"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["先简单介绍下自己", "联系你", "牵线同事", "留电话", "留微信"] }
+      ]
+    },
+    {
       "id": "faq_priority_reliable",
       "category": "faq",
       "tags": ["critical", "faq_reliable"],

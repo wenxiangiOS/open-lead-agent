@@ -16,6 +16,7 @@ from pathlib import Path
 import random
 import yaml
 from src.models.user_profile import UserProfile
+from src.modules.profile_collection.domain.profile_collection_policy import ProfileCollectionPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -150,28 +151,19 @@ class ConversationEndingService:
 
         # 特殊场景的条件检查
         if scenario_name == 'normal_complete':
-            # 信息收集完成：
-            # 1. 满足可服务资料
-            # 2. 当前轮确实收集到了信息（避免在“拒绝联系方式”这种空提取轮误收尾）
-            # 3. 联系方式流程没有待推进的下一步
+            # 正常收尾：
+            # 1. 至少已拿到一个真实联系方式
+            # 2. 资料主线（核心+中等字段）已经完成或问尽
+            # 3. 当前轮确实有收集进展，避免在“拒绝联系方式”这类空提取轮误收尾
+            policy = ProfileCollectionPolicy()
             has_contact = bool(
                 profile.collection_progress.get("contact", False)
                 or (profile.phone and profile.phone_collected)
                 or (profile.wechat and profile.wechat_collected)
             )
-            has_core = all([
-                bool(getattr(profile, "sex", None)),
-                bool(getattr(profile, "age", None)),
-                bool(getattr(profile, "location", None)),
-                bool(getattr(profile, "marital_status", None)),
-                bool(getattr(profile, "education", None) or getattr(profile, "occupation", None)),
-            ])
+            profile_complete_or_exhausted = policy.is_coverage_complete(profile)
             collected_this_turn = True if collection_result is None else bool(collection_result.get("collected"))
-            has_pending_contact_step = False if collection_result is None else (
-                (profile.phone and profile.phone_collected and not profile.wechat_collected and not profile.rejected_wechat)
-                or (profile.wechat and profile.wechat_collected and not profile.phone_collected and not profile.rejected_phone)
-            )
-            return has_contact and has_core and collected_this_turn and not has_pending_contact_step
+            return has_contact and profile_complete_or_exhausted and collected_this_turn
 
         elif scenario_name == 'both_rejected':
             # 双方都被拒绝，且没有任何真实联系方式留存

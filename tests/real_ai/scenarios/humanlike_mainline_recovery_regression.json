@@ -57,6 +57,22 @@
         { "type": "response_contains_any", "turn": 4, "values": ["微信", "不想留我们先往下聊", "不想留也行", "继续聊"] },
         { "type": "response_not_contains_any", "turn": 4, "values": ["我们平时", "留个常用微信也行，我们", "第一时间联系", "发资料", "1到8小时"] }
       ]
+    },
+    {
+      "id": "humanlike_service_confirmation_mid_conversation_resumes_mainline",
+      "category": "humanlike_mainline",
+      "tags": ["critical", "humanlike", "mainline", "faq", "resume_mainline"],
+      "description": "已经进入资料主线后，用户中途确认是不是帮忙介绍对象，系统应先答疑，再回当前主线，不要重新拉回开场自我介绍或改问性别。",
+      "messages": [
+        "找对象",
+        "我在深圳",
+        "你们帮帮忙介绍对象吗？"
+      ],
+      "assertions": [
+        { "type": "response_contains_any", "turn": 3, "values": ["介绍", "牵线", "合适方向", "留意合适"] },
+        { "type": "response_contains_any", "turn": 3, "values": ["工作", "做什么", "做哪方面"] },
+        { "type": "response_not_contains_any", "turn": 3, "values": ["介绍下自己", "说说自己", "男生还是女生", "你今年多大"] }
+      ]
     }
   ]
 }

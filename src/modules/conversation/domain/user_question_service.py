@@ -237,6 +237,24 @@ class UserQuestionService:
         "privacy": ("隐私", "泄露", "保密", "隐私安全", "信息安全"),
     }
     QUESTION_CUES = ("吗", "么", "?", "？", "咋", "怎么", "如何", "能不能", "可不可以", "多少")
+    TIMELINE_STRONG_PATTERNS = (
+        r'多久.*联系我',
+        r'什么时候.*联系我',
+        r'多久.*有消息',
+        r'什么时候.*有消息',
+        r'多久.*通知我',
+        r'什么时候.*通知我',
+        r'多久.*进展',
+        r'什么时候.*进展',
+        r'后面.*多久',
+        r'后续.*多久',
+        r'一般.*多久',
+        r'大概.*多久',
+        r'等通知',
+        r'等消息',
+        r'多久会联系',
+        r'什么时候会联系',
+    )
 
     def is_priority_question(self, text: str) -> bool:
         """命中常见业务疑问时，本轮先答疑。"""
@@ -247,6 +265,9 @@ class UserQuestionService:
         message = (text or "").strip().lower()
         if not message:
             return None
+
+        if any(re.search(pattern, message) for pattern in self.TIMELINE_STRONG_PATTERNS):
+            return "timeline"
 
         for intent, patterns, _ in self.FAQ_RESPONSE_RULES:
             if any(re.search(pattern, message) for pattern in patterns):

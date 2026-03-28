@@ -293,6 +293,23 @@
       ]
     },
     {
+      "id": "contact_phone_collected_wechat_rejected_resumes_profile_mainline",
+      "category": "contact",
+      "tags": ["critical", "contact", "mainline_resume", "humanlike"],
+      "description": "用户主动给了电话、随后拒绝微信时，如果资料主线还没完成，系统应回资料主线，不应直接收尾承诺后续联系。",
+      "messages": [
+        "我电话是17688765456",
+        "不留微信了"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "phone" },
+        { "type": "profile_field_equals", "field": "rejected_wechat", "expected": true },
+        { "type": "profile_field_equals", "field": "conversation_ended", "expected": false },
+        { "type": "response_contains_any", "turn": 2, "values": ["男生", "女生", "年龄", "学历", "工作", "哪方面", "城市", "哪儿"] },
+        { "type": "response_not_contains_any", "turn": 2, "values": ["等好消息", "牵线同事", "提前约时间", "不打扰", "匹配一般", "联系前", "第一时间联系"] }
+      ]
+    },
+    {
       "id": "contact_user_asks_wechat_instead_of_phone",
       "category": "contact",
       "tags": ["critical", "contact_phone", "contact_wechat", "faq_priority"],

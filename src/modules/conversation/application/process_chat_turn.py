@@ -220,15 +220,12 @@ class ProcessChatTurnUseCase:
             _mark("refusal_detection", t0)
 
             if response_channel == "quick_faq":
-                faq_intent = self.chat_service.user_question_service.detect_quick_faq_intent(request.question)  # noqa: SLF001
-                if faq_intent == "timeline":
-                    final_response = self.chat_service.expectation_service.get_matching_timeline_response(decision_profile)  # noqa: SLF001
-                else:
-                    final_response = self.chat_service.user_question_service.get_quick_faq_response(  # noqa: SLF001
-                        request.question,
-                        repeat_count=1,
-                        recent_responses=conversation_context.get("recent_responses") or (),
-                    ) or await self.chat_service._build_no_ai_response(account_id, user_profile, request.question)  # noqa: SLF001
+                final_response = self.chat_service._get_priority_question_response(  # noqa: SLF001
+                    request.question,
+                    decision_profile,
+                    repeat_count=1,
+                    recent_responses=conversation_context.get("recent_responses") or (),
+                ) or await self.chat_service._build_no_ai_response(account_id, user_profile, request.question)  # noqa: SLF001
                 final_response = self.chat_service._apply_priority_question_guard(  # noqa: SLF001
                     final_response,
                     turn_decision,
@@ -895,6 +892,12 @@ class ProcessChatTurnUseCase:
             )
             final_response = self.chat_service._collapse_duplicate_ack_segments(  # noqa: SLF001
                 final_response,
+            )
+            final_response = self.chat_service._prevent_no_repeat_hold_from_blocking_progress(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result=collection_result,
+                user_message=request.question,
             )
             final_response = self.chat_service._enforce_terminal_response_policy(  # noqa: SLF001
                 final_response,

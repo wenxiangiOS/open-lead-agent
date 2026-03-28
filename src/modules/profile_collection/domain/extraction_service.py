@@ -120,6 +120,26 @@ class ExtractionService:
         '什么', '怎么', '为什么', '哪里', '谁', '多少',
     }
 
+    @staticmethod
+    def _extract_confirmed_sex_candidate_from_context(text: str) -> Optional[str]:
+        content = str(text or "").strip()
+        if not content:
+            return None
+        if re.search(r"(你这边是|你是|我理解你是)\s*男(?:生|的)?", content):
+            return "男"
+        if re.search(r"(你这边是|你是|我理解你是)\s*女(?:生|的)?", content):
+            return "女"
+        return None
+
+    @staticmethod
+    def _is_affirmative_confirmation_answer(text: str) -> bool:
+        return bool(
+            re.search(
+                r"^\s*(?:是的|对|对的|嗯|嗯嗯|没错|是|好的|好)\s*[，,、 ]*\s*$",
+                str(text or ""),
+            )
+        )
+
     # 字段关键词映射（用于推断拒绝的字段）
     FIELD_KEYWORDS = {
         'location': ['所在地', '在哪个城市', '哪个城市', '在哪', '城市'],
@@ -434,16 +454,22 @@ class ExtractionService:
             r"(不超过\d{1,2}岁)",
             r"(\d{1,2}岁以下)",
             r"(年龄至少\d{1,3})",
-            r"(身高至少\d{2,3})",
-            r"(身高不低于\d{2,3})",
-            r"(至少\d{2,3})",
             r"(温柔(?:一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?)",
             r"(温柔就行(?:了)?(?:吧|呀|呢)?)",
             r"(性格好就行(?:了)?(?:吧|呀|呢)?)",
             r"(聊得来就行(?:了)?(?:吧|呀|呢)?)",
             r"(合适就行(?:了)?(?:吧|呀|呢)?)",
             r"(人好就行(?:了)?(?:吧|呀|呢)?)",
+            r"(身高至少\d{2,3})",
+            r"(身高不低于\d{2,3})",
+            r"(不要低于\d{2,3})",
+            r"(别低于\d{2,3})",
+            r"(不低于\d{2,3})",
+            r"(至少\d{2,3})",
             r"(气质(?:好|佳)?(?:一点|些)?(?:的)?)",
+            r"(漂亮点(?:的)?)",
+            r"(长相漂亮)",
+            r"(好看点(?:的)?)",
             r"(同城优先)",
             r"(成熟稳重)",
             r"(三观合拍)",
@@ -463,6 +489,7 @@ class ExtractionService:
             value = re.sub(r"^不超过(\d{1,2})岁$", r"年龄不超过\1岁", value)
             value = re.sub(r"^(\d{1,2})岁以下$", r"年龄不超过\1岁", value)
             value = re.sub(r"^至少(\d{2,3})$", r"身高至少\1", value)
+            value = re.sub(r"^(?:不要低于|别低于|不低于)(\d{2,3})$", r"身高不低于\1", value)
             value = re.sub(r"(温柔)(一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?$", r"\1", value)
             value = re.sub(r"^(温柔)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(性格好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
@@ -470,6 +497,9 @@ class ExtractionService:
             value = re.sub(r"^(合适)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(人好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"(气质)(好|佳)?(一点|些)?(?:的)?$", r"\1", value)
+            value = re.sub(r"^(漂亮点)(?:的)?$", r"\1", value)
+            value = re.sub(r"^长相漂亮$", r"漂亮点", value)
+            value = re.sub(r"^(好看点)(?:的)?$", r"\1", value)
             if value not in normalized:
                 normalized.append(value)
 
@@ -521,6 +551,7 @@ class ExtractionService:
         user_profile: UserProfile,
         extracted_data: Dict[str, Any],
         user_message: str = "",
+        last_response: str = "",
         extraction_meta: Optional[Dict[str, Dict[str, Any]]] = None,
         turn_id: Optional[int] = None,
     ) -> Dict[str, Any]:
@@ -731,9 +762,22 @@ class ExtractionService:
                         r"^\s*(男生|女生|男的|女的|男|女)\s*(?:呀|呢|哈|哦|啊)?\s*$",
                         user_message or "",
                     ) or re.search(
+                        r"^\s*(男生|女生|男的|女的|男|女)\s*[，,、 ]+\s*$",
+                        user_message or "",
+                    ) or re.search(
                         r"^\s*(男生|女生|男的|女的|男|女)\s*[，,、 ]\s*(?:单身|未婚|离异|已婚|分居)",
                         user_message or "",
+                    ) or re.search(
+                        r"^\s*(男生|女生|男的|女的|男|女)\s*[，,、 ]\s*(?:是的|对|嗯|好的|好)\s*[，,、 ]\s*(?:单身|未婚|离异|已婚|分居)",
+                        user_message or "",
                     )
+                    confirmation_context_sex = (
+                        user_profile.pending_sex_confirmation
+                        or self._extract_confirmed_sex_candidate_from_context(last_response)
+                    )
+                    if confirmation_context_sex and self._is_affirmative_confirmation_answer(user_message):
+                        explicit_self_sex = True
+                        value = confirmation_context_sex
                     if not explicit_self_sex:
                         logger.info("[提取保护] sex 仅允许用户自述写入，本轮跳过 sex 更新")
                         continue
@@ -754,7 +798,22 @@ class ExtractionService:
                 if mapped_field == "partner_requirement":
                     user_message_preferred_value = self._extract_partner_requirement_from_user_message(user_message)
                     if user_message_preferred_value:
-                        value = user_message_preferred_value
+                        model_value = str(value or "").strip()
+                        if not model_value:
+                            value = user_message_preferred_value
+                        elif len(user_message_preferred_value) > len(model_value):
+                            value = user_message_preferred_value
+                        else:
+                            merged_parts: List[str] = []
+                            for part in re.split(r"[，,、]+", model_value):
+                                clean_part = str(part).strip()
+                                if clean_part and clean_part not in merged_parts:
+                                    merged_parts.append(clean_part)
+                            for part in re.split(r"[，,、]+", user_message_preferred_value):
+                                clean_part = str(part).strip()
+                                if clean_part and clean_part not in merged_parts:
+                                    merged_parts.append(clean_part)
+                            value = "，".join(merged_parts)
 
                     # 有价值的内容关键词（即使包含结束信号，也要收集这些内容）
                     valuable_keywords = ['看感觉', '随缘', '看眼缘', '看缘分', '顺其自然', '都可以', '不限']

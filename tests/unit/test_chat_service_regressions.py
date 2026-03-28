@@ -619,8 +619,9 @@ def test_expectation_service_timeline_copy_avoids_contacting_candidates_tone():
     response = service.get_matching_timeline_response(profile)
 
     assert "1-2天" in response
-    assert "提前约时间" in response
-    assert "不会突然打扰你" in response
+    assert "基本情况" in response or "聊清楚" in response
+    assert "联系你" not in response
+    assert "牵线同事" not in response
 
 
 def test_expectation_service_timeline_copy_uses_fast_track_when_profile_qualifies():
@@ -634,6 +635,7 @@ def test_expectation_service_timeline_copy_uses_fast_track_when_profile_qualifie
     response = service.get_matching_timeline_response(profile)
 
     assert "1-8小时" in response
+    assert "联系你" not in response
 
 
 def test_expectation_service_contact_completion_response_uses_business_closure():
@@ -729,6 +731,18 @@ def test_build_turn_decision_prefers_answer_then_pause_for_faq():
     assert decision.prioritize_user_question is True
     assert decision.allow_contact_target is False
     assert decision.allow_medium_target is False
+    assert decision.response_channel == "quick_faq"
+
+
+def test_build_turn_decision_prefers_answer_then_pause_for_natural_timeline_question():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_timeline_natural")
+
+    decision = chat_service._build_turn_decision("你们多久会联系我呀", profile, conversation_context={"message_count": 1})
+
+    assert decision.primary_move == "answer_then_pause"
+    assert decision.prioritize_user_question is True
+    assert decision.allow_contact_target is False
     assert decision.response_channel == "quick_faq"
 
 
@@ -946,6 +960,43 @@ def test_build_turn_decision_uses_opening_self_intro_for_probe_followup_wenwen_q
     )
 
     assert decision.intent == "opening_self_intro"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+    assert decision.primary_move == "answer_then_pause"
+
+
+def test_build_turn_decision_routes_opening_service_confirmation_to_quick_faq():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_service_confirmation")
+
+    decision = chat_service._build_turn_decision(
+        "你们帮帮忙介绍对象吗？",
+        profile,
+        conversation_context={"message_count": 0},
+    )
+
+    assert decision.intent == "opening_light_consult"
+    assert decision.response_channel == "quick_faq"
+    assert decision.ask_field is None
+    assert decision.primary_move == "answer_then_pause"
+
+
+def test_build_turn_decision_treats_service_confirmation_as_mid_conversation_reassurance():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_mid_service_confirmation")
+    profile.location = "深圳"
+    profile.collection_progress["location"] = True
+
+    decision = chat_service._build_turn_decision(
+        "你们帮帮忙介绍对象吗？",
+        profile,
+        conversation_context={
+            "message_count": 3,
+            "recent_responses": ["你现在主要做哪方面工作呀？"],
+        },
+    )
+
+    assert decision.intent == "service_confirmation"
     assert decision.response_channel == "quick_faq"
     assert decision.ask_field is None
     assert decision.primary_move == "answer_then_pause"
@@ -1472,7 +1523,7 @@ def test_apply_refusal_respect_guard_closes_after_wechat_rejected_with_phone_col
     assert "继续聊别的" not in response
 
 
-def test_enforce_contact_outcome_policy_closes_after_wechat_rejected_with_phone_collected():
+def test_enforce_contact_outcome_policy_closes_after_wechat_rejected_with_phone_collected_and_profile_complete():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="user_contact_outcome_close_after_phone")
     profile.phone = "17688765432"
@@ -1482,7 +1533,25 @@ def test_enforce_contact_outcome_policy_closes_after_wechat_rejected_with_phone_
     profile.age = 35
     profile.education = "本科"
     profile.sex = "男"
+    profile.location = "深圳"
+    profile.occupation = "IT"
+    profile.marital_status = "单身"
     profile.monthly_income = "4万"
+    profile.partner_requirement = "温柔"
+    profile.wechat_ask_count = 1
+    profile.wechat_effective_ask_count = 1
+    profile.collection_progress.update(
+        {
+            "age": True,
+            "education": True,
+            "sex": True,
+            "location": True,
+            "occupation": True,
+            "marital_status": True,
+            "monthly_income": True,
+            "partner_requirement": True,
+        }
+    )
     chat_service.contact_service.get_next_action = lambda *_args, **_kwargs: SimpleNamespace(value="none")
 
     response = chat_service._enforce_contact_outcome_policy(
@@ -1561,6 +1630,23 @@ def test_apply_contact_boundary_softening_policy_softens_ask_wechat_after_phone_
     assert "电话这块" not in response
 
 
+def test_apply_contact_boundary_softening_policy_keeps_phone_retry_on_first_phone_refusal():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_boundary_retry_phone")
+    profile.phone_ask_count = 1
+    chat_service.contact_service.get_next_action = lambda *_args, **_kwargs: SimpleNamespace(value="persuade_phone")
+
+    response = chat_service._apply_contact_boundary_softening_policy(
+        "没关系，这块我先不追问，我们先按你舒服的节奏来",
+        profile,
+        "不方便留电话",
+    )
+
+    assert "电话" in response or "手机号" in response
+    assert "微信" not in response
+    assert "不追问" not in response
+
+
 @pytest.mark.anyio
 async def test_build_no_ai_response_falls_back_to_quick_faq_answer():
     chat_service = _build_chat_service()
@@ -1592,12 +1678,7 @@ async def test_build_no_ai_response_returns_opening_probe_for_greeting():
 
     response = await chat_service._build_no_ai_response("u_no_ai_greeting", profile, "在吗")
 
-    assert (
-        "想找对象" in response
-        or "先了解下" in response
-        or "看看情况" in response
-        or "认真聊聊" in response
-    )
+    assert any(token in response for token in ["介绍下自己", "说说自己", "说说自己的情况", "讲讲自己的情况", "顺着了解"])
     assert "男生还是女生" not in response
 
 
@@ -1608,7 +1689,7 @@ async def test_build_no_ai_response_returns_opening_probe_for_noisy_repeated_gre
 
     response = await chat_service._build_no_ai_response("u_no_ai_greeting_noisy_repeat", profile, "你好呀，在吗在吗呀呀呀？")
 
-    assert any(token in response for token in ["想找对象", "先了解下", "看看情况", "认真聊聊", "问问情况"])
+    assert any(token in response for token in ["介绍下自己", "说说自己", "讲讲自己", "顺着了解"])
     assert "男生还是女生" not in response
 
 
@@ -1705,7 +1786,7 @@ async def test_build_no_ai_response_returns_opening_self_intro_for_probe_followu
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_no_ai_self_intro_after_probe_wenwen_qingkuang_prefix")
     chat_service.dialogue_manager.get_last_response = AsyncMock(
-        return_value="你好呀，在的。 你是想认真聊聊，还是先问问情况呀？"
+        return_value="你好呀，在的。你先简单说说自己就行，我顺着了解会更顺一点。"
     )
 
     response = await chat_service._build_no_ai_response(
@@ -1723,7 +1804,7 @@ async def test_build_no_ai_response_returns_opening_self_intro_for_probe_followu
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_no_ai_self_intro_after_probe_wo_wenwen_qingkuang")
     chat_service.dialogue_manager.get_last_response = AsyncMock(
-        return_value="你好呀，在的。 你是想认真聊聊，还是先问问情况呀？"
+        return_value="你好呀，在的。你先简单说说自己就行，我顺着了解会更顺一点。"
     )
 
     response = await chat_service._build_no_ai_response(
@@ -1734,6 +1815,40 @@ async def test_build_no_ai_response_returns_opening_self_intro_for_probe_followu
 
     assert "介绍下自己" in response or "说说自己" in response or "大概情况" in response
     assert "男生还是女生" not in response
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_handles_opening_service_confirmation_with_open_intro():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_opening_service_confirmation")
+
+    response = await chat_service._build_no_ai_response(
+        "u_no_ai_opening_service_confirmation",
+        profile,
+        "你们帮帮忙介绍对象吗？",
+    )
+
+    assert "介绍下自己" in response or "说说自己的情况" in response or "讲讲自己" in response
+    assert "男生还是女生" not in response
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_handles_mid_service_confirmation_and_resumes_mainline():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_mid_service_confirmation")
+    profile.location = "深圳"
+    profile.collection_progress["location"] = True
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="你现在主要做哪方面工作呀？")
+
+    response = await chat_service._build_no_ai_response(
+        "u_no_ai_mid_service_confirmation",
+        profile,
+        "你们帮帮忙介绍对象吗？",
+    )
+
+    assert ("牵线介绍" in response) or ("往合适方向" in response) or ("留意合适方向" in response)
+    assert "工作" in response or "做哪方面" in response or "做什么" in response
+    assert "介绍下自己" not in response
 
 
 @pytest.mark.anyio
@@ -1928,6 +2043,32 @@ async def test_update_conversation_state_uses_same_canonical_response_for_histor
         "u_response_consistency",
         "好的呀 我们继续聊。",
     )
+
+
+@pytest.mark.anyio
+async def test_update_conversation_state_sets_pending_sex_confirmation_from_confirm_prompt():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_pending_sex")
+    chat_service.dialogue_manager.add_to_history = AsyncMock()
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
+    chat_service.dialogue_manager.update_recent_responses = AsyncMock()
+    chat_service.dialogue_manager.increment_message_count = AsyncMock()
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=6)
+    chat_service.ask_tracking_service.track_ai_asked_fields = AsyncMock()
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+
+    await chat_service._update_conversation_state(
+        "u_pending_sex",
+        "温柔，苗条，漂亮",
+        "我再确认下，你这边是男生对吧？",
+        "",
+        track_asked_fields=True,
+    )
+
+    assert profile.pending_sex_confirmation == "男"
+    assert profile.last_asked_field == "sex"
+    chat_service.user_service.save_user_profile.assert_awaited()
 
 
 @pytest.mark.anyio
@@ -4490,6 +4631,196 @@ def test_extraction_service_partner_requirement_tolerates_polluted_short_answer(
 def test_extraction_service_partner_requirement_handles_modal_particle_reply():
     assert ExtractionService._extract_partner_requirement_from_user_message("本科，温柔吧") == "温柔"
 
+
+def test_apply_extraction_guards_allows_composite_sex_short_answer_in_sex_context():
+    chat_service = _build_chat_service()
+
+    guarded = chat_service._apply_extraction_guards(
+        {"sex": "男", "marital_status": "单身"},
+        "男的，是的，单身",
+        "你这边是男生还是女生呀？ 感情状态这边我也顺手确认一下，你现在是单身状态吗？",
+    )
+
+    assert guarded["sex"] == "男"
+
+
+def test_apply_extraction_guards_allows_trailing_punct_sex_short_answer_in_sex_context():
+    chat_service = _build_chat_service()
+
+    guarded = chat_service._apply_extraction_guards(
+        {"sex": "男"},
+        "男的，",
+        "我顺手确认下，你这边是男生还是女生呀？",
+    )
+
+    assert guarded["sex"] == "男"
+
+
+def test_apply_extraction_guards_allows_affirmative_confirmation_to_confirm_sex():
+    chat_service = _build_chat_service()
+
+    guarded = chat_service._apply_extraction_guards(
+        {"sex": "男"},
+        "是的",
+        "我再确认下，你这边是男生对吧？",
+    )
+
+    assert guarded["sex"] == "男"
+
+
+def test_build_service_confirmation_resume_response_prefers_unresolved_core_field():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_service_confirm_resume")
+    profile.age = 36
+    profile.age_label = "90后"
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "IT"
+    profile.monthly_income = "7万"
+    profile.partner_requirement = "温柔"
+    profile.collection_progress.update(
+        {
+            "age": True,
+            "age_label": True,
+            "location": True,
+            "education": True,
+            "occupation": True,
+            "monthly_income": True,
+            "partner_requirement": True,
+        }
+    )
+
+    response = chat_service._build_service_confirmation_resume_response(
+        profile,
+        "是的",
+        message_count=5,
+        last_response="我再确认下，你这边是男生对吧？",
+    )
+
+    assert "男生" in response or "女生" in response
+
+
+def test_enforce_contact_outcome_policy_does_not_end_when_contact_done_but_profile_incomplete():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_contact_done_profile_incomplete")
+    profile.phone = "17688765456"
+    profile.phone_collected = True
+    profile.collection_progress["contact"] = True
+    profile.rejected_wechat = True
+    profile.wechat_ask_count = 1
+    profile.wechat_effective_ask_count = 1
+
+    response = chat_service._enforce_contact_outcome_policy(
+        "没事的，微信不方便留也完全没关系，那你方便给个常用的手机号不？后续有合适的匹配进展也好及时联系到你呀。",
+        profile,
+        collection_result={"all_fields": []},
+        user_message="不留微信了",
+    )
+
+    assert "等好消息" not in response
+    assert "联系到你" not in response
+
+
+def test_get_contact_completion_ending_response_without_contact_avoids_contact_promises():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_contact_completion")
+    profile.rejected_phone = True
+    profile.rejected_wechat = True
+    profile.phone_ask_count = 2
+    profile.phone_effective_ask_count = 2
+    profile.wechat_ask_count = 2
+    profile.wechat_effective_ask_count = 2
+
+    response = chat_service._get_contact_completion_ending_response(profile)
+
+    assert "联系" not in response
+    assert "通知" not in response
+    assert "微信" not in response
+    assert "电话" not in response
+
+
+def test_get_contact_terminal_or_resume_response_prefers_profile_resume_when_contact_done_but_profile_incomplete():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_contact_resume_profile")
+    profile.phone = "17688765456"
+    profile.phone_collected = True
+    profile.collection_progress["contact"] = True
+    profile.rejected_wechat = True
+    profile.wechat_ask_count = 1
+    profile.wechat_effective_ask_count = 1
+
+    chat_service._build_policy_field_prompt = lambda field, *_args, **_kwargs: (
+        "你这边是男生还是女生呀？" if field == "sex" else f"ask:{field}"
+    )
+
+    response = chat_service._get_contact_terminal_or_resume_response(profile, "不留微信了")
+
+    assert response == "你这边是男生还是女生呀？"
+
+
+def test_prevent_no_repeat_hold_from_blocking_core_followup():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_repeat_core")
+    profile.age = 36
+    profile.age_label = "90后"
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "IT"
+    profile.monthly_income = "3万"
+    profile.marital_status = "单身"
+    profile.partner_requirement = "温柔"
+    profile.collection_progress.update(
+        {
+            "age": True,
+            "age_label": True,
+            "location": True,
+            "education": True,
+            "occupation": True,
+            "monthly_income": True,
+            "marital_status": True,
+            "partner_requirement": True,
+        }
+    )
+
+    response = chat_service._prevent_no_repeat_hold_from_blocking_progress(
+        "这个我知道了，咱们不在这上面打转。",
+        profile,
+        collection_result={"all_fields": [{"field": "partner_requirement", "value": "温柔"}]},
+        user_message="温柔，不要低于160，漂亮点的，其他没有了",
+    )
+
+    assert "男生还是女生" in response
+
+
+@pytest.mark.anyio
+async def test_build_no_ai_response_prefers_core_followup_over_low_pressure_hold():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_no_ai_core_resume")
+    profile.age = 36
+    profile.age_label = "90后"
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "IT"
+    profile.monthly_income = "7万"
+    profile.partner_requirement = "温柔"
+    profile.collection_progress.update(
+        {
+            "age": True,
+            "age_label": True,
+            "location": True,
+            "education": True,
+            "occupation": True,
+            "monthly_income": True,
+            "partner_requirement": True,
+        }
+    )
+    profile.non_cooperation_turns = 3
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="本科这边我知道了，那你现在大概什么年龄段呀？")
+
+    response = await chat_service._build_no_ai_response("u_no_ai_core_resume", profile, "嗯")
+
+    assert "男生" in response or "女生" in response
+    assert "顺着听" not in response
 
 def test_render_field_question_uses_mid_conversation_sex_prompt_without_opening_phrase():
     service = DialogueExpressionService()

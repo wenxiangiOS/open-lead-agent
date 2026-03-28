@@ -110,6 +110,77 @@ ABUSE_GUARD_PATTERNS = (
     r"去死",
     r"智障",
 )
+SERVICE_CONFIRMATION_SUBJECT_PATTERNS = (
+    "你们",
+    "这边",
+    "这里",
+    "你家",
+    "你们这",
+)
+SERVICE_CONFIRMATION_SERVICE_PATTERNS = (
+    "介绍对象",
+    "介绍",
+    "牵线",
+    "找对象",
+    "相亲",
+    "脱单",
+)
+SERVICE_CONFIRMATION_QUESTION_PATTERNS = (
+    "吗",
+    "是吧",
+    "对吧",
+    "啊",
+    "呀",
+    "?",
+    "？",
+)
+SERVICE_CONFIRMATION_DIRECT_PATTERNS = (
+    r"你们.*介绍对象",
+    r"你们.*牵线",
+    r"你们.*找对象",
+    r"这边.*介绍对象",
+    r"这边.*牵线",
+    r"这边.*找对象",
+    r"这里.*介绍对象",
+    r"这里.*牵线",
+    r"帮.*介绍对象",
+    r"帮.*找对象",
+    r"做.*相亲介绍",
+    r"做.*介绍对象",
+    r"做.*牵线",
+)
+SERVICE_CONFIRMATION_OPENING_ACK_VARIANTS = (
+    "可以呀，你可以先简单介绍下自己，我顺着了解会更自然一点。",
+    "可以的，你先说说自己的情况，我这边顺着了解就行。",
+    "是的，我们这边就是帮忙牵线介绍的。你先简单讲讲自己，我顺着往下了解。",
+)
+SERVICE_CONFIRMATION_MID_ACK_VARIANTS = (
+    "是的，我们这边就是帮忙牵线介绍的。",
+    "对，我们这边就是顺着了解情况再帮你往合适方向看。",
+    "嗯，我们这边就是先把情况聊清楚，再帮你留意合适方向的。",
+)
+
+
+def _extract_confirmed_sex_candidate_from_context(text: str) -> Optional[str]:
+    content = str(text or "").strip()
+    if not content:
+        return None
+    if re.search(r"(你这边是|你是|我理解你是)\s*男(?:生|的)?", content):
+        return "男"
+    if re.search(r"(你这边是|你是|我理解你是)\s*女(?:生|的)?", content):
+        return "女"
+    return None
+
+
+def _is_affirmative_confirmation_answer(text: str) -> bool:
+    return bool(
+        re.search(
+            r"^\s*(?:是的|对|对的|嗯|嗯嗯|没错|是|好的|好)\s*[，,、 ]*\s*$",
+            str(text or ""),
+        )
+    )
+
+
 BOUNDARY_PAUSE_PATTERNS = (
     r"不给电话",
     r"不方便",
@@ -698,7 +769,7 @@ class ChatService:
             return False
         # FAQ/联系方式偏好优先于 boundary pause，避免把“靠谱吗/安全吗/留微信可以吗”
         # 这类明确答疑或切流程请求误拦成固定安抚话术。
-        if self.user_question_service.detect_quick_faq_intent(message):
+        if self._detect_priority_question_intent(message):
             return False
         if self.contact_service.prefers_wechat_over_phone(message, UserProfile(account_id="boundary_probe")):
             return False
@@ -770,7 +841,7 @@ class ChatService:
         if not message:
             return False
         # FAQ 意图优先，避免把答疑请求误判为抱怨
-        if self.user_question_service.detect_quick_faq_intent(message):
+        if self._detect_priority_question_intent(message):
             return False
         return self._matches_any_pattern(message, COMPLAINT_PATTERNS)
 
@@ -787,7 +858,7 @@ class ChatService:
         if not message:
             return None
         # FAQ 意图优先，避免误判
-        if self.user_question_service.detect_quick_faq_intent(message):
+        if self._detect_priority_question_intent(message):
             return None
 
         # 优先检测重复追问投诉
@@ -804,7 +875,7 @@ class ChatService:
         message = (user_message or "").strip()
         if not message:
             return None
-        if self.user_question_service.detect_quick_faq_intent(message):
+        if self._detect_priority_question_intent(message):
             return None
         if self._matches_any_pattern(message, WITHDRAW_STRONG_PATTERNS):
             return "strong"
@@ -880,7 +951,7 @@ class ChatService:
             message_count <= 1
             and self._is_explicit_matchmaking_intent_message(message)
             and not opening_profile_fields
-            and not self.user_question_service.detect_quick_faq_intent(message)
+            and not self._detect_priority_question_intent(message)
             and not self._is_boundary_pause_triggered(message, user_profile)
             and not self._is_risk_guard_triggered(message)
         )
@@ -890,14 +961,14 @@ class ChatService:
             and not opening_profile_fields
             and not self._is_stable_opening_greeting(message)
             and not self._is_explicit_matchmaking_intent_message(message)
-            and not self.user_question_service.detect_quick_faq_intent(message)
+            and not self._detect_priority_question_intent(message)
             and not self._is_boundary_pause_triggered(message, user_profile)
             and not self._is_risk_guard_triggered(message)
         )
         soft_opening_self_intro = (
             message_count <= 2
             and self._is_opening_probe_followup_message(message, last_response)
-            and not self.user_question_service.detect_quick_faq_intent(message)
+            and not self._detect_priority_question_intent(message)
             and not self._is_boundary_pause_triggered(message, user_profile)
             and not self._is_risk_guard_triggered(message)
             and not opening_profile_fields
@@ -921,8 +992,23 @@ class ChatService:
             and not opening_profile_fields
             and not self._is_explicit_matchmaking_intent_message(message)
         )
+        opening_service_confirmation = self._should_treat_as_opening_service_confirmation(
+            user_profile,
+            stage=stage,
+            message_count=message_count,
+            user_message=message,
+            last_response=last_response,
+        )
+        mid_service_confirmation = self._should_treat_as_mid_service_confirmation(
+            user_profile,
+            stage=stage,
+            message_count=message_count,
+            user_message=message,
+            last_response=last_response,
+        )
 
-        intent = self.user_question_service.detect_quick_faq_intent(message) or "general"
+        priority_question_intent = self._detect_priority_question_intent(message)
+        intent = priority_question_intent or "general"
         risk = "none"
         next_action = "continue"
         contact_context = self._has_active_contact_context(user_profile, user_message=message)
@@ -1015,6 +1101,48 @@ class ChatService:
                 followup_topic="opening_clarify",
             )
 
+        if opening_service_confirmation:
+            return TurnDecision(
+                intent="opening_light_consult",
+                risk="none",
+                stage=stage,
+                next_action="continue",
+                primary_move="answer_then_pause",
+                ask_field=None,
+                prioritize_user_question=True,
+                allow_contact_target=False,
+                allow_medium_target=False,
+                response_channel="quick_faq",
+                tone_policy={
+                    "ack_budget_per_n_turns": 3,
+                    "max_question_per_turn": 1,
+                    "enforce_contact_transition": False,
+                    "core_streak_max": 3,
+                },
+                followup_topic="opening_self_intro",
+            )
+
+        if mid_service_confirmation:
+            return TurnDecision(
+                intent="service_confirmation",
+                risk="none",
+                stage=stage,
+                next_action="continue",
+                primary_move="answer_then_pause",
+                ask_field=None,
+                prioritize_user_question=True,
+                allow_contact_target=False,
+                allow_medium_target=False,
+                response_channel="quick_faq",
+                tone_policy={
+                    "ack_budget_per_n_turns": 3,
+                    "max_question_per_turn": 1,
+                    "enforce_contact_transition": False,
+                    "core_streak_max": 3,
+                },
+                followup_topic=None,
+            )
+
         if explicit_matchmaking_opening:
             return TurnDecision(
                 intent="opening_self_intro",
@@ -1062,7 +1190,7 @@ class ChatService:
             last_response=last_response,
             message_count=message_count,
             has_opening_fields=bool(opening_profile_fields),
-            has_faq_intent=bool(self.user_question_service.detect_quick_faq_intent(message)),
+            has_faq_intent=bool(priority_question_intent),
             has_boundary_pause=bool(self._is_boundary_pause_triggered(message, user_profile)),
             has_risk_guard=bool(self._is_risk_guard_triggered(message)),
         )
@@ -1377,6 +1505,40 @@ class ChatService:
             return "faq"
         return "faq"
 
+    def _detect_priority_question_intent(self, user_message: str) -> str | None:
+        """
+        统一的用户疑问/顾虑识别入口。
+
+        识别顺序：
+        1. FAQ 词库/语义规则
+        2. timeline 业务语义兜底
+        """
+        intent = self.user_question_service.detect_quick_faq_intent(user_message)
+        if intent:
+            return intent
+        if self.expectation_service.is_matching_timeline_question(user_message):
+            return "timeline"
+        return None
+
+    def _get_priority_question_response(
+        self,
+        user_message: str,
+        user_profile: UserProfile,
+        *,
+        repeat_count: int = 1,
+        recent_responses: tuple[str, ...] | list[str] | None = None,
+    ) -> str | None:
+        intent = self._detect_priority_question_intent(user_message)
+        if not intent:
+            return None
+        if intent == "timeline":
+            return self.expectation_service.get_matching_timeline_response(user_profile)
+        return self.user_question_service.get_quick_faq_response(
+            user_message,
+            repeat_count=repeat_count,
+            recent_responses=recent_responses,
+        )
+
     @staticmethod
     def _is_explicit_matchmaking_intent_message(user_message: str) -> bool:
         message = str(user_message or "").strip()
@@ -1401,6 +1563,10 @@ class ChatService:
             "先问问情况",
             "先看看情况",
             "认真聊聊",
+            "简单介绍下自己",
+            "简单说说自己",
+            "讲讲自己的情况",
+            "顺着了解",
         )
         return any(marker in previous for marker in probe_markers)
 
@@ -1655,7 +1821,7 @@ class ChatService:
             "我先跟你说清楚",
             "你可以放心",
         )
-        if self.user_question_service.detect_quick_faq_intent(previous_response):
+        if self._detect_priority_question_intent(previous_response):
             return True
         return any(marker in previous_response for marker in faq_answer_markers)
 
@@ -2195,7 +2361,7 @@ class ChatService:
         if not text or not turn_decision.prioritize_user_question:
             return text
 
-        faq_response = self.user_question_service.get_quick_faq_response(user_message)
+        faq_response = self._get_priority_question_response(user_message, UserProfile(account_id="priority_question_guard"))
         if not faq_response:
             return text
 
@@ -2357,6 +2523,132 @@ class ChatService:
                 stripped = stripped.replace(token, "")
             return bool(stripped) and not self.greeting_service.is_greeting(stripped)
         return False
+
+    @staticmethod
+    def _is_service_confirmation_like(user_message: str) -> bool:
+        message = str(user_message or "").strip().lower()
+        if not message:
+            return False
+        compact = re.sub(r"[\s,，。！？!?~～、：:；;（）()\"'`]+", "", message)
+        if not compact:
+            return False
+        if any(re.search(pattern, compact) for pattern in SERVICE_CONFIRMATION_DIRECT_PATTERNS):
+            return True
+        has_subject = any(token in compact for token in SERVICE_CONFIRMATION_SUBJECT_PATTERNS)
+        has_service = any(token in compact for token in SERVICE_CONFIRMATION_SERVICE_PATTERNS)
+        has_question = any(token in compact for token in SERVICE_CONFIRMATION_QUESTION_PATTERNS)
+        return has_subject and has_service and has_question
+
+    @staticmethod
+    def _count_collected_profile_fields(user_profile: UserProfile) -> int:
+        count = 0
+        for field in ("sex", "age", "location", "education", "occupation", "marital_status", "monthly_income", "partner_requirement"):
+            value = getattr(user_profile, field, None)
+            if str(value or "").strip():
+                count += 1
+                continue
+            if user_profile.collection_progress.get(field):
+                count += 1
+        return count
+
+    def _should_treat_as_opening_service_confirmation(
+        self,
+        user_profile: UserProfile,
+        *,
+        stage: str,
+        message_count: int,
+        user_message: str,
+        last_response: str,
+    ) -> bool:
+        if not self._is_service_confirmation_like(user_message):
+            return False
+        if stage != "opening":
+            return False
+        if message_count > 1:
+            return False
+        if self._count_collected_profile_fields(user_profile) > 0:
+            return False
+        if self._extract_deterministic_profile_fields(user_message):
+            return False
+        if self._is_boundary_pause_triggered(user_message, user_profile):
+            return False
+        if self._is_risk_guard_triggered(user_message):
+            return False
+        if self._detect_priority_question_intent(user_message):
+            return False
+        if last_response and self._detect_which_field_is_asked(last_response):
+            return False
+        return True
+
+    def _should_treat_as_mid_service_confirmation(
+        self,
+        user_profile: UserProfile,
+        *,
+        stage: str,
+        message_count: int,
+        user_message: str,
+        last_response: str,
+    ) -> bool:
+        if not self._is_service_confirmation_like(user_message):
+            return False
+        if self._should_treat_as_opening_service_confirmation(
+            user_profile,
+            stage=stage,
+            message_count=message_count,
+            user_message=user_message,
+            last_response=last_response,
+        ):
+            return False
+        if self._is_boundary_pause_triggered(user_message, user_profile):
+            return False
+        if self._is_risk_guard_triggered(user_message):
+            return False
+        if self._count_collected_profile_fields(user_profile) > 0:
+            return True
+        return bool(last_response and self._detect_which_field_is_asked(last_response))
+
+    def _build_service_confirmation_resume_response(
+        self,
+        user_profile: UserProfile,
+        user_message: str,
+        *,
+        message_count: int,
+        last_response: str = "",
+    ) -> str:
+        ack = random.choice(SERVICE_CONFIRMATION_MID_ACK_VARIANTS).strip()
+        previous_asked_field = self._detect_which_field_is_asked(last_response)
+        if (
+            previous_asked_field
+            and previous_asked_field != "contact"
+            and self.collection_policy.can_actively_ask(user_profile, previous_asked_field)
+        ):
+            followup = self._build_policy_field_prompt(previous_asked_field, user_profile, user_message=user_message).strip()
+            if followup:
+                return f"{ack} {followup}".strip()
+        unresolved_core_fields = self.collection_policy.get_uncovered_core_fields(user_profile)
+        if unresolved_core_fields:
+            next_core = unresolved_core_fields[0]
+            if self.collection_policy.can_actively_ask(user_profile, next_core):
+                followup = self._build_policy_field_prompt(next_core, user_profile, user_message=user_message).strip()
+                if followup:
+                    return f"{ack} {followup}".strip()
+        decision = self.collection_policy.decide(
+            user_profile,
+            user_message=user_message,
+            message_count=message_count,
+            allow_contact_target=False,
+            allow_medium_target=True,
+            prioritize_user_question=False,
+            primary_move="ack_and_ask",
+        )
+        next_field = decision.main_target
+        if next_field == "contact":
+            next_field = None
+        if next_field and self.collection_policy.can_actively_ask(user_profile, next_field):
+            followup = self._build_policy_field_prompt(next_field, user_profile, user_message=user_message).strip()
+            if followup:
+                return f"{ack} {followup}".strip()
+        return ack
 
     def _augment_prompt_for_opening_intent_detection(self, prompt: str) -> str:
         instruction = """
@@ -2661,7 +2953,10 @@ class ChatService:
                 return self.greeting_service.get_open_self_intro_response(seed_hint=seed_hint)
         if signal.intent == "opening_faq":
             if self._contains_contact_push_markers(text) or self._detect_asked_fields_in_response(text):
-                faq_response = self.user_question_service.get_quick_faq_response(user_message)
+                faq_response = self._get_priority_question_response(
+                    user_message,
+                    UserProfile(account_id="opening_faq_guard"),
+                )
                 if faq_response:
                     return faq_response
         if signal.intent in {"opening_boundary_or_contact_refusal", "opening_emotional_or_defensive", "opening_reverse_question"}:
@@ -3261,6 +3556,7 @@ class ChatService:
             user_profile,
             extracted_data,
             user_message=user_message,
+            last_response=last_response,
             extraction_meta=extraction_meta,
             turn_id=turn_id,
         )
@@ -3409,6 +3705,8 @@ class ChatService:
         if collected_wechat:
             user_profile.wechat = collected_wechat
             user_profile.wechat_collected = True
+            self.contact_service.reset_invalid_input(user_profile, 'wechat')
+            self.contact_service.is_contact_complete(user_profile)
             # 非香港用户：微信也可以作为联系方式
             is_hong_user = self._is_hong_user(user_profile.location)
             if not is_hong_user:
@@ -3444,19 +3742,19 @@ class ChatService:
                     )
 
             # 检查核心字段是否全部收集
-            profile_ready_for_service = self.collection_policy.has_serviceable_profile(user_profile)
+            profile_complete_or_exhausted = self._is_profile_collection_complete_or_exhausted(user_profile)
 
             contact_collected = (
                 user_profile.collection_progress.get('contact', False) or
                 (user_profile.wechat and user_profile.wechat_collected)
             )
 
-            # 如果资料已足够服务，检查联系方式收集流程是否也结束
-            if profile_ready_for_service and contact_collected:
+            # 只有资料主线也完成/问尽后，才允许在已拿到联系方式的前提下收尾。
+            if profile_complete_or_exhausted and contact_collected:
                 # 检查联系方式收集流程是否还有下一步动作
                 from src.services.collection.contact_collection_service import NextAction
                 next_action = self.contact_service.get_next_action(user_profile)
-                if next_action not in [NextAction.NONE, NextAction.END_CONVERSATION]:
+                if not self.contact_service.is_contact_complete(user_profile) and next_action not in [NextAction.NONE, NextAction.END_CONVERSATION]:
                     # 联系方式收集流程还没结束，返回 AI 原回复（包含争取话术）
                     logger.info(f"[收尾检查] 联系方式收集流程未结束，next_action={next_action.value}")
                     return ai_response
@@ -3498,14 +3796,14 @@ class ChatService:
                 user_profile.collection_progress.get('contact', False) or
                 (user_profile.wechat and user_profile.wechat_collected)
             )
-            profile_ready_for_service = self.collection_policy.has_serviceable_profile(user_profile)
+            profile_complete_or_exhausted = self._is_profile_collection_complete_or_exhausted(user_profile)
 
             if next_action.value in {"ask_phone", "persuade_phone"}:
                 logger.info(f"[微信收集] 按状态机继续电话流程: next_action={next_action.value}")
                 return self._build_contact_followup_response(next_action.value, "wechat")
 
-            # 电话链路已结束且当前资料已可服务，统一收尾
-            if profile_ready_for_service and contact_collected and next_action.value in {"none", "end"}:
+            # 电话链路已结束且资料主线也完成/问尽，才允许带联系方式收尾。
+            if profile_complete_or_exhausted and contact_collected and self.contact_service.is_contact_complete(user_profile):
                 if has_phone_already:
                     logger.info("[微信收集] 电话和微信均已收齐，返回稳定双联系方式确认")
                     return self._build_dual_contact_ack()
@@ -3515,7 +3813,7 @@ class ChatService:
                 await self.user_service.save_user_profile(account_id, user_profile)
 
                 if user_profile.rejected_phone or user_profile.rejected_wechat:
-                    ending_response = self.expectation_service.get_contact_completion_response(user_profile)
+                    ending_response = self._get_contact_completion_ending_response(user_profile)
                     collection_result['ending_info']['use_ai'] = False
                     collection_result['ending_info']['response'] = ending_response
                     return ending_response
@@ -3523,10 +3821,8 @@ class ChatService:
                 terminal_response = self._build_terminal_response(collection_result.get('ending_info'), user_profile)
                 return terminal_response or ai_response
 
-            if next_action.value in {"none", "end"} and contact_collected:
-                if user_profile.rejected_phone or user_profile.rejected_wechat:
-                    return self.expectation_service.get_contact_completion_response(user_profile)
-                return self.expectation_service.get_contact_completion_response(user_profile)
+            if self.contact_service.is_contact_complete(user_profile):
+                return self._get_contact_terminal_or_resume_response(user_profile, str(user_message or ""))
 
             # === 资料未达到可服务阈值，继续收集重要字段 ===
             decision = self.collection_policy.decide(
@@ -3558,6 +3854,8 @@ class ChatService:
 
             user_profile.phone = normalized_phone or contact_value
             user_profile.phone_collected = True
+            self.contact_service.reset_invalid_input(user_profile, 'phone')
+            self.contact_service.is_contact_complete(user_profile)
             user_profile.contact = user_profile.get_contact_status()
             logger.info(f"[联系方式验证] 设置 phone={user_profile.phone}, phone_collected=True")
 
@@ -3576,7 +3874,7 @@ class ChatService:
                 # 询问次数在用户明确拒绝时由拒绝检测统一递增，这里只发起询问，不提前计数。
                 return self._build_contact_followup_response(next_action.value, "phone")
 
-            if user_profile.wechat_collected and user_profile.wechat and next_action.value in {"none", "end"}:
+            if user_profile.wechat_collected and user_profile.wechat and self.contact_service.is_contact_complete(user_profile):
                 logger.info("[联系方式验证] 电话和微信均已收齐，返回稳定双联系方式确认")
                 return self._build_dual_contact_ack()
 
@@ -3588,9 +3886,9 @@ class ChatService:
             )
 
             # 核心字段检查（排除contact，因为上面单独检查了
-            profile_ready_for_service = self.collection_policy.has_serviceable_profile(user_profile)
+            profile_complete_or_exhausted = self._is_profile_collection_complete_or_exhausted(user_profile)
 
-            if profile_ready_for_service and contact_collected:
+            if profile_complete_or_exhausted and contact_collected:
                 # === 核心字段全部收集完成，收尾 ===
                 logger.info(f"[核心字段] 全部收集完成，进入统一收尾链")
 
@@ -3600,10 +3898,8 @@ class ChatService:
                 await self.user_service.save_user_profile(account_id, user_profile)
 
                 return ai_response
-            if next_action.value in {"none", "end"} and contact_collected:
-                if user_profile.rejected_phone or user_profile.rejected_wechat:
-                    return self.expectation_service.get_contact_completion_response(user_profile)
-                return self.expectation_service.get_contact_completion_response(user_profile)
+            if self.contact_service.is_contact_complete(user_profile):
+                return self._get_contact_terminal_or_resume_response(user_profile, str(user_message or ""))
             else:
                 # === 资料未达到可服务阈值，继续收集重要字段 ===
                 decision = self.collection_policy.decide(
@@ -3644,7 +3940,21 @@ class ChatService:
             "attempt": info.get("attempt"),
             "silent": bool(info.get("silent")),
         }
+        contact_type = str(info.get("field") or "contact")
+        if contact_type not in {"phone", "wechat"}:
+            last_type = str(getattr(user_profile, "last_contact_request_type", "") or "").strip()
+            contact_type = last_type if last_type in {"phone", "wechat"} else "contact"
+
+        if contact_type in {"phone", "wechat"}:
+            self.contact_service.record_invalid_input(user_profile, contact_type)
+            self.contact_service.is_contact_complete(user_profile)
+            await self.user_service.save_user_profile(account_id, user_profile)
+
         if info.get("silent"):
+            if contact_type == "wechat":
+                return self._build_contact_invalid_input_close_response("wechat")
+            if contact_type == "phone":
+                return self._build_contact_invalid_input_close_response("phone")
             return ""
 
         response = await self._generate_validation_retry_response(
@@ -3690,6 +4000,22 @@ class ChatService:
         except Exception as exc:
             logger.warning("[联系方式验证] 生成 AI 引导失败: %s", exc)
             return ""
+
+    def _build_contact_invalid_input_close_response(self, contact_type: str) -> str:
+        """连续无效输入后，停止围绕联系方式反复追问。"""
+        if contact_type == "wechat":
+            variants = [
+                "这边先不反复问你这个了，后面你要是方便再联系我哈。",
+                "这块我先不继续追了，后面你方便的话再来找我就行。",
+                "先不在这上面打转了，等你方便的时候我们再接着聊。",
+            ]
+        else:
+            variants = [
+                "这边先不反复问你这个了，后面你要是方便再联系我哈。",
+                "这块我先不继续追了，后面你方便的话再来找我就行。",
+                "先不在这上面打转了，等你方便的时候我们再接着聊。",
+            ]
+        return variants[0]
 
     async def _generate_ai_ending_response(
         self,
@@ -3839,8 +4165,77 @@ class ChatService:
     def _get_both_rejected_ending_response(self) -> str:
         return self.ending_service.get_ending_response("both_rejected") or ""
 
+    @staticmethod
+    def _has_any_contact(user_profile: UserProfile) -> bool:
+        return bool(
+            (user_profile.phone_collected and user_profile.phone)
+            or (user_profile.wechat_collected and user_profile.wechat)
+            or user_profile.collection_progress.get("contact", False)
+        )
+
+    def _is_profile_collection_complete_or_exhausted(self, user_profile: UserProfile) -> bool:
+        return self.collection_policy.is_coverage_complete(user_profile)
+
+    def _can_end_with_contact_completion(self, user_profile: UserProfile) -> bool:
+        return (
+            self._has_any_contact(user_profile)
+            and self.contact_service.is_contact_complete(user_profile)
+            and self._is_profile_collection_complete_or_exhausted(user_profile)
+        )
+
+    def _can_end_without_contact(self, user_profile: UserProfile) -> bool:
+        return (
+            not self._has_any_contact(user_profile)
+            and self.contact_service.is_contact_complete(user_profile)
+        )
+
+    def _get_no_contact_completion_response(self) -> str:
+        return "这边就先不往下追着问啦，后面你要是方便，再来找我聊就行。"
+
     def _get_contact_completion_ending_response(self, user_profile: UserProfile) -> str:
+        if not self._has_any_contact(user_profile):
+            return self._get_no_contact_completion_response()
         return self.expectation_service.get_contact_completion_response(user_profile)
+
+    def _get_contact_terminal_or_resume_response(
+        self,
+        user_profile: UserProfile,
+        user_message: str = "",
+    ) -> str:
+        """
+        联系方式流程结束后的统一出口。
+        """
+        if self._can_end_with_contact_completion(user_profile):
+            return self._get_contact_completion_ending_response(user_profile)
+        if self._can_end_without_contact(user_profile):
+            return self._get_no_contact_completion_response()
+        return self._build_post_contact_resume_response(user_profile, user_message)
+
+    def _build_post_contact_resume_response(self, user_profile: UserProfile, user_message: str = "") -> str:
+        decision = self.collection_policy.decide(
+            user_profile,
+            user_message=user_message,
+            allow_contact_target=False,
+            allow_medium_target=True,
+            prioritize_user_question=False,
+            primary_move="ack_and_ask",
+        )
+        next_field = decision.main_target
+        if next_field and next_field != "contact":
+            prompt = self._build_policy_field_prompt(next_field, user_profile, user_message=user_message).strip()
+            if prompt:
+                return prompt
+        unresolved_core_fields = self.collection_policy.get_uncovered_core_fields(user_profile)
+        if unresolved_core_fields:
+            prompt = self._build_policy_field_prompt(unresolved_core_fields[0], user_profile, user_message=user_message).strip()
+            if prompt:
+                return prompt
+        unresolved_medium_fields = self.collection_policy.get_uncovered_medium_fields(user_profile)
+        if unresolved_medium_fields:
+            prompt = self._build_policy_field_prompt(unresolved_medium_fields[0], user_profile, user_message=user_message).strip()
+            if prompt:
+                return prompt
+        return "你继续说，我顺着往下了解。"
 
     @staticmethod
     def _contains_contact_push_markers(response: str) -> bool:
@@ -3911,15 +4306,8 @@ class ChatService:
         except Exception:
             return response
 
-        has_any_contact = bool(
-            (user_profile.phone_collected and user_profile.phone)
-            or (user_profile.wechat_collected and user_profile.wechat)
-            or user_profile.collection_progress.get("contact", False)
-        )
-        if action_value in {"none", "", None, "end"} and has_any_contact and (
-            user_profile.rejected_phone or user_profile.rejected_wechat
-        ):
-            return self._get_contact_completion_ending_response(user_profile)
+        if action_value in {"none", "", None, "end"} and self.contact_service.is_contact_complete(user_profile):
+            return self._get_contact_terminal_or_resume_response(user_profile, user_message)
 
         if action_value == "ask_wechat":
             if self._response_matches_contact_action(response, "ask_wechat"):
@@ -3946,6 +4334,8 @@ class ChatService:
             return self._build_phone_persuasion_fallback()
 
         if action_value in {"none", "", None} and {"phone", "contact", "wechat"} & collected_fields:
+            if not self._can_end_with_contact_completion(user_profile):
+                return response
             if response:
                 return response
             return self._get_contact_completion_ending_response(user_profile)
@@ -4029,6 +4419,10 @@ class ChatService:
         message = (user_message or "").strip()
         if not message:
             return False
+        if any(marker in message for marker in ("电话", "手机号", "微信")) and any(
+            token in message for token in ("不方便", "不想留", "不留", "不给", "算了")
+        ):
+            return True
         return self._matches_any_pattern(message, BOUNDARY_PAUSE_PATTERNS)
 
     def _apply_contact_boundary_softening_policy(
@@ -4050,6 +4444,19 @@ class ChatService:
             action_value = getattr(next_action, "value", str(next_action))
         except Exception:
             return response
+
+        if action_value == "persuade_phone":
+            if self._response_matches_contact_action(response, "persuade_phone"):
+                return response
+            return self._build_phone_persuasion_fallback()
+
+        if action_value == "ask_phone":
+            if self._response_matches_contact_action(response, "ask_phone"):
+                return response
+            return "方便留个电话吗？后面沟通会方便些。"
+
+        if action_value == "persuade_wechat":
+            return "好，那微信这块我先不往下问了，我们先聊别的。"
 
         if action_value == "ask_wechat" and (user_profile.rejected_phone or user_profile.phone_ask_count >= 1):
             return "好，微信这块你要是现在也不想留，我们就先不碰联系方式。"
@@ -5218,15 +5625,8 @@ class ChatService:
         except Exception:
             action_value = "none"
 
-        has_any_contact = bool(
-            (user_profile.phone_collected and user_profile.phone)
-            or (user_profile.wechat_collected and user_profile.wechat)
-            or user_profile.collection_progress.get("contact", False)
-        )
-        if action_value in {"none", "end"} and has_any_contact and (
-            user_profile.rejected_phone or user_profile.rejected_wechat
-        ):
-            return self._get_contact_completion_ending_response(user_profile)
+        if action_value in {"none", "end"} and self.contact_service.is_contact_complete(user_profile):
+            return self._get_contact_terminal_or_resume_response(user_profile, message)
 
         if action_value == "ask_wechat":
             return "没关系，你要是觉得微信更方便，留个微信也可以。"
@@ -5964,7 +6364,7 @@ class ChatService:
         if (
             not opening_fields
             and not self._is_explicit_matchmaking_intent_message(message)
-            and not self.user_question_service.detect_quick_faq_intent(message)
+            and not self._detect_priority_question_intent(message)
             and not self._is_boundary_pause_triggered(message, user_profile)
             and not self._is_risk_guard_triggered(message)
             and not last_response
@@ -5976,7 +6376,7 @@ class ChatService:
             not opening_fields
             and not self._is_stable_opening_greeting(message)
             and not self._is_explicit_matchmaking_intent_message(message)
-            and not self.user_question_service.detect_quick_faq_intent(message)
+            and not self._detect_priority_question_intent(message)
             and not self._is_boundary_pause_triggered(message, user_profile)
             and not self._is_risk_guard_triggered(message)
             and not last_response
@@ -5989,18 +6389,42 @@ class ChatService:
         if (
             self._is_explicit_matchmaking_intent_message(message)
             and not opening_fields
-            and not self.user_question_service.detect_quick_faq_intent(message)
+            and not self._detect_priority_question_intent(message)
             and not self._is_boundary_pause_triggered(message, user_profile)
             and not self._is_risk_guard_triggered(message)
         ):
             return self.greeting_service.get_open_self_intro_response(seed_hint=seed_hint)
 
-        faq_intent = self.user_question_service.detect_quick_faq_intent(message)
+        message_count = 1 if last_response else 0
+        if self._should_treat_as_opening_service_confirmation(
+            user_profile,
+            stage="opening",
+            message_count=message_count,
+            user_message=message,
+            last_response=last_response,
+        ):
+            return random.choice(SERVICE_CONFIRMATION_OPENING_ACK_VARIANTS)
+
+        if self._should_treat_as_mid_service_confirmation(
+            user_profile,
+            stage="opening" if not last_response else "understanding",
+            message_count=message_count,
+            user_message=message,
+            last_response=last_response,
+        ):
+            return self._build_service_confirmation_resume_response(
+                user_profile,
+                message,
+                message_count=message_count,
+                last_response=last_response,
+            )
+
+        faq_intent = self._detect_priority_question_intent(message)
         resume_profile_collection = self._is_resume_profile_collection_message(message)
         opening_guard_intent = self.turn_intent_classifier.classify_opening_low_pressure(
             user_message=message,
             last_response=last_response,
-            message_count=1 if last_response else 0,
+            message_count=message_count,
             has_opening_fields=bool(opening_fields),
             has_faq_intent=bool(faq_intent),
             has_boundary_pause=bool(self._is_boundary_pause_triggered(message, user_profile)),
@@ -6025,7 +6449,7 @@ class ChatService:
             resume_profile_collection=(resume_profile_collection or post_answer_reentry),
         )
 
-        faq_response = self.user_question_service.get_quick_faq_response(message)
+        faq_response = self._get_priority_question_response(message, user_profile)
         if faq_response:
             return faq_response
 
@@ -6068,9 +6492,7 @@ class ChatService:
                     or user_profile.rejected_phone
                     or user_profile.rejected_wechat
                 ):
-                    if user_profile.rejected_phone or user_profile.rejected_wechat:
-                        return self._get_contact_completion_ending_response(user_profile)
-                    return self._get_contact_completion_ending_response(user_profile)
+                    return self._get_contact_terminal_or_resume_response(user_profile, message)
                 return self._build_policy_field_prompt("contact", user_profile, user_message=message)
 
         decision = self.collection_policy.decide(
@@ -6082,12 +6504,22 @@ class ChatService:
             primary_move="answer_then_pause" if faq_intent else ("soft_hold" if self._is_boundary_pause_triggered(message, user_profile) else "ack_and_ask"),
             resume_profile_collection=(resume_profile_collection or post_answer_reentry),
         )
+        unresolved_core_fields = self.collection_policy.get_uncovered_core_fields(user_profile)
+        core_resume_followup = None
+        if unresolved_core_fields:
+            next_core = unresolved_core_fields[0]
+            if self.collection_policy.can_actively_ask(user_profile, next_core):
+                core_resume_followup = self._build_policy_field_prompt(next_core, user_profile, user_message=message).strip()
         if decision.next_mode == "open_profile_repair":
             return "我大概有点了解你了，你也不用一项项回，顺着说说你现在的生活和工作状态就行。"
         if decision.next_mode in {"low_pressure_chat", "terminate_conversion"}:
+            if core_resume_followup:
+                return core_resume_followup
             ack = self._build_lightweight_field_ack_from_message(message, user_profile)
             return ack or "好，我先顺着听，你想聊什么就聊什么。"
         if decision.next_mode == "contact_hold":
+            if core_resume_followup:
+                return core_resume_followup
             ack = self._build_lightweight_field_ack_from_message(message, user_profile)
             return ack or "嗯，我知道了，我们先顺着你这句聊。"
 
@@ -6140,6 +6572,9 @@ class ChatService:
         if ack:
             return ack
 
+        if core_resume_followup:
+            return core_resume_followup
+
         if self.collection_policy.can_enter_contact(user_profile):
             return self._build_policy_field_prompt("contact", user_profile, user_message=message)
         return "你继续说，我先顺着听。"
@@ -6177,13 +6612,25 @@ class ChatService:
         user_profile = await self.user_service.get_user_profile(account_id)
         message_count = await self.dialogue_manager.get_message_count(account_id)
         asked_field = self._detect_which_field_is_asked(canonical_response)
+        pending_sex_confirmation = _extract_confirmed_sex_candidate_from_context(canonical_response)
+        profile_changed = False
+        if pending_sex_confirmation and asked_field == "sex":
+            if user_profile.pending_sex_confirmation != pending_sex_confirmation:
+                user_profile.pending_sex_confirmation = pending_sex_confirmation
+                profile_changed = True
+        elif asked_field and asked_field != "sex" and user_profile.pending_sex_confirmation:
+            user_profile.pending_sex_confirmation = None
+            profile_changed = True
         if asked_field:
             user_profile.set_last_asked_field(asked_field, message_count)
             logger.info(f"[短答槽位绑定] 记录本轮追问字段: {asked_field}, turn_index: {message_count}")
-            await self.user_service.save_user_profile(account_id, user_profile)
+            profile_changed = True
         elif user_profile.last_asked_field:
             # 如果本轮没有追问，清除上一轮记录
             user_profile.clear_last_asked_field()
+            profile_changed = True
+        if profile_changed:
+            await self.user_service.save_user_profile(account_id, user_profile)
 
     async def _build_chat_response(
         self,
@@ -6660,7 +7107,18 @@ class ChatService:
             re.search(r"(你是|是)(男生|女生|男的|女的|男|女)", last_ai)
             or "性别" in last_ai
         )
-        short_sex_answer = re.search(r"(?:你们)?\s*(男生|女生|男的|女的|男|女)\s*$", message)
+        short_sex_answer = re.search(
+            r"^\s*(?:你们)?\s*(男生|女生|男的|女的|男|女)"
+            r"(?:\s*[，,、 ]\s*(?:是的|对|嗯|好的|好))?"
+            r"(?:\s*[，,、 ]\s*(?:单身|未婚|离异|已婚|分居))?\s*$",
+            message,
+        )
+        trailing_punct_sex_answer = re.search(
+            r"^\s*(?:你们)?\s*(男生|女生|男的|女的|男|女)\s*[，,、 ]+\s*$",
+            message,
+        )
+        confirmation_context_sex = _extract_confirmed_sex_candidate_from_context(last_ai)
+        affirmative_confirmation = _is_affirmative_confirmation_answer(message)
         if sex_question_context and short_sex_answer:
             raw = short_sex_answer.group(1)
             guarded["sex"] = "男" if "男" in raw else "女"
@@ -6669,8 +7127,58 @@ class ChatService:
                 guarded.pop("partner_requirement", None)
                 logger.info("[提取保护] 性别问答上下文命中，移除本轮 partner_requirement 性别污染值")
             logger.info("[提取保护] 性别问答上下文命中，按 short answer 强制写入 sex")
+        elif sex_question_context and trailing_punct_sex_answer:
+            raw = trailing_punct_sex_answer.group(1)
+            guarded["sex"] = "男" if "男" in raw else "女"
+            logger.info("[提取保护] 性别问答上下文命中，按 trailing short answer 强制写入 sex")
+        elif confirmation_context_sex and affirmative_confirmation:
+            guarded["sex"] = confirmation_context_sex
+            logger.info("[提取保护] 性别确认上下文命中，按 affirmative answer 强制写入 sex")
 
         return guarded
+
+    def _prevent_no_repeat_hold_from_blocking_progress(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        *,
+        collection_result: Optional[Dict[str, Any]] = None,
+        user_message: str = "",
+    ) -> str:
+        text = str(response or "").strip()
+        if not text or user_profile.conversation_ended:
+            return text
+        if self._contains_contact_push_markers(text):
+            return text
+        if self._is_boundary_pause_triggered(user_message, user_profile):
+            return text
+        if self._is_risk_guard_triggered(user_message):
+            return text
+
+        no_repeat_hold_markers = (
+            "不在这上面打转",
+            "不重复绕了",
+            "继续往下聊",
+            "继续往下说",
+            "接着往下聊",
+        )
+        if not any(marker in text for marker in no_repeat_hold_markers):
+            return text
+
+        unresolved_core = self.collection_policy.get_uncovered_core_fields(user_profile)
+        if unresolved_core:
+            next_field = self.collection_policy.get_main_target(
+                user_profile,
+                can_enter_contact=False,
+                allow_contact_target=False,
+            ) or unresolved_core[0]
+            if next_field:
+                return self._build_policy_field_prompt(next_field, user_profile, user_message=user_message)
+
+        if self.collection_policy.can_enter_contact(user_profile):
+            return self._build_policy_field_prompt("contact", user_profile, user_message=user_message)
+
+        return text
 
     def _error_response(
         self,

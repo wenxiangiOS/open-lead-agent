@@ -77,6 +77,7 @@ class ContactFlowSnapshot:
     rejected_wechat: bool
     phone_ask_count: int
     wechat_ask_count: int
+    contact_complete: bool
     should_end_conversation: bool
     is_hongkong_user: bool
 
@@ -113,6 +114,7 @@ class ContactCollectionService:
     MAX_WECHAT_ASKS_HK = 2                      # 香港用户
     MAX_WECHAT_ASKS_NON_HK_WITH_PHONE = 1       # 非香港用户 + 电话已收集
     MAX_WECHAT_ASKS_NON_HK_WITHOUT_PHONE = 2    # 非香港用户 + 电话未收集
+    MAX_INVALID_INPUT_RETRIES = 3               # 第 3 次无效输入后关闭主动追问
 
     # 微信意图关键词（用户想用微信联系）
     WECHAT_INTENT_KEYWORDS: List[str] = [
@@ -235,16 +237,17 @@ class ContactCollectionService:
         Returns:
             NextAction: 下一步动作
         """
+        if self.should_end_conversation(profile):
+            return NextAction.END_CONVERSATION
+        if self.is_contact_complete(profile):
+            return NextAction.NONE
+
         # === 优先级0: 用户主动提出联系方式偏好 ===
         if self.prefers_wechat_over_phone(user_message, profile):
             logger.info("[联系方式偏好] 用户拒绝电话但愿意留微信，切换到微信流程")
             return NextAction.ASK_WECHAT
 
         is_hk = self.is_hongkong_user(profile)
-
-        # 场景1: 双方都被拒绝 → 结束对话
-        if profile.rejected_phone and profile.rejected_wechat:
-            return NextAction.END_CONVERSATION
 
         # 场景2: 微信被最终拒绝，尝试争取电话
         if profile.rejected_wechat and not profile.rejected_phone and not profile.phone_collected:
@@ -329,6 +332,8 @@ class ContactCollectionService:
 
         if self.should_end_conversation(profile):
             return ContactFlowState.CONTACT_CLOSED
+        if self.is_contact_complete(profile):
+            return ContactFlowState.CONTACT_COLLECTED if (phone_collected or wechat_collected) else ContactFlowState.CONTACT_CLOSED
         if phone_collected and wechat_collected:
             return ContactFlowState.CONTACT_COLLECTED
         if next_action == NextAction.ASK_PHONE:
@@ -361,6 +366,7 @@ class ContactCollectionService:
             rejected_wechat=bool(profile.rejected_wechat),
             phone_ask_count=int(profile.phone_ask_count),
             wechat_ask_count=int(profile.wechat_ask_count),
+            contact_complete=self.is_contact_complete(profile),
             should_end_conversation=self.should_end_conversation(profile),
             is_hongkong_user=self.is_hongkong_user(profile),
         )
@@ -368,8 +374,8 @@ class ContactCollectionService:
     # 联系方式已收集，继续收集其他字段的指令
     PROMPT_CONTINUE_OTHER_FIELDS = """
 
-【联系方式已处理完毕】
-电话/微信已收集或已拒绝，现在继续收集其他用户信息。
+【联系方式流程已完成】
+电话/微信流程已结束，现在继续收集其他用户信息。
 不要再询问联系方式，专注于继续完善重要资料（如性别、年龄、工作地、学历、职业、婚况等）。
 不要主动追问身高、体重、称呼这类低优先级字段。
 """
@@ -392,7 +398,7 @@ class ContactCollectionService:
         is_hk = self.is_hongkong_user(profile)
 
         if action == NextAction.END_CONVERSATION:
-            instruction = self.PROMPT_END_CONVERSATION
+            instruction = ""
             logger.info("[联系方式指令] 双方都被拒绝，进入显式收尾提示")
 
         elif action == NextAction.ASK_PHONE:
@@ -426,12 +432,11 @@ class ContactCollectionService:
                 instruction = self.PROMPT_PERSUADE_WECHAT
 
         elif action == NextAction.NONE:
-            # 联系方式已处理完毕（已收集或已拒绝），继续收集其他字段
-            # 检查是否有任何联系方式已收集
+            # 只有联系方式流程真的完成后，才继续收集其他字段。
             has_contact = profile.phone_collected or profile.wechat_collected
-            if has_contact:
+            if has_contact and self.is_contact_complete(profile):
                 instruction = self.PROMPT_CONTINUE_OTHER_FIELDS
-                logger.info(f"[联系方式指令] 联系方式已处理完毕，继续收集其他字段")
+                logger.info(f"[联系方式指令] 联系方式流程已完成，继续收集其他字段")
 
         return (instruction, action)
 
@@ -527,6 +532,46 @@ class ContactCollectionService:
             or (profile.wechat_collected and profile.wechat)
         )
         return profile.rejected_phone and profile.rejected_wechat and not has_any_contact
+
+    def is_contact_type_complete(self, profile: UserProfile, contact_type: str) -> bool:
+        """单项联系方式流程是否完成。"""
+        max_asks = self.get_max_asks(profile, contact_type)
+        if contact_type == 'phone':
+            effective_count = int(getattr(profile, "phone_effective_ask_count", profile.phone_ask_count) or 0)
+            invalid_closed = bool(getattr(profile, "phone_invalid_input_closed", False))
+            return bool(profile.phone_collected) or bool(profile.rejected_phone) or effective_count >= max_asks or invalid_closed
+
+        effective_count = int(getattr(profile, "wechat_effective_ask_count", profile.wechat_ask_count) or 0)
+        invalid_closed = bool(getattr(profile, "wechat_invalid_input_closed", False))
+        return bool(profile.wechat_collected) or bool(profile.rejected_wechat) or effective_count >= max_asks or invalid_closed
+
+    def is_contact_complete(self, profile: UserProfile) -> bool:
+        """联系方式流程是否完成：电话流程和微信流程都已完成。"""
+        complete = self.is_contact_type_complete(profile, 'phone') and self.is_contact_type_complete(profile, 'wechat')
+        profile.contact_complete = complete
+        return complete
+
+    def record_invalid_input(self, profile: UserProfile, contact_type: str) -> int:
+        """记录联系方式无效输入；达到上限后关闭主动追问。"""
+        if contact_type == 'phone':
+            profile.phone_invalid_input_retry_count += 1
+            if profile.phone_invalid_input_retry_count >= self.MAX_INVALID_INPUT_RETRIES:
+                profile.phone_invalid_input_closed = True
+            return profile.phone_invalid_input_retry_count
+
+        profile.wechat_invalid_input_retry_count += 1
+        if profile.wechat_invalid_input_retry_count >= self.MAX_INVALID_INPUT_RETRIES:
+            profile.wechat_invalid_input_closed = True
+        return profile.wechat_invalid_input_retry_count
+
+    def reset_invalid_input(self, profile: UserProfile, contact_type: str) -> None:
+        """成功收集后清空无效输入重试状态。"""
+        if contact_type == 'phone':
+            profile.phone_invalid_input_retry_count = 0
+            profile.phone_invalid_input_closed = False
+            return
+        profile.wechat_invalid_input_retry_count = 0
+        profile.wechat_invalid_input_closed = False
 
     # ==================== 拒绝检测方法 ====================
 
@@ -778,10 +823,12 @@ class ContactCollectionService:
         """
         if contact_type == 'phone':
             profile.phone_ask_count += 1
+            profile.phone_effective_ask_count += 1
             profile.last_contact_request_type = 'phone'
             return profile.phone_ask_count
         else:
             profile.wechat_ask_count += 1
+            profile.wechat_effective_ask_count += 1
             profile.last_contact_request_type = 'wechat'
             return profile.wechat_ask_count
 
@@ -815,9 +862,11 @@ class ContactCollectionService:
         if contact_type == 'phone':
             profile.phone = value
             profile.phone_collected = True
+            self.reset_invalid_input(profile, 'phone')
         else:
             profile.wechat = value
             profile.wechat_collected = True
+            self.reset_invalid_input(profile, 'wechat')
 
     # ==================== 辅助方法 ====================
 

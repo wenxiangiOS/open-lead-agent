@@ -81,6 +81,69 @@ def test_extract_partner_requirement_from_user_message_captures_qizhi_preference
     assert extracted == "气质"
 
 
+def test_extract_partner_requirement_from_user_message_keeps_height_and_looks_preferences():
+    extracted = ExtractionService._extract_partner_requirement_from_user_message(
+        "温柔，不要低于160，漂亮点的，其他没有了"
+    )
+
+    assert extracted == "温柔，身高不低于160，漂亮点"
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_allows_trailing_punct_sex_self_intro():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_trailing_punct_sex")
+
+    await service.process_extracted_data(
+        "user_trailing_punct_sex",
+        profile,
+        {"sex": "男"},
+        user_message="男的，",
+    )
+
+    refreshed = await user_service.get_user_profile("user_trailing_punct_sex")
+    assert refreshed.sex == "男"
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_allows_affirmative_sex_confirmation_with_last_response():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_affirmative_confirm_sex")
+
+    await service.process_extracted_data(
+        "user_affirmative_confirm_sex",
+        profile,
+        {"sex": "男"},
+        user_message="是的",
+        last_response="我再确认下，你这边是男生对吧？",
+    )
+
+    refreshed = await user_service.get_user_profile("user_affirmative_confirm_sex")
+    assert refreshed.sex == "男"
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_allows_affirmative_sex_confirmation_with_pending_state():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_affirmative_pending_sex")
+    profile.pending_sex_confirmation = "男"
+    await user_service.save_user_profile("user_affirmative_pending_sex", profile)
+
+    await service.process_extracted_data(
+        "user_affirmative_pending_sex",
+        profile,
+        {"sex": "男"},
+        user_message="是的",
+    )
+
+    refreshed = await user_service.get_user_profile("user_affirmative_pending_sex")
+    assert refreshed.sex == "男"
+    assert refreshed.pending_sex_confirmation is None
+
+
 @pytest.mark.anyio
 async def test_process_extracted_data_clears_stale_age_label_when_user_provides_exact_age():
     user_service = _FakeUserService()
@@ -120,3 +183,20 @@ async def test_process_extracted_data_does_not_pollute_occupation_with_partner_r
     assert refreshed.education == "本科"
     assert refreshed.partner_requirement == "气质"
     assert refreshed.occupation is None
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_merges_partner_requirement_without_overwriting_longer_model_value():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_partner_merge")
+
+    await service.process_extracted_data(
+        "user_partner_merge",
+        profile,
+        {"partner_requirement": "温柔，身高不低于160，长相漂亮，无其他要求"},
+        user_message="温柔，不要低于160，漂亮点的，其他没有了",
+    )
+
+    refreshed = await user_service.get_user_profile("user_partner_merge")
+    assert refreshed.partner_requirement == "温柔，身高不低于160，长相漂亮，无其他要求，漂亮点"
