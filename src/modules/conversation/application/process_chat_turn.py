@@ -661,6 +661,13 @@ class ProcessChatTurnUseCase:
             ):
                 final_response = self.chat_service._build_divorce_confirmation_response()  # noqa: SLF001
             final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+            final_response = self.chat_service._strip_false_input_error_followup(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result,
+                user_message=request.question,
+                ask_field=turn_decision.ask_field,
+            )
             final_response = self.chat_service._apply_income_appreciation_policy(  # noqa: SLF001
                 final_response,
                 user_profile,
@@ -746,6 +753,13 @@ class ProcessChatTurnUseCase:
                     request.question,
                 )
                 final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                final_response = self.chat_service._strip_false_input_error_followup(  # noqa: SLF001
+                    final_response,
+                    user_profile,
+                    collection_result,
+                    user_message=request.question,
+                    ask_field=turn_decision.ask_field,
+                )
                 final_response = self.chat_service._apply_income_appreciation_policy(  # noqa: SLF001
                     final_response,
                     user_profile,

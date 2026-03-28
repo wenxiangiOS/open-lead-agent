@@ -133,7 +133,7 @@ class TestProfileCollectionPolicy:
 
         assert decision.main_target in {"age", "education", "sex"}
 
-    def test_opening_with_location_prefers_occupation_and_can_attach_income_side_target(self):
+    def test_opening_with_location_prefers_occupation_with_income_side_target(self):
         profile = UserProfile(account_id="u_opening_location")
 
         decision = self.policy.decide(
@@ -144,6 +144,25 @@ class TestProfileCollectionPolicy:
 
         assert decision.main_target == "occupation"
         assert decision.side_target == "monthly_income"
+
+    def test_education_does_not_side_ask_partner_requirement_even_when_allowed(self):
+        profile = UserProfile(account_id="u_education_no_partner_side")
+        profile.sex = "男"
+        profile.age = 36
+        profile.location = "深圳"
+        profile.occupation = "IT"
+        profile.monthly_income = "6万"
+        for field in ["sex", "age", "location", "occupation", "monthly_income"]:
+            profile.collection_progress[field] = True
+
+        decision = self.policy.decide(
+            profile,
+            user_message="it，大概6万",
+            message_count=4,
+        )
+
+        assert decision.main_target == "education"
+        assert decision.side_target == "partner_requirement"
 
     def test_latest_location_cue_on_followup_prefers_occupation_over_global_order(self):
         profile = UserProfile(account_id="u_latest_location")

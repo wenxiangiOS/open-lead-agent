@@ -248,6 +248,26 @@ def test_extract_simple_partner_requirement_handles_modal_particle_reply():
     assert preference == "温柔"
 
 
+def test_strip_false_input_error_followup_rebuilds_when_age_was_collected():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_false_typo_guard")
+    profile.age = 36
+    profile.collection_progress["age"] = True
+
+    response = chat_service._strip_false_input_error_followup(
+        "是不是打错字啦，我看你说今年36对吧，我先记下来。你是男生还是女生呀？",
+        profile,
+        {"all_fields": [{"field": "age", "value": "36岁"}]},
+        user_message="我今年36",
+        ask_field="sex",
+    )
+
+    assert "打错字" not in response
+    assert "没看懂" not in response
+    assert "36" in response
+    assert "男生还是女生" in response
+
+
 def test_enforce_core_mainline_followup_keeps_divorce_confirmation_prompt():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_divorce_lock")
@@ -4324,6 +4344,24 @@ def test_profile_collection_policy_allows_partner_requirement_as_side_target_aft
     assert side_target == "partner_requirement"
 
 
+def test_profile_collection_policy_blocks_side_target_when_other_core_fields_remain():
+    policy = ProfileCollectionPolicy()
+    profile = UserProfile(account_id="u_policy_no_side_while_core_missing")
+    profile.age = 36
+    profile.location = "深圳"
+    profile.collection_progress.update({"age": True, "location": True})
+
+    side_target = policy.get_side_target(
+        profile,
+        main_target="education",
+        user_message="深圳",
+        message_count=6,
+        allow_medium_target=True,
+    )
+
+    assert side_target is None
+
+
 def test_profile_collection_policy_allows_marital_status_as_side_target_after_education_in_compact_stage():
     policy = ProfileCollectionPolicy()
     profile = UserProfile(account_id="u_policy_marital_side_after_education")
@@ -4946,6 +4984,25 @@ def test_format_fast_path_ack_skips_sex_confirmation():
     chat_service = _build_chat_service()
     response = chat_service._format_fast_path_ack("sex", "男")
     assert response == ""
+
+
+def test_sanitize_robotic_tone_keeps_unknown_you_are_phrase_intact():
+    cleaned = ChatService._sanitize_robotic_tone(
+        "好，你说的这些择偶要求我都记下来啦。对了，我还不知道你是男生还是女生呢？"
+    )
+
+    assert "我还不知道你是男生还是女生呢" in cleaned
+    assert "我还不你是" not in cleaned
+
+
+def test_detect_which_field_is_asked_prefers_sex_over_partner_requirement_in_mixed_question():
+    chat_service = _build_chat_service()
+
+    field = chat_service._detect_which_field_is_asked(
+        "你大概是什么学历呀？平时更看重另一半哪一点，也可以一起说说。对了，我还不知道你是男生还是女生呢？"
+    )
+
+    assert field == "sex"
 
 
 class TestShortAnswerDetection:

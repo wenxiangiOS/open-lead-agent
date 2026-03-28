@@ -200,3 +200,24 @@ async def test_process_extracted_data_merges_partner_requirement_without_overwri
 
     refreshed = await user_service.get_user_profile("user_partner_merge")
     assert refreshed.partner_requirement == "温柔，身高不低于160，长相漂亮，无其他要求，漂亮点"
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_does_not_mix_education_into_partner_requirement_when_same_turn_contains_both():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_partner_education_mix")
+
+    await service.process_extracted_data(
+        "user_partner_education_mix",
+        profile,
+        {
+            "education": "本科",
+            "partner_requirement": "本科，苗条漂亮，身高至少160",
+        },
+        user_message="本科，苗条，漂亮，至少160",
+    )
+
+    refreshed = await user_service.get_user_profile("user_partner_education_mix")
+    assert refreshed.education == "本科"
+    assert refreshed.partner_requirement == "苗条漂亮，身高至少160"

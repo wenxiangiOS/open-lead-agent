@@ -448,24 +448,24 @@ class ExtractionService:
             compact_message,
         )
 
-        values: List[str] = []
+        values_with_pos: List[tuple[int, str]] = []
         patterns = [
             r"(年龄不超过\d{1,2}岁)",
             r"(不超过\d{1,2}岁)",
             r"(\d{1,2}岁以下)",
             r"(年龄至少\d{1,3})",
-            r"(温柔(?:一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?)",
-            r"(温柔就行(?:了)?(?:吧|呀|呢)?)",
-            r"(性格好就行(?:了)?(?:吧|呀|呢)?)",
-            r"(聊得来就行(?:了)?(?:吧|呀|呢)?)",
-            r"(合适就行(?:了)?(?:吧|呀|呢)?)",
-            r"(人好就行(?:了)?(?:吧|呀|呢)?)",
             r"(身高至少\d{2,3})",
             r"(身高不低于\d{2,3})",
             r"(不要低于\d{2,3})",
             r"(别低于\d{2,3})",
             r"(不低于\d{2,3})",
             r"(至少\d{2,3})",
+            r"(温柔(?:一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?)",
+            r"(温柔就行(?:了)?(?:吧|呀|呢)?)",
+            r"(性格好就行(?:了)?(?:吧|呀|呢)?)",
+            r"(聊得来就行(?:了)?(?:吧|呀|呢)?)",
+            r"(合适就行(?:了)?(?:吧|呀|呢)?)",
+            r"(人好就行(?:了)?(?:吧|呀|呢)?)",
             r"(气质(?:好|佳)?(?:一点|些)?(?:的)?)",
             r"(漂亮点(?:的)?)",
             r"(长相漂亮)",
@@ -475,17 +475,17 @@ class ExtractionService:
             r"(三观合拍)",
         ]
         for pattern in patterns:
-            matches = re.findall(pattern, compact_message)
-            for matched in matches:
+            for match in re.finditer(pattern, compact_message):
+                matched = match.group(1)
                 cleaned = str(matched).strip("，,。；; ")
-                if cleaned and cleaned not in values:
-                    values.append(cleaned)
+                if cleaned:
+                    values_with_pos.append((match.start(1), cleaned))
 
-        if not values:
+        if not values_with_pos:
             return None
 
-        normalized: List[str] = []
-        for value in values:
+        normalized_with_pos: List[tuple[int, str]] = []
+        for pos, value in values_with_pos:
             value = re.sub(r"^不超过(\d{1,2})岁$", r"年龄不超过\1岁", value)
             value = re.sub(r"^(\d{1,2})岁以下$", r"年龄不超过\1岁", value)
             value = re.sub(r"^至少(\d{2,3})$", r"身高至少\1", value)
@@ -500,8 +500,13 @@ class ExtractionService:
             value = re.sub(r"^(漂亮点)(?:的)?$", r"\1", value)
             value = re.sub(r"^长相漂亮$", r"漂亮点", value)
             value = re.sub(r"^(好看点)(?:的)?$", r"\1", value)
-            if value not in normalized:
-                normalized.append(value)
+            existing_index = next((idx for idx, (_p, existing) in enumerate(normalized_with_pos) if existing == value), None)
+            if existing_index is None:
+                normalized_with_pos.append((pos, value))
+            else:
+                existing_pos, existing_value = normalized_with_pos[existing_index]
+                if pos < existing_pos:
+                    normalized_with_pos[existing_index] = (pos, existing_value)
 
         preference_match = re.search(
             r"(?:看中|看重|更看重|比较看重|喜欢|偏向|希望).{0,8}(?:对方|另一半)?(.{0,8}气质)",
@@ -511,10 +516,50 @@ class ExtractionService:
             preference_value = preference_match.group(1).strip("，,。；; ")
             preference_value = re.sub(r"^(对方|另一半)", "", preference_value)
             preference_value = re.sub(r"(吧|呀|呢|啊)$", "", preference_value).strip()
-            if preference_value and preference_value not in normalized:
-                normalized.append(preference_value)
+            if preference_value:
+                preference_value = ExtractionService._normalize_partner_requirement_part(preference_value)
+                existing_index = next((idx for idx, (_p, existing) in enumerate(normalized_with_pos) if existing == preference_value), None)
+                if existing_index is None:
+                    normalized_with_pos.append((len(compact_message), preference_value))
 
+        normalized = [value for _, value in sorted(normalized_with_pos, key=lambda item: item[0])]
         return "，".join(normalized)
+
+    @staticmethod
+    def _normalize_partner_requirement_part(part: str) -> str:
+        value = str(part or "").strip()
+        value = re.sub(r"^(?:看中|看重|更看重|比较看重|喜欢|偏向|希望)(?:对方|另一半)?", "", value)
+        value = re.sub(r"^(?:对方|另一半)", "", value)
+        value = value.strip("，,。；; ")
+        if "气质" in value:
+            return "气质"
+        return value
+
+    @staticmethod
+    def _should_skip_partner_requirement_part(
+        part: str,
+        user_message: str,
+        extracted_data: Dict[str, Any],
+    ) -> bool:
+        clean_part = str(part or "").strip()
+        if not clean_part:
+            return True
+        clean_part = ExtractionService._normalize_partner_requirement_part(clean_part)
+
+        education_value = str((extracted_data or {}).get("education") or "").strip()
+        looks_like_education = bool(
+            re.fullmatch(
+                r"(?:本科|大专|硕士|博士|研究生|中专|高中)(?:以上|及以上)?",
+                clean_part,
+            )
+        )
+        has_explicit_preference_marker = bool(
+            re.search(r"(另一半|对方|择偶|想找|希望|要求|看重)", str(user_message or ""))
+        )
+        if looks_like_education and education_value and clean_part == education_value and not has_explicit_preference_marker:
+            return True
+
+        return False
 
     @staticmethod
     def _looks_like_partner_requirement_content(value: Any) -> bool:
@@ -806,12 +851,22 @@ class ExtractionService:
                         else:
                             merged_parts: List[str] = []
                             for part in re.split(r"[，,、]+", model_value):
-                                clean_part = str(part).strip()
-                                if clean_part and clean_part not in merged_parts:
+                                clean_part = self._normalize_partner_requirement_part(part)
+                                if self._should_skip_partner_requirement_part(clean_part, user_message, extracted_data):
+                                    continue
+                                if clean_part and not any(
+                                    clean_part in existing or existing in clean_part
+                                    for existing in merged_parts
+                                ):
                                     merged_parts.append(clean_part)
                             for part in re.split(r"[，,、]+", user_message_preferred_value):
-                                clean_part = str(part).strip()
-                                if clean_part and clean_part not in merged_parts:
+                                clean_part = self._normalize_partner_requirement_part(part)
+                                if self._should_skip_partner_requirement_part(clean_part, user_message, extracted_data):
+                                    continue
+                                if clean_part and not any(
+                                    clean_part in existing or existing in clean_part
+                                    for existing in merged_parts
+                                ):
                                     merged_parts.append(clean_part)
                             value = "，".join(merged_parts)
 

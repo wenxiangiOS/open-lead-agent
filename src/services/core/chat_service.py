@@ -2026,7 +2026,15 @@ class ChatService:
             current_ask_field,
             next_field,
         )
-        if next_field in {"education", "occupation"} and decision.side_target and allow_medium_target:
+        if (
+            next_field in {"education", "occupation"}
+            and self._should_allow_interleaving_followup(
+                user_profile,
+                next_field,
+                decision.side_target,
+                allow_medium_target=allow_medium_target,
+            )
+        ):
             return self._build_interleaving_followup(
                 user_profile,
                 user_message,
@@ -2107,13 +2115,20 @@ class ChatService:
                 sorted(repeated_fields),
                 decision.main_target,
             )
-            return self._build_interleaving_followup(
+            if self._should_allow_interleaving_followup(
                 user_profile,
-                user_message,
-                main_target=decision.main_target,
-                preferred_side_target=decision.side_target,
+                decision.main_target,
+                decision.side_target,
                 allow_medium_target=allow_medium_target,
-            )
+            ):
+                return self._build_interleaving_followup(
+                    user_profile,
+                    user_message,
+                    main_target=decision.main_target,
+                    preferred_side_target=decision.side_target,
+                    allow_medium_target=allow_medium_target,
+                )
+            return self._build_policy_field_prompt(decision.main_target, user_profile, user_message=user_message)
 
         forced_target = decision.forced_cover_target
         if forced_target and self.collection_policy.can_actively_ask(user_profile, forced_target):
@@ -3421,18 +3436,6 @@ class ChatService:
             if re.search(pattern, detection_text):
                 return "monthly_income"
 
-        partner_requirement_patterns = [
-            r"另一半",
-            r"有什么要求",
-            r"看重哪",
-            r"更在意哪",
-            r"想找个什么样",
-            r"择偶",
-        ]
-        for pattern in partner_requirement_patterns:
-            if re.search(pattern, detection_text):
-                return "partner_requirement"
-
         # 性别
         sex_patterns = [
             r"男生还是女生",
@@ -3448,6 +3451,18 @@ class ChatService:
         for pattern in sex_patterns:
             if re.search(pattern, detection_text):
                 return "sex"
+
+        partner_requirement_patterns = [
+            r"另一半",
+            r"有什么要求",
+            r"看重哪",
+            r"更在意哪",
+            r"想找个什么样",
+            r"择偶",
+        ]
+        for pattern in partner_requirement_patterns:
+            if re.search(pattern, detection_text):
+                return "partner_requirement"
 
         # 年龄
         age_patterns = [
@@ -4196,6 +4211,23 @@ class ChatService:
         if not self._has_any_contact(user_profile):
             return self._get_no_contact_completion_response()
         return self.expectation_service.get_contact_completion_response(user_profile)
+
+    def _should_allow_interleaving_followup(
+        self,
+        user_profile: UserProfile,
+        main_target: Optional[str],
+        preferred_side_target: Optional[str],
+        *,
+        allow_medium_target: bool,
+    ) -> bool:
+        if not allow_medium_target or not main_target or not preferred_side_target:
+            return False
+        high_risk_blocked_pairs = {
+            ("education", "partner_requirement"),
+        }
+        if (main_target, preferred_side_target) in high_risk_blocked_pairs:
+            return False
+        return True
 
     def _get_contact_terminal_or_resume_response(
         self,
@@ -5502,13 +5534,22 @@ class ChatService:
             conversation_context=conversation_context,
         )
         if not rewritten:
-            fallback = self._build_interleaving_followup(
+            fallback_side_target = next(iter(side_targets)) if side_targets else None
+            if self._should_allow_interleaving_followup(
                 user_profile,
-                user_message,
-                main_target=main_target,
-                preferred_side_target=next(iter(side_targets)) if side_targets else None,
+                main_target,
+                fallback_side_target,
                 allow_medium_target=turn_decision.allow_medium_target,
-            ).strip()
+            ):
+                fallback = self._build_interleaving_followup(
+                    user_profile,
+                    user_message,
+                    main_target=main_target,
+                    preferred_side_target=fallback_side_target,
+                    allow_medium_target=turn_decision.allow_medium_target,
+                ).strip()
+            else:
+                fallback = self._build_policy_field_prompt(main_target, user_profile, user_message=user_message).strip()
             if fallback:
                 if extract_block:
                     return f"{fallback}\n{extract_block}"
@@ -5690,8 +5731,13 @@ class ChatService:
         )
         if (
             asks_core_only
-            and policy_decision.side_target
             and policy_decision.main_target in {"education", "occupation"}
+            and self._should_allow_interleaving_followup(
+                user_profile,
+                policy_decision.main_target,
+                policy_decision.side_target,
+                allow_medium_target=allow_medium_target,
+            )
         ):
             return self._build_interleaving_followup(
                 user_profile,
@@ -5701,7 +5747,12 @@ class ChatService:
                 allow_medium_target=allow_medium_target,
             )
 
-        if recent_core_streak >= 3 and asks_core_only:
+        if recent_core_streak >= 3 and asks_core_only and self._should_allow_interleaving_followup(
+            user_profile,
+            policy_decision.main_target,
+            policy_decision.side_target,
+            allow_medium_target=allow_medium_target,
+        ):
             return self._build_interleaving_followup(
                 user_profile,
                 user_message,
@@ -5825,6 +5876,12 @@ class ChatService:
             effective_ask_field in {"education", "occupation"}
             and approved_side_target
             and approved_side_target in asked_fields
+            and self._should_allow_interleaving_followup(
+                user_profile,
+                effective_ask_field,
+                approved_side_target,
+                allow_medium_target=True,
+            )
         ):
             return self._build_interleaving_followup(
                 user_profile,
@@ -5851,7 +5908,16 @@ class ChatService:
             return self._build_divorce_confirmation_response()
 
         if asks_wrong_field or is_empty_hold or not asked_fields:
-            if effective_ask_field in {"education", "occupation"} and approved_side_target:
+            if (
+                effective_ask_field in {"education", "occupation"}
+                and approved_side_target
+                and self._should_allow_interleaving_followup(
+                    user_profile,
+                    effective_ask_field,
+                    approved_side_target,
+                    allow_medium_target=True,
+                )
+            ):
                 return self._build_interleaving_followup(
                     user_profile,
                     user_message,
@@ -6740,6 +6806,47 @@ class ChatService:
             logger.info("[话术合规] 已替换禁语表达，避免出现见面/发资料承诺")
         return text
 
+    def _strip_false_input_error_followup(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        collection_result: Optional[Dict[str, Any]],
+        *,
+        user_message: str,
+        ask_field: Optional[str],
+    ) -> str:
+        """本轮已经稳定提取到资料时，不再把用户正常输入说成错字/没看懂。"""
+        text = str(response or "").strip()
+        if not text:
+            return text
+
+        typo_markers = ("打错字", "没看懂", "看不懂", "没太看懂", "乱码", "手滑")
+        if not any(marker in text for marker in typo_markers):
+            return text
+
+        extracted_fields = [
+            item.get("field")
+            for item in (collection_result or {}).get("all_fields", [])
+            if isinstance(item, dict) and item.get("field")
+        ]
+        if not extracted_fields:
+            return text
+
+        # 只有本轮已经拿到了明确资料时，才压掉“是不是打错字/没看懂”这类误判。
+        if not any(field in {"sex", "age", "age_label", "location", "education", "occupation", "monthly_income", "partner_requirement"} for field in extracted_fields):
+            return text
+
+        followup = self._build_policy_field_prompt(ask_field, user_profile, user_message=user_message).strip() if ask_field else ""
+        ack = self._build_opening_profile_ack_from_message(user_message) or self._build_lightweight_field_ack_from_message(
+            user_message,
+            user_profile,
+        )
+        if not ack and "age" in extracted_fields and user_profile.age:
+            ack = f"好，{self._render_age_value(str(user_profile.age))}我知道了。"
+
+        rebuilt = " ".join(part for part in (ack, followup) if part).strip()
+        return rebuilt or text
+
     @staticmethod
     def _sanitize_robotic_tone(response: str) -> str:
         """压掉明显的登记腔、客服腔和业务身份腔。"""
@@ -6774,7 +6881,6 @@ class ChatService:
         text = re.sub(r"我先按([^，。！？!?]+)记(着|下|哈)?", r"\1是吧", text)
         text = re.sub(r"我先按([^，。！？!?]+)理解", r"\1是吧", text)
         text = re.sub(r"那我先按([^，。！？!?]+)记(着|下|哈)?", r"\1是吧", text)
-        text = re.sub(r"知道你是", "你是", text)
         text = re.sub(r"我知道了来你是", "我知道了，你是", text)
         text = re.sub(r"我知道了你是", "你是", text)
         text = re.sub(r"(好的|好呀|好哒)，?你是", r"\1，你是", text)
