@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict
 from uuid import uuid4
 
 from src.models.requests import ChatRequest
+from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingInput
 from src.modules.shared.models.use_case_models import ProcessChatTurnCommand, ProcessChatTurnResult
 
 if TYPE_CHECKING:
@@ -52,6 +53,14 @@ class ProcessChatTurnUseCase:
             timestamp=request.timestamp,
         )
 
+    @staticmethod
+    def _normalize_rule_extracted_fields(extracted: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = dict(extracted or {})
+        age_value = normalized.get("age")
+        if isinstance(age_value, str) and age_value.isdigit():
+            normalized["age"] = int(age_value)
+        return normalized
+
     async def execute_command(self, command: ProcessChatTurnCommand) -> ProcessChatTurnResult:
         payload = await self.execute(command)
         return ProcessChatTurnResult(
@@ -78,6 +87,7 @@ class ProcessChatTurnUseCase:
         extracted_fields_count = 0
         route_name = "unknown"
         response_channel = "unknown"
+        turn_understanding = None
 
         def _mark(stage: str, begin: float) -> None:
             stage_ms[stage] = int((time.perf_counter() - begin) * 1000)
@@ -100,6 +110,8 @@ class ProcessChatTurnUseCase:
             if not isinstance(meta, dict):
                 meta = {}
             meta["route"] = route
+            if turn_understanding is not None:
+                meta["turn_understanding"] = turn_understanding.to_dict()
             payload["meta"] = meta
             return payload
 
@@ -167,15 +179,28 @@ class ProcessChatTurnUseCase:
             _mark("context_load", t0)
             recent_responses = conversation_context.get("recent_responses") or []
             last_response = str(recent_responses[-1]).strip() if recent_responses else ""
+            turn_understanding = self.chat_service.turn_understanding_service.analyze(
+                TurnUnderstandingInput(
+                    user_message=request.question,
+                    last_response=last_response,
+                    message_count=message_count,
+                    user_profile=user_profile,
+                    conversation_context=conversation_context,
+                    in_contact_flow=self.chat_service._has_active_contact_context(user_profile, user_message=request.question),  # noqa: SLF001
+                    pending_confirmation_field="sex" if getattr(user_profile, "pending_sex_confirmation", None) else None,
+                )
+            )
             decision_profile = self.chat_service._build_shadow_profile_for_decision(  # noqa: SLF001
                 user_profile,
                 request.question,
                 last_response=last_response,
+                understanding_result=turn_understanding,
             )
             turn_decision = self.chat_service._build_turn_decision(  # noqa: SLF001
                 request.question,
                 decision_profile,
                 conversation_context=conversation_context,
+                understanding_result=turn_understanding,
             )
             response_channel = turn_decision.response_channel
             logger.info(f"[决策器] account_id={account_id}, decision={turn_decision.to_log_dict()}")
@@ -219,7 +244,7 @@ class ProcessChatTurnUseCase:
             await self.chat_service._handle_refusal_detection(request.question, account_id, user_profile)  # noqa: SLF001
             _mark("refusal_detection", t0)
 
-            if response_channel == "quick_faq":
+            if response_channel == "quick_faq" and turn_decision.intent not in {"boundary", "complaint"}:
                 final_response = self.chat_service._get_priority_question_response(  # noqa: SLF001
                     request.question,
                     decision_profile,
@@ -511,11 +536,14 @@ class ProcessChatTurnUseCase:
                 ai_extracted_data = {}
             else:
                 ai_extracted_data = self.chat_service.extraction_service.extract_json_from_response(ai_response)
-            rule_extracted_data = self.chat_service._extract_deterministic_profile_fields(request.question)  # noqa: SLF001
+            rule_extracted_data = self._normalize_rule_extracted_fields(
+                self.chat_service.turn_understanding_service._extract_deterministic_profile_fields(request.question)  # noqa: SLF001
+            )
             extracted_data, extraction_meta = self.chat_service._fuse_extracted_fields(  # noqa: SLF001
                 ai_extracted_data,
                 rule_extracted_data,
                 request.question,
+                understanding_result=turn_understanding,
             )
             if not extracted_data.get("partner_requirement"):
                 pref = self.chat_service._extract_simple_partner_requirement(request.question)  # noqa: SLF001
@@ -538,6 +566,7 @@ class ProcessChatTurnUseCase:
                 request.question,
                 extraction_meta=extraction_meta,
                 turn_id=message_count + 1,
+                understanding_result=turn_understanding,
             )
             collection_result = profile_result.collection_result
             _mark("collection_process", t0)
@@ -556,7 +585,35 @@ class ProcessChatTurnUseCase:
             _ = self.chat_service.profile_collection_coordinator.build_contact_decision(user_profile, request.question)
             preset_response = str(collection_result.get("response") or "").strip()
             if preset_response:
-                enhanced_response = preset_response
+                final_response = self.chat_service._clean_response(preset_response)  # noqa: SLF001
+                final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                field_ask_count_before = dict(user_profile.field_ask_count) if user_profile.field_ask_count else {}
+                t0 = time.perf_counter()
+                await self.chat_service._update_conversation_state(  # noqa: SLF001
+                    account_id,
+                    request.question,
+                    final_response,
+                    final_response,
+                    track_asked_fields=False,
+                )
+                _mark("state_update", t0)
+                t0 = time.perf_counter()
+                user_profile = await self.chat_service.user_service.get_user_profile(account_id)
+                _mark("profile_reload", t0)
+                route_name = "preset_response"
+                payload = await self.chat_service._build_chat_response(  # noqa: SLF001
+                    account_id,
+                    user_profile,
+                    final_response,
+                    collection_result,
+                    request.dialogId,
+                    field_ask_count_before,
+                    response_route=route_name,
+                )
+                payload = self._sync_payload_response(payload, final_response)
+                payload = _attach_route_meta(payload, route_name)
+                _log_turn(route_name, True)
+                return payload
             else:
                 enhanced_response = await self.chat_service._handle_contact_validation(  # noqa: SLF001
                     account_id,

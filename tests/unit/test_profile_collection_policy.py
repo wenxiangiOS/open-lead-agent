@@ -145,6 +145,21 @@ class TestProfileCollectionPolicy:
         assert decision.main_target == "occupation"
         assert decision.side_target == "monthly_income"
 
+    def test_followup_with_education_allows_early_marital_side_target(self):
+        profile = UserProfile(account_id="u_followup_education_marital")
+        profile.sex = "男"
+        profile.collection_progress["sex"] = True
+
+        decision = self.policy.decide(
+            profile,
+            user_message="本科",
+            message_count=2,
+        )
+
+        assert decision.main_target in {"age", "location", "occupation", "education"}
+        if decision.main_target == "occupation":
+            assert decision.side_target in {"monthly_income", "marital_status", "partner_requirement"}
+
     def test_education_does_not_side_ask_partner_requirement_even_when_allowed(self):
         profile = UserProfile(account_id="u_education_no_partner_side")
         profile.sex = "男"

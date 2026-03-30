@@ -138,6 +138,10 @@ class UserProfile(BaseModel):
         default_factory=list,
         description="最近 5 轮收集的语义槽（用于去重，如 partner_pref_location, partner_pref_age）"
     )
+    recent_response_openings: List[str] = Field(
+        default_factory=list,
+        description="最近 5 轮 assistant 回复开头签名，用于避免重复使用同一开场骨架"
+    )
     age_under_limit: bool = Field(default=False, description="年龄是否低于服务限制（24岁以下）")
     lgbt_user: bool = Field(default=False, description="是否是LGBT用户（同性恋/百合）")
     already_married: bool = Field(default=False, description="用户是否已婚")

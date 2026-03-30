@@ -402,15 +402,14 @@
 - FAQ 开场
 - 资料开场
 - 边界/联系方式拒绝
-- 广告
-- 混合意图
 
-其中新增重点样例：
+---
 
-- `你好呀，在吗呀呀呀？`
-- `你好呀，在吗在吗呀呀呀？`
-- `你好呀，坏呼叫`
-- `我问问你情况呢`
+## 相关文档
+
+统一单轮理解的完整重构方案、当前实现边界说明和后续开发约束，已迁移到：
+
+- [09_TURN_UNDERSTANDING_REFACTOR_DESIGN.md](/Users/eric/Desktop/doubao_mcp_server/docs/09_TURN_UNDERSTANDING_REFACTOR_DESIGN.md)
 
 ## 最终结论
 

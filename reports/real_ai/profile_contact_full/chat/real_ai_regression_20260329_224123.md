@@ -1,20 +1,20 @@
 # 真实 AI 回归报告
 
-- 开始时间: 2026-03-30T17:28:51
-- 结束时间: 2026-03-30T18:09:02
+- 开始时间: 2026-03-29T21:59:15
+- 结束时间: 2026-03-29T22:41:23
 - 场景源: `/Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios`
 - 总场景: 114
-- 通过: 92
-- 失败: 22
-- 总耗时: 2410.606s
-- 平均耗时: 21.146s
-- 最长耗时: 187.205s
-- Token: 685475 (调用 112 次)
+- 通过: 87
+- 失败: 27
+- 总耗时: 2528.455s
+- 平均耗时: 22.179s
+- 最长耗时: 191.099s
+- Token: 685754 (调用 115 次)
 
 ## 失败归因汇总
 
 - `profile_or_state`: 3
-- `response_content`: 26
+- `response_content`: 31
 
 ## 结果概览
 
@@ -61,8 +61,8 @@
 - `PASS` `listener_first_opening_clarify_then_soft_intent_self_intro` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, opening_clarify, open_self_intro`
 - `FAIL` `listener_first_noisy_greeting_probe_intent` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, opening_greeting`
 - `PASS` `listener_first_noisy_greeting_clarify` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, opening_clarify`
-- `PASS` `listener_first_opening_probe_particle_soft_intent_self_intro` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, opening_clarify, open_self_intro`
-- `PASS` `listener_first_opening_probe_xiankan_soft_intent_self_intro` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, opening_clarify, open_self_intro`
+- `FAIL` `listener_first_opening_probe_particle_soft_intent_self_intro` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, opening_clarify, open_self_intro`
+- `FAIL` `listener_first_opening_probe_xiankan_soft_intent_self_intro` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, opening_clarify, open_self_intro`
 - `FAIL` `listener_first_opening_probe_wenwen_qingkuang_prefix_self_intro` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, open_self_intro`
 - `FAIL` `listener_first_opening_probe_wo_wenwen_qingkuang_self_intro` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, open_self_intro`
 - `PASS` `listener_first_opening_faq_does_not_collect_fields` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, faq`
@@ -75,7 +75,7 @@
 - `PASS` `listener_first_boundary_ack_before_pause` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, boundary`
 - `PASS` `listener_first_reliability_then_answer` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, reliability`
 - `PASS` `listener_first_privacy_then_answer` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, privacy`
-- `PASS` `listener_first_explicit_matchmaking_enters_mainline` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, intent`
+- `FAIL` `listener_first_explicit_matchmaking_enters_mainline` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, intent`
 - `PASS` `listener_first_explicit_matchmaking_allows_open_self_intro` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, intent, open_self_intro`
 - `PASS` `listener_first_multi_profile_no_mechanical_repeat` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, multi_profile`
 - `PASS` `listener_first_matchmaking_then_multi_profile_stays_contextual` | category=`humanlike_listener_first` | tags=`critical, humanlike, listener_first, intent, multi_profile`
@@ -89,7 +89,7 @@
 - `FAIL` `humanlike_service_confirmation_mid_conversation_resumes_mainline` | category=`humanlike_mainline` | tags=`critical, humanlike, mainline, faq, resume_mainline`
 - `PASS` `humanlike_transition_natural_field_switch` | category=`humanlike_transition` | tags=`transition, critical`
 - `PASS` `humanlike_transition_with_feedback` | category=`humanlike_transition` | tags=`transition`
-- `PASS` `humanlike_memory_reuse_occupation` | category=`humanlike_memory` | tags=`memory`
+- `FAIL` `humanlike_memory_reuse_occupation` | category=`humanlike_memory` | tags=`memory`
 - `PASS` `humanlike_shadow_profile_location_to_occupation_bridge` | category=`humanlike_memory` | tags=`critical, memory, shadow_profile, bridge`
 - `PASS` `humanlike_occupation_income_main_slot_prefers_occupation` | category=`humanlike_transition` | tags=`critical, transition, side_target`
 - `PASS` `humanlike_age_collected_then_gender_marital_should_not_reask_age` | category=`humanlike_transition` | tags=`critical, no_repeat, bridge_guard`
@@ -124,7 +124,7 @@
 - `PASS` `policy_memory_reuse_preference` | category=`policy_memory` | tags=`memory, reuse`
 - `PASS` `policy_low_info_huitouzaishuo_pause` | category=`policy_low_info` | tags=`critical, low_info`
 - `PASS` `policy_mixed_answer_and_faq` | category=`policy_mixed` | tags=`critical, mixed, faq`
-- `PASS` `policy_opening_location_occupation_prefers_low_pressure_core` | category=`policy_opening` | tags=`critical, opening, contextual_target`
+- `FAIL` `policy_opening_location_occupation_prefers_low_pressure_core` | category=`policy_opening` | tags=`critical, opening, contextual_target`
 - `PASS` `policy_opening_location_occupation_fee_answers_first` | category=`policy_opening` | tags=`critical, opening, mixed, faq`
 - `PASS` `policy_latest_location_followup_prefers_occupation` | category=`policy_opening` | tags=`critical, contextual_target, followup`
 - `PASS` `policy_opening_multi_field_shadow_profile_skips_location_age` | category=`policy_opening` | tags=`critical, opening, shadow_profile, multi_field`
@@ -191,7 +191,7 @@
     AI: 这个不会一上来就直接加对方微信，前面会先把双方情况沟通清楚；后面如果真要继续，也会先和你确认
 - 对话回放:
   - Turn 1 用户: 找对象
-    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
   - Turn 2 用户: 可以直接加对方微信吗
     AI: 这个不会一上来就直接加对方微信，前面会先把双方情况沟通清楚；后面如果真要继续，也会先和你确认
 
@@ -229,7 +229,7 @@
 - 失败轮次精简回放:
 - 对话回放:
   - Turn 1 用户: 想找深圳的男生
-    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
+    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
 
 ### listener_first_greeting_probe_intent
 
@@ -259,13 +259,13 @@
 - 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
 - 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json --scenario-id listener_first_zaima_probe_intent --verbose`
 - 失败摘要:
-  - [final_response_contains_any] turn=1 final_response 需要包含任一关键词 ['在呢', '在呀', '找对象', '了解下']，实际 '好，那你先简单讲讲你现在的大概情况，我顺着了解'
+  - [final_response_contains_any] turn=1 final_response 需要包含任一关键词 ['在呢', '在呀', '找对象', '了解下']，实际 '好，你也可以先简单介绍下自己，我顺着了解会更自然一点'
 - 失败轮次精简回放:
   - Turn 1 用户: 在吗
-    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
 - 对话回放:
   - Turn 1 用户: 在吗
-    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
 
 ### listener_first_noisy_greeting_probe_intent
 
@@ -277,13 +277,53 @@
 - 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
 - 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json --scenario-id listener_first_noisy_greeting_probe_intent --verbose`
 - 失败摘要:
-  - [final_response_contains_any] turn=1 final_response 需要包含任一关键词 ['找对象', '了解下', '看看情况', '问问情况']，实际 '好，那你先简单讲讲你现在的大概情况，我顺着了解'
+  - [final_response_contains_any] turn=1 final_response 需要包含任一关键词 ['找对象', '了解下', '看看情况', '问问情况']，实际 '好，你也可以先简单介绍下自己，我顺着了解会更自然一点'
 - 失败轮次精简回放:
   - Turn 1 用户: 你好呀，在吗在吗呀呀呀？
-    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
 - 对话回放:
   - Turn 1 用户: 你好呀，在吗在吗呀呀呀？
+    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
+
+### listener_first_opening_probe_particle_soft_intent_self_intro
+
+- 场景文件: `/Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json`
+- 分类: `humanlike_listener_first`
+- 标签: `critical, humanlike, listener_first, opening_clarify, open_self_intro`
+- 描述: 开场探询后，用户回复“先了解下呢”这类带语气词的软意图，下一轮仍应给开放自述入口，不应直接切字段。
+- 断言通过: 2/3
+- 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
+- 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json --scenario-id listener_first_opening_probe_particle_soft_intent_self_intro --verbose`
+- 失败摘要:
+  - [response_contains_any] turn=1 turn=1 需要包含任一关键词 ['找对象', '了解下', '聊聊', '情况']，实际 '行呀，那你可以先简单说说自己，我顺着了解会更顺一点'
+- 失败轮次精简回放:
+  - Turn 1 用户: 你好
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
+- 对话回放:
+  - Turn 1 用户: 你好
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
+  - Turn 2 用户: 先了解下呢
     AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+
+### listener_first_opening_probe_xiankan_soft_intent_self_intro
+
+- 场景文件: `/Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json`
+- 分类: `humanlike_listener_first`
+- 标签: `critical, humanlike, listener_first, opening_clarify, open_self_intro`
+- 描述: 开场探询后，用户回复“我先看看”这类观望表达，下一轮应先邀请用户简单介绍自己，而不是直接盘问资料。
+- 断言通过: 2/3
+- 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
+- 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json --scenario-id listener_first_opening_probe_xiankan_soft_intent_self_intro --verbose`
+- 失败摘要:
+  - [response_contains_any] turn=1 turn=1 需要包含任一关键词 ['找对象', '了解下', '聊聊', '情况']，实际 '行呀，那你可以先简单说说自己，我顺着了解会更顺一点'
+- 失败轮次精简回放:
+  - Turn 1 用户: 你好
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
+- 对话回放:
+  - Turn 1 用户: 你好
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
+  - Turn 2 用户: 我先看看
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
 
 ### listener_first_opening_probe_wenwen_qingkuang_prefix_self_intro
 
@@ -295,15 +335,15 @@
 - 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
 - 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json --scenario-id listener_first_opening_probe_wenwen_qingkuang_prefix_self_intro --verbose`
 - 失败摘要:
-  - [response_contains_any] turn=1 turn=1 需要包含任一关键词 ['找对象', '了解下', '问问情况', '聊聊']，实际 '好，你也可以先简单介绍下自己，我顺着了解会更自然一点'
+  - [response_contains_any] turn=1 turn=1 需要包含任一关键词 ['找对象', '了解下', '问问情况', '聊聊']，实际 '好，那你先简单讲讲你现在的大概情况，我顺着了解'
 - 失败轮次精简回放:
   - Turn 1 用户: 你好
-    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
+    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
 - 对话回放:
   - Turn 1 用户: 你好
-    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
-  - Turn 2 用户: 就是想先问问情况呢
     AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+  - Turn 2 用户: 就是想先问问情况呢
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
 
 ### listener_first_opening_probe_wo_wenwen_qingkuang_self_intro
 
@@ -315,15 +355,15 @@
 - 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
 - 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json --scenario-id listener_first_opening_probe_wo_wenwen_qingkuang_self_intro --verbose`
 - 失败摘要:
-  - [response_contains_any] turn=1 turn=1 需要包含任一关键词 ['找对象', '了解下', '问问情况', '聊聊']，实际 '好，那你先简单讲讲你现在的大概情况，我顺着了解'
+  - [response_contains_any] turn=1 turn=1 需要包含任一关键词 ['找对象', '了解下', '问问情况', '聊聊']，实际 '行呀，那你可以先简单说说自己，我顺着了解会更顺一点'
 - 失败轮次精简回放:
   - Turn 1 用户: 你好
-    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
 - 对话回放:
   - Turn 1 用户: 你好
-    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
   - Turn 2 用户: 我问问你情况呢
-    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
 
 ### listener_first_opening_boundary_contact_refusal_no_push
 
@@ -341,7 +381,7 @@
     AI: 行，我明白你这会儿不太方便。 这块我先不追问，我们先顺着你舒服一点的节奏来
 - 对话回放:
   - Turn 1 用户: 你好
-    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
   - Turn 2 用户: 不给电话行不行
     AI: 行，我明白你这会儿不太方便。 这块我先不追问，我们先顺着你舒服一点的节奏来
 
@@ -355,15 +395,15 @@
 - 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
 - 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json --scenario-id listener_first_opening_mixed_boundary_priority_over_profile --verbose`
 - 失败摘要:
-  - [response_contains_any] turn=2 turn=2 需要包含任一关键词 ['可以', '不强求', '不留也行', '先聊']，实际 '我们先按你舒服的节奏来。 行，我明白你这会儿不太方便。 这块我先不追问，我们先顺着你舒服一点的节奏来'
+  - [response_contains_any] turn=2 turn=2 需要包含任一关键词 ['可以', '不强求', '不留也行', '先聊']，实际 '这块你要是现在不想展开，我们就先不追问。 行，我明白你这会儿不太方便。 这块我先不追问，我们先顺着你舒服一点的节奏来'
 - 失败轮次精简回放:
   - Turn 2 用户: 不给电话行不行，我是男的
-    AI: 我们先按你舒服的节奏来。 行，我明白你这会儿不太方便。 这块我先不追问，我们先顺着你舒服一点的节奏来
+    AI: 这块你要是现在不想展开，我们就先不追问。 行，我明白你这会儿不太方便。 这块我先不追问，我们先顺着你舒服一点的节奏来
 - 对话回放:
   - Turn 1 用户: 你好
     AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
   - Turn 2 用户: 不给电话行不行，我是男的
-    AI: 我们先按你舒服的节奏来。 行，我明白你这会儿不太方便。 这块我先不追问，我们先顺着你舒服一点的节奏来
+    AI: 这块你要是现在不想展开，我们就先不追问。 行，我明白你这会儿不太方便。 这块我先不追问，我们先顺着你舒服一点的节奏来
 
 ### listener_first_preference_ack_city
 
@@ -375,13 +415,31 @@
 - 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
 - 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json --scenario-id listener_first_preference_ack_city --verbose`
 - 失败摘要:
-  - [final_response_contains_any] turn=1 final_response 需要包含任一关键词 ['深圳', '女生', '偏向', '同城']，实际 '好，那你先简单讲讲你现在的大概情况，我顺着了解'
+  - [final_response_contains_any] turn=1 final_response 需要包含任一关键词 ['深圳', '女生', '偏向', '同城']，实际 '好，你也可以先简单介绍下自己，我顺着了解会更自然一点'
 - 失败轮次精简回放:
   - Turn 1 用户: 我喜欢深圳的女生
-    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
 - 对话回放:
   - Turn 1 用户: 我喜欢深圳的女生
-    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
+
+### listener_first_explicit_matchmaking_enters_mainline
+
+- 场景文件: `/Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json`
+- 分类: `humanlike_listener_first`
+- 标签: `critical, humanlike, listener_first, intent`
+- 描述: 用户首轮明确说帮我找对象时，应直接承接后进入主线，不要重复确认意图。
+- 断言通过: 1/2
+- 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
+- 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_listener_first_regression.json --scenario-id listener_first_explicit_matchmaking_enters_mainline --verbose`
+- 失败摘要:
+  - [final_response_contains_any] turn=1 final_response 需要包含任一关键词 ['男生', '女生', '了解下', '情况']，实际 '行呀，那你可以先简单说说自己，我顺着了解会更顺一点'
+- 失败轮次精简回放:
+  - Turn 1 用户: 帮我找个对象
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
+- 对话回放:
+  - Turn 1 用户: 帮我找个对象
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
 
 ### humanlike_divorce_confirmation_returns_to_mainline_without_contact_pivot
 
@@ -393,30 +451,30 @@
 - 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
 - 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_mainline_recovery_regression.json --scenario-id humanlike_divorce_confirmation_returns_to_mainline_without_contact_pivot --verbose`
 - 失败摘要:
-  - [response_contains_any] turn=6 turn=6 需要包含任一关键词 ['手续', '办妥', '办好']，实际 '你要是担心电话不方便，我这边就不说太满了。只是留个常用手机号，后面沟通起来会顺一点。'
-  - [response_not_contains_any] turn=6 turn=6 不应包含关键词 ['电话']，实际 '你要是担心电话不方便，我这边就不说太满了。只是留个常用手机号，后面沟通起来会顺一点。'
-  - [response_contains_any] turn=7 turn=7 需要包含任一关键词 ['另一半', '偏好', '要求', '月收入', '收入', '看重']，实际 '那就没问题了。 你这边方便留个电话吗？'
-  - [response_not_contains_any] turn=7 turn=7 不应包含关键词 ['电话']，实际 '那就没问题了。 你这边方便留个电话吗？'
+  - [response_contains_any] turn=6 turn=6 需要包含任一关键词 ['手续', '办妥', '办好']，实际 '电话这块我轻轻问一句就行。你要是方便的话，留个常用手机号，后面有合适的也好继续联系你。'
+  - [response_not_contains_any] turn=6 turn=6 不应包含关键词 ['电话']，实际 '电话这块我轻轻问一句就行。你要是方便的话，留个常用手机号，后面有合适的也好继续联系你。'
+  - [response_contains_any] turn=7 turn=7 需要包含任一关键词 ['另一半', '偏好', '要求', '月收入', '收入', '看重']，实际 '好，那就行。 要是你愿意，留个电话也行'
+  - [response_not_contains_any] turn=7 turn=7 不应包含关键词 ['电话']，实际 '好，那就行。 要是你愿意，留个电话也行'
 - 失败轮次精简回放:
   - Turn 6 用户: 我离异过呢
-    AI: 你要是担心电话不方便，我这边就不说太满了。只是留个常用手机号，后面沟通起来会顺一点。
+    AI: 电话这块我轻轻问一句就行。你要是方便的话，留个常用手机号，后面有合适的也好继续联系你。
   - Turn 7 用户: 办理好了
-    AI: 那就没问题了。 你这边方便留个电话吗？
+    AI: 好，那就行。 要是你愿意，留个电话也行
 - 对话回放:
   - Turn 1 用户: 男的
-    AI: 好，男生是吧。 好，你现在主要在哪个城市生活呀？
+    AI: 男生，明白了。 好，那你现在主要在哪个城市生活呀？
   - Turn 2 用户: 90后
-    AI: 好呀，你大概是什么学历呀？ 这样我对你的情况会更有数一点。
+    AI: 挺合适的呀，你最高学历是什么呀？
   - Turn 3 用户: 深圳
-    AI: 在深圳是吧。 那你现在在深圳主要做哪方面工作呀？
+    AI: 深圳呀，我知道了。 那你现在在深圳主要做哪方面工作呀？
   - Turn 4 用户: 本科
     AI: 这个年龄段我知道了，那你现在感情状态是单身吗？
   - Turn 5 用户: 我是做it的
     AI: 我大概了解得差不多了。 留个手机号方便联系吗？
   - Turn 6 用户: 我离异过呢
-    AI: 你要是担心电话不方便，我这边就不说太满了。只是留个常用手机号，后面沟通起来会顺一点。
+    AI: 电话这块我轻轻问一句就行。你要是方便的话，留个常用手机号，后面有合适的也好继续联系你。
   - Turn 7 用户: 办理好了
-    AI: 那就没问题了。 你这边方便留个电话吗？
+    AI: 好，那就行。 要是你愿意，留个电话也行
 
 ### humanlike_resume_profile_collection_does_not_jump_to_contact
 
@@ -435,11 +493,11 @@
     AI: 对，我们先把联系方式这条说清楚，其他信息先不往里插
 - 对话回放:
   - Turn 1 用户: 男的
-    AI: 好，男生是吧。 好，你现在主要在哪个城市生活呀？
+    AI: 男生，明白了。 好哒，那你现在主要在哪个城市生活呀？
   - Turn 2 用户: 90后
-    AI: 了，你是什么学历呀？
+    AI: 那我再了解下，方便说下你的学历吗？
   - Turn 3 用户: 深圳
-    AI: 深圳呀，我知道了。 你现在在深圳这边主要做什么呀？
+    AI: 你现在在深圳这边主要做什么呀？
   - Turn 4 用户: 本科
     AI: 这个年龄段我知道了，那你现在感情状态是单身吗？
   - Turn 5 用户: 我是做it的
@@ -467,11 +525,11 @@
     AI: 行，电话这块你现在不方便也没事，这轮我先不追问。 等你哪天觉得方便了再说，按你方便的方式来就行
 - 对话回放:
   - Turn 1 用户: 我是男的，90后，深圳，本科，做it的，离异，手续已经办妥了
-    AI: 做做it是吧。 离异（手续已办妥）状态我知道了，那你对另一半大概有什么要求呀？
+    AI: 好，做it这块我知道了。 离异（手续已办妥）状态我知道了，那你对另一半大概有什么要求呀？
   - Turn 2 用户: 我想找个年龄别太大的
-    AI: 你做做it的这行的话，收入大概在哪个范围？
+    AI: 懂的，你是想要找年纪小一点的对象对吧。
   - Turn 3 用户: 你不问其他了？
-    AI: 行，我明白你这会儿不太方便。 这块我先不追问，我们先顺着你舒服一点的节奏来
+    AI: 做做it的的话，收入这块大概在什么区间呀？
   - Turn 4 用户: 不方便留电话
     AI: 行，电话这块你现在不方便也没事，这轮我先不追问。 等你哪天觉得方便了再说，按你方便的方式来就行
 
@@ -485,18 +543,38 @@
 - 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
 - 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_mainline_recovery_regression.json --scenario-id humanlike_service_confirmation_mid_conversation_resumes_mainline --verbose`
 - 失败摘要:
-  - [response_contains_any] turn=3 turn=3 需要包含任一关键词 ['工作', '做什么', '做哪方面']，实际 '是的，我们这边就是帮忙介绍的。 我顺手确认下，你这边是男生还是女生呀？'
-  - [response_not_contains_any] turn=3 turn=3 不应包含关键词 ['男生还是女生']，实际 '是的，我们这边就是帮忙介绍的。 我顺手确认下，你这边是男生还是女生呀？'
+  - [response_contains_any] turn=3 turn=3 需要包含任一关键词 ['工作', '做什么', '做哪方面']，实际 '嗯，我们这边就是先把情况聊清楚，再帮你留意合适方向的。 我顺手确认下，你这边是男生还是女生呀？'
+  - [response_not_contains_any] turn=3 turn=3 不应包含关键词 ['男生还是女生']，实际 '嗯，我们这边就是先把情况聊清楚，再帮你留意合适方向的。 我顺手确认下，你这边是男生还是女生呀？'
 - 失败轮次精简回放:
   - Turn 3 用户: 你们帮帮忙介绍对象吗？
-    AI: 是的，我们这边就是帮忙介绍的。 我顺手确认下，你这边是男生还是女生呀？
+    AI: 嗯，我们这边就是先把情况聊清楚，再帮你留意合适方向的。 我顺手确认下，你这边是男生还是女生呀？
 - 对话回放:
   - Turn 1 用户: 找对象
-    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
   - Turn 2 用户: 我在深圳
     AI: 那你现在在深圳主要做哪方面工作呀？
   - Turn 3 用户: 你们帮帮忙介绍对象吗？
-    AI: 是的，我们这边就是帮忙介绍的。 我顺手确认下，你这边是男生还是女生呀？
+    AI: 嗯，我们这边就是先把情况聊清楚，再帮你留意合适方向的。 我顺手确认下，你这边是男生还是女生呀？
+
+### humanlike_memory_reuse_occupation
+
+- 场景文件: `/Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_regression.json`
+- 分类: `humanlike_memory`
+- 标签: `memory`
+- 描述: AI应记住用户的职业信息并自然回用。
+- 断言通过: 0/1
+- 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
+- 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/humanlike_regression.json --scenario-id humanlike_memory_reuse_occupation --verbose`
+- 失败摘要:
+  - [response_contains_any] turn=2 turn=2 需要包含任一关键词 ['运营', '工作', '忙']，实际 '90后是吧，那你现在是单身状态在了解吗？'
+- 失败轮次精简回放:
+  - Turn 2 用户: 我工作比较忙
+    AI: 90后是吧，那你现在是单身状态在了解吗？
+- 对话回放:
+  - Turn 1 用户: 我是女生，90后，深圳，本科，运营
+    AI: 我是女生，90后，深圳，本科，运营这个阶段的话，你找对象时会更看重哪方面？
+  - Turn 2 用户: 我工作比较忙
+    AI: 90后是吧，那你现在是单身状态在了解吗？
 
 ### policy_contact_trigger_sufficient_fields
 
@@ -526,15 +604,33 @@
 - 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
 - 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/policy_comprehensive_regression.json --scenario-id policy_memory_reuse_location --verbose`
 - 失败摘要:
-  - [response_contains_any] turn=2 turn=2 需要包含任一关键词 ['深圳', '那边']，实际 '行呀，那你可以先简单说说自己，我顺着了解会更顺一点'
+  - [response_contains_any] turn=2 turn=2 需要包含任一关键词 ['深圳', '那边']，实际 '好，那你先简单讲讲你现在的大概情况，我顺着了解'
 - 失败轮次精简回放:
   - Turn 2 用户: 那边有什么好的相亲资源吗
-    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
+    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
 - 对话回放:
   - Turn 1 用户: 我是女生，90后，在深圳，本科，运营
     AI: 我是女生，90后，在深圳，本科，运营这个阶段的话，你找对象时会更看重哪方面？
   - Turn 2 用户: 那边有什么好的相亲资源吗
-    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
+    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+
+### policy_opening_location_occupation_prefers_low_pressure_core
+
+- 场景文件: `/Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/policy_comprehensive_regression.json`
+- 分类: `policy_opening`
+- 标签: `critical, opening, contextual_target`
+- 描述: 首轮已给所在地和职业时，下一步优先补低压核心字段，不默认直接主问月薪。
+- 断言通过: 1/2
+- 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
+- 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/policy_comprehensive_regression.json --scenario-id policy_opening_location_occupation_prefers_low_pressure_core --verbose`
+- 失败摘要:
+  - [final_response_contains_any] turn=1 final_response 需要包含任一关键词 ['年龄', '多大', '学历']，实际 '好，那你先简单讲讲你现在的大概情况，我顺着了解'
+- 失败轮次精简回放:
+  - Turn 1 用户: 我是深圳的，我做IT
+    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
+- 对话回放:
+  - Turn 1 用户: 我是深圳的，我做IT
+    AI: 好，那你先简单讲讲你现在的大概情况，我顺着了解
 
 ### policy_withdraw_first_time_without_contact_retains_once
 
@@ -546,17 +642,17 @@
 - 建议修改方向: 优先检查提示词、固定话术模板、规则改写和响应清洗。
 - 单场景重跑: `python3 scripts/run_real_ai_regression.py --scenario-file /Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios/policy_comprehensive_regression.json --scenario-id policy_withdraw_first_time_without_contact_retains_once --verbose`
 - 失败摘要:
-  - [response_contains_any] turn=3 turn=3 需要包含任一关键词 ['怎么了', '顾虑', '担心', '不想继续聊', '不想继续']，实际 '我顺手确认下，你这边是男生还是女生呀？'
+  - [response_contains_any] turn=3 turn=3 需要包含任一关键词 ['怎么了', '顾虑', '担心', '不想继续聊', '不想继续']，实际 '你这边是男生还是女生呀？'
 - 失败轮次精简回放:
   - Turn 3 用户: 不聊了
-    AI: 我顺手确认下，你这边是男生还是女生呀？
+    AI: 你这边是男生还是女生呀？
 - 对话回放:
   - Turn 1 用户: 找对象
     AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
   - Turn 2 用户: 我在深圳，今年29岁
-    AI: 深圳这边宜居度还挺高的，你是什么学历呀，现在是单身状态吗？
+    AI: 在深圳是吧。 你的学历背景大概是怎样的？
   - Turn 3 用户: 不聊了
-    AI: 我顺手确认下，你这边是男生还是女生呀？
+    AI: 你这边是男生还是女生呀？
 
 ### policy_withdraw_second_time_without_contact_soft_closes
 
@@ -574,9 +670,9 @@
     AI: 你这边是男生还是女生呀？
 - 对话回放:
   - Turn 1 用户: 找对象
-    AI: 行呀，那你可以先简单说说自己，我顺着了解会更顺一点
+    AI: 好，你也可以先简单介绍下自己，我顺着了解会更自然一点
   - Turn 2 用户: 我在深圳，今年29岁
-    AI: 深圳呀，我知道了。 方便说下你的学历吗？
+    AI: 深圳这边适配的优质同龄人资源也不少，我多了解下你的情况也好更精准呀，你是什么学历，现在是单身状态吗？
   - Turn 3 用户: 不聊了
     AI: 你这边是男生还是女生呀？
   - Turn 4 用户: 还是先不聊了
@@ -598,6 +694,6 @@
     AI: 做IT的话，收入这块大概在什么区间呀？
 - 对话回放:
   - Turn 1 用户: 我是男的，90后，在深圳，本科，做IT的，单身，想找温柔点的，我电话17688654321
-    AI: 好，你这边是男生。 对，刚刚是在说微信这块。 你要是愿意的话，留个常用微信就行，不想留也没关系
+    AI: 好，你这边是男生。 我先接住了。 对，刚刚是在说微信这块。 你要是愿意的话，留个常用微信就行，不想留也没关系
   - Turn 2 用户: 不聊了
     AI: 做IT的话，收入这块大概在什么区间呀？

@@ -17,6 +17,7 @@ import random
 import yaml
 from src.models.user_profile import UserProfile
 from src.modules.profile_collection.domain.profile_collection_policy import ProfileCollectionPolicy
+from src.services.collection.contact_collection_service import ContactCollectionService
 
 logger = logging.getLogger(__name__)
 
@@ -153,17 +154,20 @@ class ConversationEndingService:
         if scenario_name == 'normal_complete':
             # 正常收尾：
             # 1. 至少已拿到一个真实联系方式
-            # 2. 资料主线（核心+中等字段）已经完成或问尽
-            # 3. 当前轮确实有收集进展，避免在“拒绝联系方式”这类空提取轮误收尾
+            # 2. 联系方式流程本身已经走完，避免“刚拿到电话就提前收尾”
+            # 3. 资料主线（核心+中等字段）已经完成或问尽
+            # 4. 当前轮确实有收集进展，避免在“拒绝联系方式”这类空提取轮误收尾
             policy = ProfileCollectionPolicy()
+            contact_service = ContactCollectionService()
             has_contact = bool(
                 profile.collection_progress.get("contact", False)
                 or (profile.phone and profile.phone_collected)
                 or (profile.wechat and profile.wechat_collected)
             )
+            contact_flow_complete = contact_service.is_contact_complete(profile)
             profile_complete_or_exhausted = policy.is_coverage_complete(profile)
             collected_this_turn = True if collection_result is None else bool(collection_result.get("collected"))
-            return has_contact and profile_complete_or_exhausted and collected_this_turn
+            return has_contact and contact_flow_complete and profile_complete_or_exhausted and collected_this_turn
 
         elif scenario_name == 'both_rejected':
             # 双方都被拒绝，且没有任何真实联系方式留存

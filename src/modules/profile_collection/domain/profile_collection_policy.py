@@ -13,6 +13,7 @@ import re
 from typing import Dict, List, Optional
 
 from src.models.user_profile import UserProfile
+from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingResult
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,10 @@ class PolicyDecision:
     allow_contact_push: bool = False
     reason: str = ""
     must_answer_first: bool = False
+    primary_move: str = "ack_and_ask"
+    prioritize_user_question: bool = False
+    allow_contact_target: bool = True
+    allow_medium_target: bool = True
     user_concern_type: Optional[str] = None
     resume_mode: Optional[str] = None
     resume_target: Optional[str] = None
@@ -160,9 +165,28 @@ class ProfileCollectionPolicy:
         prioritize_user_question: bool = False,
         primary_move: str = "ack_and_ask",
         resume_profile_collection: bool = False,
+        understanding_result: TurnUnderstandingResult | None = None,
     ) -> PolicyDecision:
         """生成当前收集策略决策"""
         user_type = self.classify_user_type(user_message, message_count)
+        complaint_reason = getattr(understanding_result, "complaint_reason", None) if understanding_result else None
+        if understanding_result:
+            if understanding_result.primary_turn_type in {"faq_concern", "refusal_boundary_complaint"}:
+                prioritize_user_question = True
+                allow_contact_target = False
+                allow_medium_target = False
+                primary_move = "answer_then_resume" if understanding_result.primary_turn_type == "faq_concern" else "ack_and_hold"
+            elif understanding_result.primary_turn_type in {"closing_exit", "risk_guard"}:
+                allow_contact_target = False
+                allow_medium_target = False
+                primary_move = "soft_hold"
+            elif understanding_result.primary_turn_type == "contact_answer":
+                allow_medium_target = False
+                if understanding_result.subtype in {"contact_refusal", "contact_preference_switch"}:
+                    allow_contact_target = True
+            elif understanding_result.primary_turn_type == "confirmation":
+                allow_contact_target = False
+
         if self.has_divorce_confirmation_pending(profile):
             return PolicyDecision(
                 main_target="marital_status",
@@ -171,6 +195,10 @@ class ProfileCollectionPolicy:
                 can_enter_contact=False,
                 missing_fields=["marital_status"],
                 reason="divorce_confirmation_pending",
+                primary_move="confirm_status_only",
+                prioritize_user_question=False,
+                allow_contact_target=False,
+                allow_medium_target=False,
             )
         coverage_passed = self.is_coverage_complete(profile)
         core_success_count = self.get_core_success_count(profile)
@@ -240,6 +268,60 @@ class ProfileCollectionPolicy:
                 message_count=message_count,
                 allow_medium_target=effective_allow_medium_target,
             )
+            if understanding_result and understanding_result.primary_turn_type == "profile_answer":
+                if understanding_result.subtype == "multi_slot_compound" and side_target in understanding_result.resolved_slots:
+                    side_target = None
+
+        resolved_primary_move = primary_move
+        if complaint_reason:
+            resolved_primary_move = "repair_and_release"
+        elif understanding_result:
+            if understanding_result.primary_turn_type == "risk_guard":
+                resolved_primary_move = "answer_then_pause"
+            elif understanding_result.primary_turn_type in {"faq_concern"}:
+                resolved_primary_move = "answer_then_pause"
+            elif understanding_result.primary_turn_type in {"refusal_boundary_complaint", "closing_exit"}:
+                resolved_primary_move = "soft_hold"
+        if resume_profile_collection:
+            resolved_primary_move = "light_followup"
+        elif len((user_message or "").strip()) <= 4 and resolved_primary_move == "ack_and_ask":
+            resolved_primary_move = "light_followup"
+
+        resolved_allow_contact_target = allow_contact_target
+        resolved_allow_medium_target = effective_allow_medium_target
+        if resume_profile_collection:
+            resolved_allow_contact_target = False
+            resolved_allow_medium_target = False
+        if next_mode == "open_profile_repair":
+            main_target = None
+            resolved_allow_contact_target = False
+            resolved_allow_medium_target = False
+        elif next_mode in {"low_pressure_chat", "terminate_conversion"}:
+            resolved_primary_move = "soft_hold"
+            main_target = None
+            resolved_allow_contact_target = False
+            resolved_allow_medium_target = False
+        elif next_mode == "contact_hold":
+            main_target = None
+            resolved_allow_contact_target = False
+        elif next_mode == "contact_flow" and allow_contact_push:
+            main_target = "contact"
+
+        user_concern_type: Optional[str] = None
+        if complaint_reason:
+            user_concern_type = "complaint"
+        elif understanding_result and understanding_result.primary_turn_type == "faq_concern":
+            user_concern_type = self._normalize_user_concern_type(understanding_result.subtype)
+
+        resume_mode: Optional[str] = None
+        resume_target: Optional[str] = None
+        if (
+            prioritize_user_question
+            and next_mode not in {"contact_flow", "terminate_conversion"}
+            and main_target
+        ):
+            resume_mode = next_mode
+            resume_target = main_target
 
         return PolicyDecision(
             main_target=main_target,
@@ -266,7 +348,24 @@ class ProfileCollectionPolicy:
                 unresolved_medium_fields=unresolved_medium_fields,
                 ongoing_contact_flow=ongoing_contact_flow,
             ),
+            must_answer_first=prioritize_user_question,
+            primary_move=resolved_primary_move,
+            prioritize_user_question=prioritize_user_question,
+            allow_contact_target=resolved_allow_contact_target,
+            allow_medium_target=resolved_allow_medium_target,
+            user_concern_type=user_concern_type,
+            resume_mode=resume_mode,
+            resume_target=resume_target,
         )
+
+    @staticmethod
+    def _normalize_user_concern_type(intent: str | None) -> str:
+        intent_value = str(intent or "").strip().lower()
+        if intent_value in {"reliable", "privacy"}:
+            return intent_value
+        if intent_value in {"clarification", "service_area", "timeline", "photo", "success_rate", "mediator", "fee"}:
+            return "faq"
+        return "faq"
 
     def get_main_target(
         self,
@@ -313,6 +412,14 @@ class ProfileCollectionPolicy:
             return None
         if main_target == "contact":
             return None
+        remaining_core_fields = [field for field in self.get_uncovered_core_fields(profile) if field != main_target]
+        if remaining_core_fields and not self._allow_early_side_target(
+            profile,
+            main_target=main_target,
+            user_message=user_message,
+            message_count=message_count,
+        ):
+            return None
         if message_count and message_count <= 4:
             if not self._message_contains_profile_context(user_message):
                 return None
@@ -347,6 +454,44 @@ class ProfileCollectionPolicy:
                 return "monthly_income"
 
         return None
+
+    def _allow_early_side_target(
+        self,
+        profile: UserProfile,
+        *,
+        main_target: Optional[str],
+        user_message: str = "",
+        message_count: int = 0,
+    ) -> bool:
+        """在核心字段未收完时，仅放开少量高相关拼接问。"""
+        if not main_target:
+            return False
+        if message_count > 4:
+            return False
+        if not self._message_contains_profile_context(user_message):
+            return False
+
+        if (
+            main_target == "occupation"
+            and self.can_use_as_side_target(profile, "monthly_income")
+        ):
+            return True
+
+        if (
+            main_target in {"education", "occupation"}
+            and self.can_actively_ask(profile, "partner_requirement")
+            and message_count >= 2
+        ):
+            return True
+
+        if (
+            main_target in {"location", "education", "occupation"}
+            and self.can_actively_ask(profile, "marital_status")
+            and message_count >= 2
+        ):
+            return True
+
+        return False
 
     def get_missing_fields(
         self,

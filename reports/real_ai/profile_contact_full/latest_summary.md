@@ -1,6 +1,6 @@
 # 完整方案真实 AI 回归汇总
 
-- 时间: 2026-03-29T09:24:37
+- 时间: 2026-03-30T18:43:19
 - 方案文档: `docs/05_PROFILE_COLLECTION_STRATEGY.md` + `docs/06_CONTACT_COLLECTION.md`
 - chat 场景目录: `/Users/eric/Desktop/doubao_mcp_server/tests/real_ai/scenarios`
 - chat 场景数: `290`

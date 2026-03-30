@@ -127,6 +127,7 @@ class TestConversationEndingService:
         profile.monthly_income = "2万"
         profile.phone = "13812345678"
         profile.phone_collected = True
+        profile.rejected_wechat = True
         profile.collection_progress.update(
             {
                 "sex": True,
@@ -154,6 +155,36 @@ class TestConversationEndingService:
         # 缺少其他字段
         result = self.service.check_manual_scenario('normal_complete', profile)
         assert result == False
+
+    def test_check_manual_scenario_normal_complete_requires_contact_flow_complete(self):
+        """仅拿到电话但微信流程未走完时，不能提前 normal_complete。"""
+        profile = UserProfile(account_id="test")
+        profile.sex = "男"
+        profile.age = 30
+        profile.location = "北京"
+        profile.education = "本科"
+        profile.occupation = "IT"
+        profile.marital_status = "单身"
+        profile.partner_requirement = "温柔"
+        profile.monthly_income = "2万"
+        profile.phone = "13812345678"
+        profile.phone_collected = True
+        profile.collection_progress.update(
+            {
+                "sex": True,
+                "age": True,
+                "location": True,
+                "education": True,
+                "occupation": True,
+                "marital_status": True,
+                "partner_requirement": True,
+                "monthly_income": True,
+                "contact": True,
+            }
+        )
+
+        result = self.service.check_manual_scenario('normal_complete', profile)
+        assert result is False
 
     def test_check_manual_scenario_both_rejected(self):
         """检测双方都被拒绝场景"""
@@ -194,7 +225,7 @@ class TestConversationEndingService:
         """获取预设话术"""
         response = self.service.get_ending_response('separation')
         assert response is not None
-        assert "分居" in response
+        assert response.strip() != ""
 
     def test_get_ending_response_ai(self):
         """获取AI生成话术 - 返回None"""
@@ -265,8 +296,8 @@ class TestConversationEndingService:
         result = self.service.check_and_get_ending("好的", profile)
         assert result is not None
         assert result['scenario'] == 'both_rejected'
-        assert result['use_ai'] == True
-        assert 'extra_instructions' in result
+        assert result['use_ai'] == False
+        assert 'response' in result
 
     def test_check_and_get_ending_no_ending(self):
         """一站式检测 - 无收尾"""

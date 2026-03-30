@@ -551,6 +551,26 @@ class ContactCollectionService:
         profile.contact_complete = complete
         return complete
 
+    def clear_pending_request_state(self, profile: UserProfile, contact_type: str) -> None:
+        """
+        清理未兑现的联系方式询问状态。
+
+        适用于：
+        - 系统刚问过 A，但用户明确切去 B，此时 A 的询问不应占用一次有效 ask
+        - 用户主动提供某联系方式，导致上一轮预问的另一联系方式应视为未兑现
+        """
+        if contact_type == 'phone':
+            profile.phone_ask_count = 0
+            profile.phone_effective_ask_count = 0
+            if str(getattr(profile, "last_contact_request_type", "") or "").strip() == "phone":
+                profile.last_contact_request_type = None
+            return
+
+        profile.wechat_ask_count = 0
+        profile.wechat_effective_ask_count = 0
+        if str(getattr(profile, "last_contact_request_type", "") or "").strip() == "wechat":
+            profile.last_contact_request_type = None
+
     def record_invalid_input(self, profile: UserProfile, contact_type: str) -> int:
         """记录联系方式无效输入；达到上限后关闭主动追问。"""
         if contact_type == 'phone':
@@ -635,7 +655,7 @@ class ContactCollectionService:
                 and (last_requested_type == 'wechat' or is_about_wechat)
             ):
                 logger.info("[拒绝检测] 用户主动切回电话分支，清理未兑现的微信询问计数")
-                profile.wechat_ask_count = 0
+                self.clear_pending_request_state(profile, 'wechat')
             result = self._handle_refusal(profile, 'phone', True)
         elif wechat_refusal:
             logger.info("[拒绝检测] 检测到显式微信拒绝")
@@ -646,7 +666,7 @@ class ContactCollectionService:
                 and (last_requested_type == 'phone' or is_about_phone)
             ):
                 logger.info("[拒绝检测] 用户主动切回微信分支，清理未兑现的电话询问计数")
-                profile.phone_ask_count = 0
+                self.clear_pending_request_state(profile, 'phone')
             result = self._handle_refusal(profile, 'wechat', True)
         elif general_refusal:
             if user_mentions_wechat:

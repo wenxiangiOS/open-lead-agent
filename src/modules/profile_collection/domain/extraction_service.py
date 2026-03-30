@@ -666,7 +666,12 @@ class ExtractionService:
                         mapped_field = "phone"
                         value = normalized_phone
                     else:
-                        wechat_candidate = raw_contact.replace("微信", "").replace("wx:", "").replace("WX:", "").strip()
+                        wechat_candidate = re.sub(
+                            r"^(?:微信号?|weixin|vx|wx)\s*[:：]\s*",
+                            "",
+                            raw_contact,
+                            flags=re.IGNORECASE,
+                        ).strip()
                         wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{5,19}$'
                         mobile_like_wechat = ''.join(c for c in wechat_candidate if c.isdigit())
                         if re.match(wechat_pattern, wechat_candidate):

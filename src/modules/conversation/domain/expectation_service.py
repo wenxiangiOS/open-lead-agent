@@ -81,11 +81,11 @@ class ExpectationService:
 
         if self.qualifies_fast_match(user_profile):
             if has_any_contact:
-                return "按你现在的情况，快的话一般1-8小时会有推进，不过也还是要看前面沟通和匹配节奏，不会突然打扰你。"
+                return "按你现在的情况，快的话一般1-8小时会有推进，不过也还是要看前面沟通和匹配节奏；真有合适的，我会先跟你说一声。"
             return "按你现在的情况，快的话一般1-8小时会有推进，不过也得先把你的基本情况聊清楚，再看后面怎么往下走。"
 
         if has_any_contact:
-            return "按你现在的情况，常见是1-2天会有推进，不过也还是要看前面沟通和匹配节奏，不会突然打扰你。"
+            return "按你现在的情况，常见是1-2天会有推进，不过也还是要看前面沟通和匹配节奏；真有合适的，我会先跟你说一声。"
         return "按你现在的情况，常见是1-2天会有推进，不过也得先把你的基本情况聊清楚，再看后面怎么往下走。"
 
     def get_closing_timeline_text(self, user_profile: UserProfile) -> str:
@@ -96,7 +96,8 @@ class ExpectationService:
 
     def get_contact_completion_response(self, user_profile: UserProfile) -> str:
         """联系方式完成后的业务收尾话术。"""
+        timeline = self.get_closing_timeline_text(user_profile)
         return (
-            f"好的，那你等好消息啦，祝你早日脱单🥰 {self.get_closing_timeline_text(user_profile)}哒～"
-            "牵线同事联系前会提前约时间，不打扰你～"
+            f"好的，这边我先帮你记下了。按你现在的情况，{timeline}会有推进；"
+            "真有合适的，我会先跟你说一声，再往下接。"
         )

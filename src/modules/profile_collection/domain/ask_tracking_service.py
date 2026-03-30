@@ -225,9 +225,8 @@ class AskTrackingService:
                 user_profile.mark_recent_asked_field(field, max_history=max_history)
                 recorded_primary = True
 
-            # 月薪问过一次后可关闭主动追问；择偶要求要等真正提取成功后再关闭，
-            # 否则口语短答 + AI 失败时会出现“已关但未收下”的断链。
-            if field == 'monthly_income':
+            # 中等字段问过一次后转为被动提取，避免像表单机一样反复追问。
+            if field in self.MEDIUM_FIELDS:
                 user_profile.close_active_ask(field)
                 logger.info(f"[智能追问] 中等字段 {field} 已关闭主动追问，后续仅被动提取")
                 continue

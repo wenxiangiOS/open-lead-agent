@@ -115,9 +115,9 @@ class DialogueExpressionService:
     )
 
     CONTACT_PROMPTS = (
-        "我大概了解你的情况了。后面要是继续聊得合适，留个手机号方便联系吗？",
-        "你这边的情况我大概有数了。要是后面继续聊，留个手机号方便联系吗？",
-        "整体我这边已经了解得差不多了。要是后面继续聊，留个手机号方便联系你吗？",
+        "先留个手机号也行，后面如果有合适的进展，我这边也好继续联系上你。",
+        "你要是方便的话，先留个手机号也行，后面有合适的我再跟你接着聊。",
+        "电话先留一个也行，真有合适的方向，我这边联系你会顺一点。",
     )
 
     TRANSITION_PREFIXES = {
@@ -130,23 +130,23 @@ class DialogueExpressionService:
 
     SENSITIVE_REASON_VARIANTS = {
         "age": (
-            "这样我心里会更有数一点。",
-            "后面我也更好往合适的方向聊。",
+            "这样后面接话会更顺一点。",
+            "后面我也更好顺着往下聊。",
         ),
         "location": (
             "后面我也能优先往同城这边留意。",
             "这样我后面更好先看同城方向。",
         ),
         "education": (
-            "这样我对你的情况会更有数一点。",
-            "后面我也更好往相对合适的方向帮你看。",
+            "这样后面我也更好往相对合适的方向看。",
+            "这个先对齐了，后面接话会更顺一点。",
         ),
         "monthly_income": (
             "这样我后面更好往条件相近的方向留意。",
             "我心里也更好有个大概范围。",
         ),
         "marital_status": (
-            "这个我先确认清楚，后面聊起来会更顺一点。",
+            "这个我先确认清楚，后面接话会更顺一点。",
             "这个点先对齐了，后面就不容易聊岔。",
         ),
     }
@@ -154,7 +154,7 @@ class DialogueExpressionService:
     MID_CONVERSATION_CORE_FIELD_PROMPTS = {
         "sex": (
             "你这边是男生还是女生呀？",
-            "我顺手确认下，你这边是男生还是女生呀？",
+            "我再确认一下，你这边是男生还是女生呀？",
         ),
     }
 
@@ -320,9 +320,9 @@ class DialogueExpressionService:
             confirm = self._next_variant(
                 f"sex:challenge:confirm:{guess_label}",
                 (
-                    f"你这边是{guess_label}对吧？",
-                    f"你这边是{guess_label}在了解，对吧？",
-                    f"所以我理解得对的话，你这边是{guess_label}，是吧？",
+                    f"你这边是{guess_label}在了解吗？",
+                    f"你这边现在是{guess_label}这个方向吗？",
+                    f"所以我理解得没偏的话，你这边是{guess_label}？",
                 ),
             )
             return f"{lead}，{inference_ack}，{reason}，{example}。{confirm}"
@@ -334,9 +334,9 @@ class DialogueExpressionService:
         confirm = self._next_variant(
             f"sex:soft:confirm:{guess_label}",
             (
-                f"你这边是{guess_label}对吧？",
-                f"你这边是{guess_label}在了解，对吧？",
-                f"我理解得对的话，你这边是{guess_label}，是吧？",
+                f"你这边是{guess_label}在了解吗？",
+                f"你这边现在是{guess_label}这个方向吗？",
+                f"我理解得没偏的话，你这边是{guess_label}？",
             ),
         )
         return f"{prefix}，{confirm}"
@@ -415,6 +415,32 @@ class DialogueExpressionService:
         return candidates[idx]
 
     @staticmethod
+    def _opening_signature(text: str) -> str:
+        normalized = re.sub(r"[\s，,。！？!?~～、:：;；'\"（）()]+", "", str(text or ""))
+        return normalized[:8]
+
+    def _pick_variant_avoiding_recent_openings(
+        self,
+        key: str,
+        candidates: tuple[str, ...],
+        profile: Optional[UserProfile],
+    ) -> str:
+        if not candidates:
+            return ""
+        recent = {
+            self._opening_signature(item)
+            for item in getattr(profile, "recent_response_openings", [])[-5:]
+            if str(item or "").strip()
+        }
+        idx = self._cursor.get(key, 0)
+        self._cursor[key] = idx + 1
+        ordered = [candidates[(idx + offset) % len(candidates)] for offset in range(len(candidates))]
+        for candidate in ordered:
+            if self._opening_signature(candidate) not in recent:
+                return candidate
+        return ordered[0]
+
+    @staticmethod
     def _looks_like_opening_matchmaking_intent(user_message: str) -> bool:
         message = str(user_message or "").strip()
         if not message:
@@ -439,8 +465,9 @@ class DialogueExpressionService:
         variants = (
             f"做{occupation}的话，收入这块大概在什么区间呀？",
             f"你做{occupation}这行的话，收入大概在哪个范围？",
+            f"像{occupation}这类工作，你现在月收入大概在哪一档呀？",
         )
-        return self._next_variant("bridge:income", variants)
+        return self._pick_variant_avoiding_recent_openings("bridge:income", variants, profile)
 
     def _build_bridged_age_prompt(self, profile: Optional[UserProfile]) -> Optional[str]:
         education = str(getattr(profile, "education", "") or "").strip()
@@ -451,10 +478,11 @@ class DialogueExpressionService:
         if age or age_label:
             return None
         variants = (
-            f"{education}这边我知道了，那你现在大概什么年龄段呀？",
-            f"{education}这点我清楚了，你今年大概多大呀？",
+            f"{education}是吧，那你现在大概什么年龄段呀？",
+            f"{education}我接住了，你今年大概多大呀？",
+            f"学历这块是{education}，那你现在大概多大呀？",
         )
-        return self._next_variant("bridge:age", variants)
+        return self._pick_variant_avoiding_recent_openings("bridge:age", variants, profile)
 
     def _build_bridged_marital_status_prompt(self, profile: Optional[UserProfile]) -> Optional[str]:
         age_label = str(getattr(profile, "age_label", "") or "").strip()
@@ -464,20 +492,22 @@ class DialogueExpressionService:
         if not age_label:
             return None
         variants = (
-            f"{age_label}是吧，那你现在是单身状态在了解吗？",
-            f"这个年龄段我知道了，那你现在感情状态是单身吗？",
+            f"那你现在大概是{age_label}这个年龄段吗？你现在是单身状态在了解吗？",
+            f"你这个年龄段我大概有数了，那你现在感情状态是单身吗？",
+            f"{age_label}这个年龄段我先记下了。你现在是单身状态在了解吗？",
         )
-        return self._next_variant("bridge:marital", variants)
+        return self._pick_variant_avoiding_recent_openings("bridge:marital", variants, profile)
 
     def _build_bridged_partner_requirement_prompt(self, profile: Optional[UserProfile]) -> Optional[str]:
         marital_status = str(getattr(profile, "marital_status", "") or "").strip()
         if not marital_status:
             return None
         variants = (
-            f"{marital_status}状态我知道了，那你对另一半大概有什么要求呀？",
-            f"好，这个状态我清楚了。你会更看重对方哪一点呀？",
+            f"{marital_status}状态是吧，那你对另一半大概有什么要求呀？",
+            f"好，这个状态我接住了。你会更看重对方哪一点呀？",
+            f"现在这个状态我清楚了，那你找对象时会更在意哪方面呀？",
         )
-        return self._next_variant("bridge:partner_requirement", variants)
+        return self._pick_variant_avoiding_recent_openings("bridge:partner_requirement", variants, profile)
 
     def _build_contextual_occupation_prompt(self, user_message: str, *, profile: Optional[UserProfile] = None) -> Optional[str]:
         message = str(user_message or "").strip()

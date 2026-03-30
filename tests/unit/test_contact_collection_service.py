@@ -411,6 +411,36 @@ class TestContactCollectionService:
         assert profile.rejected_phone is True
         assert self.service.get_next_action(profile) == NextAction.ASK_WECHAT
 
+    def test_detect_refusal_clears_unfulfilled_phone_effective_ask_when_switching_to_wechat(self):
+        """用户明确拒微信时，若上一轮未兑现地预问过电话，应同时清掉电话有效询问计数。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+        profile.phone_effective_ask_count = 1
+        profile.last_contact_request_type = "phone"
+
+        result = self.service.detect_refusal(
+            "不留微信",
+            profile,
+            "方便留个电话吗？后面沟通会方便些",
+        )
+
+        assert result is not None
+        assert result.contact_type == "wechat"
+        assert profile.phone_ask_count == 0
+        assert profile.phone_effective_ask_count == 0
+        assert self.service.get_next_action(profile) == NextAction.PERSUADE_WECHAT
+
+    def test_is_contact_complete_false_after_wechat_collected_with_only_one_phone_effective_ask(self):
+        """先收微信后第一次拒电话时，电话流程未完成，不应误判联系方式已完成。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.wechat = "abc123"
+        profile.wechat_collected = True
+        profile.phone_ask_count = 1
+        profile.phone_effective_ask_count = 1
+
+        assert self.service.is_contact_complete(profile) is False
+        assert self.service.get_next_action(profile) == NextAction.PERSUADE_PHONE
+
     # ==================== get_status_display 测试 ====================
 
     def test_get_status_display_none(self):

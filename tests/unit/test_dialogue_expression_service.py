@@ -39,7 +39,7 @@ def test_render_field_question_for_contact_is_short_and_natural():
     response = service.render_field_question("contact", profile=profile, stage="completing")
 
     assert "手机号" in response
-    assert "方便联系" in response
+    assert any(token in response for token in ["继续联系上你", "联系你会顺一点", "再跟你接着聊"])
     assert "资料差不多" not in response
     assert "及时联系" not in response
 
@@ -74,7 +74,30 @@ def test_render_field_question_for_age_can_optionally_add_light_reason():
     first = service.render_field_question("age")
 
     assert "多大" in first or "年龄段" in first
-    assert any(token in first for token in ["更有数", "更好往合适的方向聊"])
+    assert any(token in first for token in ["接话会更顺", "顺着往下聊"])
+
+
+def test_render_field_question_for_age_bridge_avoids_flat_i_know_wording():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_bridge_age")
+    profile.education = "博士"
+
+    response = service.render_field_question("age", profile=profile, stage="trust")
+
+    assert "博士" in response
+    assert "什么年龄段" in response or "多大" in response
+    assert "这边我知道了" not in response
+
+
+def test_render_field_question_for_age_bridge_avoids_recent_opening_repeat():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_bridge_age_recent")
+    profile.education = "博士"
+    profile.recent_response_openings = ["博士是吧那你现在大概"]
+
+    response = service.render_field_question("age", profile=profile, stage="trust")
+
+    assert not response.startswith("博士是吧")
 
 
 def test_render_field_question_for_location_can_optionally_add_same_city_reason():
