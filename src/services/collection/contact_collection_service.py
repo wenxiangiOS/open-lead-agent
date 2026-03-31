@@ -613,7 +613,7 @@ class ContactCollectionService:
             Optional[RefusalResult]: 拒绝结果，无拒绝返回 None
         """
         # === 入口日志（INFO级别，便于调试）===
-        logger.info(f"[拒绝检测-入口] 消息完整内容='{message}', phone_ask_count={profile.phone_ask_count}, wechat_ask_count={profile.wechat_ask_count}")
+        logger.debug(f"[拒绝检测-入口] 消息完整内容='{message}', phone_ask_count={profile.phone_ask_count}, wechat_ask_count={profile.wechat_ask_count}")
 
         message_lower = message.lower()
 
@@ -623,22 +623,22 @@ class ContactCollectionService:
         general_refusal = self._has_general_refusal(message_lower)
 
         # 详细匹配日志
-        logger.info(f"[拒绝检测-分析] 电话拒绝={phone_refusal}, 微信拒绝={wechat_refusal}, 通用拒绝={general_refusal}, last_response={'有' if last_response else '无'}")
+        logger.debug(f"[拒绝检测-分析] 电话拒绝={phone_refusal}, 微信拒绝={wechat_refusal}, 通用拒绝={general_refusal}, last_response={'有' if last_response else '无'}")
 
         # 如果没有检测到任何拒绝，输出详细信息
         if not phone_refusal and not wechat_refusal and not general_refusal:
             matched_phone = [kw for kw in self.PHONE_REFUSAL_KEYWORDS if kw in message_lower]
             matched_general = [kw for kw in self.GENERAL_REFUSAL_KEYWORDS if kw in message_lower]
-            logger.info(f"[拒绝检测-详细] 匹配的电话关键词={matched_phone}, 匹配的通用关键词={matched_general}")
+            logger.debug(f"[拒绝检测-详细] 匹配的电话关键词={matched_phone}, 匹配的通用关键词={matched_general}")
 
         result = None
 
         phone_collected = profile.phone_collected and profile.phone
         wechat_collected = profile.wechat_collected and profile.wechat
-        logger.info(f"[拒绝检测-调试] last_response 内容: '{last_response}'")
+        logger.debug(f"[拒绝检测-调试] last_response 内容: '{last_response}'")
         is_about_phone = self._is_context_about(last_response, 'phone')
         is_about_wechat = self._is_context_about(last_response, 'wechat')
-        logger.info(f"[拒绝检测-上下文] 电话已收集={phone_collected}, 微信已收集={wechat_collected}, 关于电话={is_about_phone}, 关于微信={is_about_wechat}")
+        logger.debug(f"[拒绝检测-上下文] 电话已收集={phone_collected}, 微信已收集={wechat_collected}, 关于电话={is_about_phone}, 关于微信={is_about_wechat}")
 
         user_mentions_wechat = any(marker in message_lower for marker in ['微信', 'wx', 'weixin'])
         user_mentions_phone = any(marker in message_lower for marker in ['电话', '手机', '手机号', '号码'])
@@ -654,7 +654,7 @@ class ContactCollectionService:
                 and not profile.rejected_wechat
                 and (last_requested_type == 'wechat' or is_about_wechat)
             ):
-                logger.info("[拒绝检测] 用户主动切回电话分支，清理未兑现的微信询问计数")
+                logger.debug("[拒绝检测] 用户主动切回电话分支，清理未兑现的微信询问计数")
                 self.clear_pending_request_state(profile, 'wechat')
             result = self._handle_refusal(profile, 'phone', True)
         elif wechat_refusal:
@@ -665,41 +665,41 @@ class ContactCollectionService:
                 and not profile.rejected_phone
                 and (last_requested_type == 'phone' or is_about_phone)
             ):
-                logger.info("[拒绝检测] 用户主动切回微信分支，清理未兑现的电话询问计数")
+                logger.debug("[拒绝检测] 用户主动切回微信分支，清理未兑现的电话询问计数")
                 self.clear_pending_request_state(profile, 'phone')
             result = self._handle_refusal(profile, 'wechat', True)
         elif general_refusal:
             if user_mentions_wechat:
-                logger.info("[拒绝检测] 通用拒绝 + 明确提及微信，按微信拒绝处理")
+                logger.debug("[拒绝检测] 通用拒绝 + 明确提及微信，按微信拒绝处理")
                 result = self._handle_refusal(profile, 'wechat', False)
             elif user_mentions_phone:
-                logger.info("[拒绝检测] 通用拒绝 + 明确提及电话，按电话拒绝处理")
+                logger.debug("[拒绝检测] 通用拒绝 + 明确提及电话，按电话拒绝处理")
                 result = self._handle_refusal(profile, 'phone', False)
             elif last_requested_type == 'phone':
-                logger.info("[拒绝检测] 使用最近一次真实展示的电话请求类型优先归因")
+                logger.debug("[拒绝检测] 使用最近一次真实展示的电话请求类型优先归因")
                 result = self._handle_refusal(profile, 'phone', False)
             elif last_requested_type == 'wechat':
-                logger.info("[拒绝检测] 使用最近一次真实展示的微信请求类型优先归因")
+                logger.debug("[拒绝检测] 使用最近一次真实展示的微信请求类型优先归因")
                 result = self._handle_refusal(profile, 'wechat', False)
             elif action_value in {NextAction.ASK_PHONE.value, NextAction.PERSUADE_PHONE.value}:
-                logger.info("[拒绝检测] 当前动作是电话流程，按电话拒绝处理")
+                logger.debug("[拒绝检测] 当前动作是电话流程，按电话拒绝处理")
                 result = self._handle_refusal(profile, 'phone', False)
             elif action_value in {NextAction.ASK_WECHAT.value, NextAction.PERSUADE_WECHAT.value}:
-                logger.info("[拒绝检测] 当前动作是微信流程，按微信拒绝处理")
+                logger.debug("[拒绝检测] 当前动作是微信流程，按微信拒绝处理")
                 result = self._handle_refusal(profile, 'wechat', False)
             elif is_about_wechat:
-                logger.info("[拒绝检测] 当前动作未知，按上一轮微信上下文兜底")
+                logger.debug("[拒绝检测] 当前动作未知，按上一轮微信上下文兜底")
                 result = self._handle_refusal(profile, 'wechat', False)
             elif is_about_phone:
-                logger.info("[拒绝检测] 当前动作未知，按上一轮电话上下文兜底")
+                logger.debug("[拒绝检测] 当前动作未知，按上一轮电话上下文兜底")
                 result = self._handle_refusal(profile, 'phone', False)
             else:
-                logger.info("[拒绝检测] 通用拒绝但无法确定联系方式类型")
+                logger.debug("[拒绝检测] 通用拒绝但无法确定联系方式类型")
 
         if result:
             logger.info(f"[拒绝检测] 检测到拒绝: {result.contact_type}, 最终={result.is_final}, 次数={result.ask_count_after}")
         else:
-            logger.info(f"[拒绝检测] 未检测到联系方式拒绝，general_refusal={general_refusal}")
+            logger.debug(f"[拒绝检测] 未检测到联系方式拒绝，general_refusal={general_refusal}")
 
         return result
 

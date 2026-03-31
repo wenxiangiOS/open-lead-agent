@@ -16,8 +16,14 @@ class _EndedUserService:
 
 
 class _EndedDialogueManager:
+    def __init__(self, recent_responses=None):
+        self.recent_responses = list(recent_responses or [])
+
     async def get_message_count(self, account_id):
         return 3
+
+    async def get_conversation_context(self, account_id):
+        return {"recent_responses": list(self.recent_responses), "message_count": 3}
 
 
 class _EndedFallbackService:
@@ -32,9 +38,9 @@ class _EndedEndingService:
 
 
 class _EndedChatService:
-    def __init__(self):
+    def __init__(self, recent_responses=None):
         self.user_service = _EndedUserService()
-        self.dialogue_manager = _EndedDialogueManager()
+        self.dialogue_manager = _EndedDialogueManager(recent_responses=recent_responses)
         self.input_fallback_service = _EndedFallbackService()
         self.ending_service = _EndedEndingService()
         self.updated = None
@@ -42,6 +48,24 @@ class _EndedChatService:
     @staticmethod
     def _sanitize_robotic_tone(response):
         return response
+
+    async def _build_chat_response(
+        self,
+        account_id,
+        user_profile,
+        response,
+        collection_result,
+        dialog_id,
+        field_ask_count_before=None,
+        response_route=None,
+    ):
+        return {
+            "success": True,
+            "response": response,
+            "dialogId": dialog_id,
+            "collected_info": {"contact": "未留"},
+            "meta": {"ending": collection_result.get("ending_info", {})},
+        }
 
     async def _update_conversation_state(self, account_id, question, final_response, raw_response, track_asked_fields=False):
         self.updated = (account_id, question, final_response, raw_response, track_asked_fields)
@@ -95,6 +119,51 @@ def test_execute_returns_already_ended_response_without_reopening_conversation()
         )
     )
 
+    assert payload["success"] is True
     assert payload["response"] == "行，那先聊到这儿。"
+    assert payload["dialogId"] == "dlg_ended"
+    assert "collected_info" in payload
     assert payload["meta"]["route"] == "already_ended"
     assert chat_service.updated[-1] is False
+
+
+def test_execute_uses_short_ack_for_repeated_low_info_confirmation_after_end():
+    import asyncio
+
+    chat_service = _EndedChatService(recent_responses=["行，那先聊到这儿。"])
+    use_case = ProcessChatTurnUseCase(chat_service=chat_service)
+
+    payload = asyncio.run(
+        use_case.execute(
+            ChatRequest(
+                question="好的",
+                accountId="u_ended",
+                dialogId="dlg_ended_repeat",
+            )
+        )
+    )
+
+    assert payload["success"] is True
+    assert payload["response"] in ProcessChatTurnUseCase.ALREADY_ENDED_LOW_INFO_ACKS
+    assert payload["meta"]["route"] == "already_ended"
+
+
+def test_execute_turns_silent_after_repeated_low_info_confirmation_after_end():
+    import asyncio
+
+    chat_service = _EndedChatService(recent_responses=["行，那先聊到这儿。", "嗯嗯"])
+    use_case = ProcessChatTurnUseCase(chat_service=chat_service)
+
+    payload = asyncio.run(
+        use_case.execute(
+            ChatRequest(
+                question="好的",
+                accountId="u_ended",
+                dialogId="dlg_ended_silent",
+            )
+        )
+    )
+
+    assert payload["success"] is True
+    assert payload["response"] == ""
+    assert payload["meta"]["route"] == "already_ended"

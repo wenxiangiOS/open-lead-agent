@@ -487,7 +487,7 @@ class DialogueManager:
         message_count = conversation_context.get('message_count', 0)
         expected_field = user_profile.get_expected_field_for_short_answer(message_count)
         if expected_field:
-            logger.info(f"[短答槽位绑定] 期望字段: {expected_field}, 当前轮次: {message_count}")
+            logger.debug(f"[短答槽位绑定] 期望字段: {expected_field}, 当前轮次: {message_count}")
 
         # 添加信息提取提示词（传递 last_question 和 expected_field 用于上下文感知）
         extraction_prompt = get_extraction(

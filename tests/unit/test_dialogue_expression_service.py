@@ -44,6 +44,20 @@ def test_render_field_question_for_contact_is_short_and_natural():
     assert "及时联系" not in response
 
 
+def test_render_field_question_for_contact_can_reuse_location_and_occupation_context():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_contact_context")
+    profile.location = "深圳"
+    profile.occupation = "IT"
+
+    response = service.render_field_question("contact", profile=profile, stage="completing")
+
+    assert "手机号" in response
+    assert "深圳" in response
+    assert "IT" in response
+    assert "资料差不多" not in response
+
+
 def test_render_field_question_for_education_can_follow_short_answer_naturally():
     service = DialogueExpressionService()
     profile = UserProfile(account_id="u_expr_followup")
@@ -87,6 +101,7 @@ def test_render_field_question_for_age_bridge_avoids_flat_i_know_wording():
     assert "博士" in response
     assert "什么年龄段" in response or "多大" in response
     assert "这边我知道了" not in response
+    assert "年龄这块" not in response
 
 
 def test_render_field_question_for_age_bridge_avoids_recent_opening_repeat():
@@ -121,6 +136,8 @@ def test_render_contact_question_can_follow_short_answer_naturally():
 
     assert "手机号" in response
     assert "方便联系" in response
+    assert "我大概了解得差不多了" not in response
+    assert "这样的话" not in response
 
 
 def test_render_field_question_for_partner_requirement_uses_more_natural_preference_wording():
@@ -142,6 +159,7 @@ def test_render_field_question_for_sex_uses_soft_confirmation_when_preference_st
     assert "男生还是女生" not in response
     assert "男生" in response
     assert any(token in response for token in ("对吧", "是吧"))
+    assert "我理解得没偏" not in response
 
 
 def test_render_field_question_for_sex_keeps_neutral_question_when_only_single_weak_height_cue():
@@ -170,6 +188,7 @@ def test_render_field_question_for_sex_handles_user_challenge_with_text_chat_sty
     assert "听出来" not in response
     assert "男生" in response
     assert "男生还是女生" not in response
+    assert "我理解得没偏" not in response
 
 
 def test_render_field_question_for_marital_status_only_confirms_single_status():
@@ -180,6 +199,30 @@ def test_render_field_question_for_marital_status_only_confirms_single_status():
     assert "单身状态" in response
     assert "未婚" not in response
     assert "离异" not in response
+
+
+def test_render_field_question_for_marital_status_bridge_avoids_awkward_status_inquire_copy():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_bridge_marital")
+    profile.age_label = "90后"
+
+    response = service.render_field_question("marital_status", profile=profile, stage="trust")
+
+    assert "单身状态在了解吗" not in response
+    assert "我先记下了" not in response
+    assert "单身吗" in response
+
+
+def test_render_field_question_for_partner_requirement_bridge_avoids_status_broadcast_copy():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_bridge_partner_requirement")
+    profile.marital_status = "单身"
+
+    response = service.render_field_question("partner_requirement", profile=profile, stage="trust")
+
+    assert any(token in response for token in ("看重", "要求", "在意"))
+    assert "状态是吧" not in response
+    assert "这个状态" not in response
 
 
 def test_main_prompt_allows_low_frequency_reason_for_sensitive_fields():

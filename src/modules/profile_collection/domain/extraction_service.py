@@ -310,7 +310,7 @@ class ExtractionService:
             "age": r"(我\s*\d{1,3}\s*岁|我是一?个?\d{1,3}岁|出生于|我是\d{2}后|我是\d{4}年)",
             "location": r"(我在|我住在|我现在在|我目前在|我人在|我在.*(工作|生活)|我是.*的)",
             "education": r"(我是|学历|读到|本科|大专|硕士|博士|研究生)",
-            "occupation": r"(我是|我做|从事|职业是|工作是|做.*工作)",
+            "occupation": r"(我是|我做|从事|职业是|工作是|做.*工作|^\s*做\s*[A-Za-z\u4e00-\u9fa5]{1,12}(?:[，,、\s]|$)|^\s*[A-Za-z]{1,12}\s*[，,、\s])",
             "marital_status": r"((我是|目前|现在|我)\s*(单身|未婚|离异|已婚|分居)|离过婚|已经离婚)",
         }
         pattern = explicit_patterns.get(field)
@@ -804,6 +804,9 @@ class ExtractionService:
                     # 兼容“我叫小张，男的，30岁”这类常见自我介绍格式。
                     explicit_self_sex = re.search(
                         r"(?:我是|本人|我)\s*(男生|女生|男的|女的|男|女)",
+                        user_message or "",
+                    ) or re.search(
+                        r"(?:上面|前面|之前).{0,8}(?:说过|说了|提过).{0,6}(?:是)?(男生|女生|男的|女的|男|女)",
                         user_message or "",
                     ) or re.search(
                         r"我叫[^，,。！？!\s]{1,8}\s*[，,、 ]\s*(男生|女生|男的|女的|男|女)",

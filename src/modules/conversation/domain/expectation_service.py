@@ -98,6 +98,6 @@ class ExpectationService:
         """联系方式完成后的业务收尾话术。"""
         timeline = self.get_closing_timeline_text(user_profile)
         return (
-            f"好的，这边我先帮你记下了。按你现在的情况，{timeline}会有推进；"
-            "真有合适的，我会先跟你说一声，再往下接。"
+            f"好的，那你等好消息啦，祝你早日脱单。{timeline}哒，"
+            "牵线同事联系前会提前约时间，不打扰你。"
         )

@@ -854,6 +854,13 @@ class ProfileCollectionPolicy:
         """判断当前是否适合进入联系方式逻辑"""
         if self.has_divorce_confirmation_pending(profile):
             return False
+        if (
+            self.get_core_success_count(profile) >= 4
+            and self.is_collected(profile, "marital_status")
+            and self.is_collected(profile, "partner_requirement")
+            and self.is_collected(profile, "monthly_income")
+        ):
+            return True
         return self.is_coverage_complete(profile) and self.is_profile_sufficient_for_contact(profile)
 
     def has_serviceable_profile(self, profile: UserProfile) -> bool:
@@ -958,6 +965,6 @@ class ProfileCollectionPolicy:
         """
         # 一旦择偶要求已收集，或主动追问已被关闭，就禁止任何同义偏好追问。
         if self.is_collected(profile, "partner_requirement") or profile.is_active_ask_closed("partner_requirement"):
-            logger.info("[偏好去重] partner_requirement 已收集或已关闭主动追问，阻止偏好追问")
+            logger.debug("[偏好去重] partner_requirement 已收集或已关闭主动追问，阻止偏好追问")
             return True
         return False

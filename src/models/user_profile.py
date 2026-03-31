@@ -157,6 +157,7 @@ class UserProfile(BaseModel):
         description="被禁止的追问意图类型（ask_partner_requirement/ask_matching_priority/ask_basic_profile）"
     )
     last_asked_field: Optional[str] = Field(None, description="上一轮 AI 明确追问的字段（用于短答槽位绑定）")
+    last_asked_side_field: Optional[str] = Field(None, description="上一轮 AI 顺带追问的字段（用于主次双答绑定）")
     last_asked_turn_index: Optional[int] = Field(None, description="上一轮追问的消息序号")
     non_cooperation_turns: int = Field(default=0, description="连续不配合主流程的轮数")
     off_topic_turns: int = Field(default=0, description="连续偏离主流程的轮数")
@@ -733,21 +734,24 @@ class UserProfile(BaseModel):
             return False
         return intent in self.blocked_ask_intents
 
-    def set_last_asked_field(self, field_name: str, turn_index: int) -> None:
+    def set_last_asked_field(self, field_name: str, turn_index: int, *, side_field: Optional[str] = None) -> None:
         """
         记录上一轮追问的字段（用于短答槽位绑定）。
 
         Args:
             field_name: 字段名
             turn_index: 消息序号
+            side_field: 顺带追问字段
         """
         self.last_asked_field = field_name
+        self.last_asked_side_field = side_field
         self.last_asked_turn_index = turn_index
         self.updated_at = datetime.now()
 
     def clear_last_asked_field(self) -> None:
         """清除上一轮追问字段记录。"""
         self.last_asked_field = None
+        self.last_asked_side_field = None
         self.last_asked_turn_index = None
         self.updated_at = datetime.now()
 

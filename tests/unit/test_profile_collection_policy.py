@@ -122,6 +122,17 @@ class TestProfileCollectionPolicy:
 
         assert self.policy.should_allow_contact_instruction(profile, "ASK_PHONE") is False
 
+    def test_can_enter_contact_requires_monthly_income_even_when_other_medium_fields_are_ready(self):
+        profile = UserProfile(account_id="u_contact_income_gate")
+        self._mark_collected(profile, "sex", "age", "location", "education", "occupation", "marital_status", "partner_requirement")
+
+        assert self.policy.can_enter_contact(profile) is False
+
+        profile.monthly_income = "8万"
+        profile.collection_progress["monthly_income"] = True
+
+        assert self.policy.can_enter_contact(profile) is True
+
     def test_opening_with_location_and_occupation_prefers_low_pressure_missing_core(self):
         profile = UserProfile(account_id="u_opening_profile")
 

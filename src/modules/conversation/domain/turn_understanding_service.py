@@ -426,6 +426,13 @@ class TurnUnderstandingService:
             raw_fields["partner_requirement"] = str(raw_fields["education"]).strip()
 
         contact_candidate = self._extract_contact_candidate(message)
+        if not contact_candidate and bool(getattr(turn_input, "in_contact_flow", False)):
+            bare_candidate = self._extract_bare_contact_candidate(message)
+            if bare_candidate:
+                if bare_candidate["type"] == "wechat" and not getattr(turn_input.user_profile, "wechat_collected", False):
+                    contact_candidate = bare_candidate
+                elif bare_candidate["type"] == "phone" and not getattr(turn_input.user_profile, "phone_collected", False):
+                    contact_candidate = bare_candidate
         if contact_candidate and contact_candidate.get("value"):
             slot_name = "wechat" if contact_candidate.get("type") == "wechat" else "phone"
             raw_fields[slot_name] = str(contact_candidate["value"]).strip()
@@ -484,7 +491,7 @@ class TurnUnderstandingService:
         elif re.search(r"(我是单身|目前单身|现在单身)", message):
             extracted["marital_status"] = "单身"
 
-        age_match = re.search(r"我(?:今年|现在)?\s*(\d{2})\s*岁?", message)
+        age_match = re.search(r"我(?:今年|现在)?\s*(\d{2})(?!后)\s*岁?", message)
         if age_match:
             extracted["age"] = age_match.group(1)
 
@@ -827,12 +834,29 @@ class TurnUnderstandingService:
                     contaminated = True
         return {"value": raw_value, "type": hinted_type, "contaminated": contaminated}
 
+    @staticmethod
+    def _extract_bare_contact_candidate(message: str):
+        """识别用户直接裸发的联系方式，不依赖微信/电话前缀。"""
+        text = str(message or "").strip()
+        if not text:
+            return None
+        if re.fullmatch(r"\+?86?[\d\s-]{8,17}", text):
+            digits = re.sub(r"\D", "", text)
+            if digits.startswith("86") and len(digits) == 13 and digits[2] == "1":
+                digits = digits[2:]
+            if re.match(r"^1[3-9]\d{9}$", digits) or re.match(r"^[5-9]\d{7}$", digits):
+                return {"value": digits, "type": "phone", "contaminated": False}
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{5,19}", text):
+            return {"value": text, "type": "wechat", "contaminated": False}
+        return None
+
     def _extract_deterministic_profile_fields(self, user_message: str) -> Dict[str, str]:
         message = str(user_message or "").strip()
         if not message:
             return {}
 
         extracted = self._extract_basic_fields_from_message(message)
+        extracted = self._normalize_bucket_age_fields(extracted)
 
         sex_patterns = {
             "男": r"^\s*(男生|男的|男)\s*(呀|呢|哈|哦|啊)?\s*$",
@@ -874,11 +898,30 @@ class TurnUnderstandingService:
                 extracted["marital_status"] = marital
                 break
 
-        occupation_match = re.search(r"^\s*(?:做|做?的是|我是)\s*([\u4e00-\u9fa5]{2,8})\s*(?:的|呢|呀)?\s*$", message)
+        occupation_match = re.search(
+            r"(?:^|[，,、\s])(?:做|做的是|我是)\s*([A-Za-z]{1,12}|[\u4e00-\u9fa5]{2,8})\s*(?:的|呢|呀)?(?=$|[，,、。！？!?])",
+            message,
+        )
         if occupation_match:
             candidate = occupation_match.group(1).strip()
+            occupation_aliases = {
+                "it": "IT",
+                "ui": "UI",
+                "hr": "HR",
+                "qa": "QA",
+                "产品": "产品",
+                "运营": "运营",
+                "设计": "设计",
+                "开发": "开发",
+                "程序员": "程序员",
+                "销售": "销售",
+                "老师": "老师",
+                "医生": "医生",
+                "公务员": "公务员",
+            }
+            normalized_candidate = candidate.lower()
             if candidate not in {"男", "女", "单身", "未婚", "离异", "已婚"}:
-                extracted["occupation"] = candidate
+                extracted["occupation"] = occupation_aliases.get(normalized_candidate, candidate)
 
         if not extracted.get("occupation"):
             occupation_aliases = {
@@ -911,6 +954,23 @@ class TurnUnderstandingService:
 
         return extracted
 
+    @staticmethod
+    def _normalize_bucket_age_fields(extracted: Dict[str, str]) -> Dict[str, str]:
+        normalized = dict(extracted or {})
+        age_label = str(normalized.get("age_label") or "").strip()
+        if not age_label:
+            return normalized
+
+        label_match = re.search(r"(\d{2})后", age_label)
+        if not label_match:
+            return normalized
+
+        year_suffix = int(label_match.group(1))
+        current_year = datetime.now().year
+        birth_year = 2000 + year_suffix if year_suffix <= current_year % 100 else 1900 + year_suffix
+        normalized["age"] = str(current_year - birth_year)
+        return normalized
+
     def _extract_basic_fields_from_message(self, user_message: str) -> Dict[str, str]:
         if not user_message:
             return {}
@@ -922,6 +982,10 @@ class TurnUnderstandingService:
             extracted["sex"] = "女"
         elif "我是男生" in user_message or "本人男" in user_message:
             extracted["sex"] = "男"
+        elif re.search(r"(上面|前面|之前).{0,8}(说过|说了|提过).{0,6}(?:是)?(男生|男的|男)", user_message):
+            extracted["sex"] = "男"
+        elif re.search(r"(上面|前面|之前).{0,8}(说过|说了|提过).{0,6}(?:是)?(女生|女的|女)", user_message):
+            extracted["sex"] = "女"
         else:
             sex_match = re.search(r"(?:^|[，,、\s])(?:(?:我是)?(男生|男的|女生|女的))(?:呢|呀|哈|哦|啊)?(?=$|[，,、。！？!?])", user_message)
             if sex_match:
@@ -973,11 +1037,27 @@ class TurnUnderstandingService:
                 continue
             if token in education_tokens and index + 1 < len(segments):
                 candidate = segments[index + 1].strip()
-                if candidate and candidate not in marital_tokens and candidate not in ignored_tokens and not candidate.startswith("想找"):
+                if (
+                    candidate
+                    and candidate not in marital_tokens
+                    and candidate not in ignored_tokens
+                    and not candidate.startswith("想找")
+                    and not self._looks_like_income_token(candidate)
+                ):
                     extracted["occupation"] = candidate
                     break
 
         return extracted
+
+    @staticmethod
+    def _looks_like_income_token(value: str) -> bool:
+        text = str(value or "").strip().lower()
+        if not text:
+            return False
+        return bool(
+            re.fullmatch(r"(?:税前|税后)?\d+(?:\.\d+)?(?:k|w|万|千|元)?(?:左右|上下|出头|\+)?", text)
+            or re.fullmatch(r"(?:一|二|两|三|四|五|六|七|八|九|十|\d)+(?:万|千|元)(?:左右|上下|出头)?", text)
+        )
 
     @staticmethod
     def _extract_confirmed_sex_candidate_from_context(text: str) -> str | None:
@@ -994,7 +1074,8 @@ class TurnUnderstandingService:
     def _is_affirmative_confirmation_answer(text: str) -> bool:
         return bool(
             re.search(
-                r"^\s*(?:是的|对|对的|嗯|嗯嗯|没错|是|好的|好)\s*[，,、 ]*\s*$",
+                r"^\s*(?:是的|对|对的|嗯|嗯嗯|没错|是|好的|好)"
+                r"(?:\s*[，,、 ]\s*(?:单身|未婚|离异|已婚|分居))?\s*$",
                 str(text or ""),
             )
         )
@@ -1018,6 +1099,18 @@ class TurnUnderstandingService:
         if "sex" in guarded and not explicit_self_sex and preference_sex_hint:
             guarded.pop("sex", None)
             logger.info("[提取保护] 检测到择偶偏好语境，忽略 sex 提取，避免误写用户性别")
+
+        explicit_self_location = re.search(
+            r"(?:我在|来自|人在|目前在|现在在|住在)\s*([^\s，。！？!?]{2,8})",
+            message,
+        )
+        preference_location_hint = re.search(
+            r"(找|想找|喜欢|偏向|更想找).{0,6}(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)",
+            message,
+        )
+        if "location" in guarded and not explicit_self_location and preference_location_hint:
+            guarded.pop("location", None)
+            logger.info("[提取保护] 检测到择偶偏好城市语境，忽略 location 提取，避免误写用户所在地")
 
         sex_question_context = bool(
             re.search(r"(你是|是)(男生|女生|男的|女的|男|女)", last_ai)
@@ -1129,13 +1222,13 @@ class TurnUnderstandingService:
         if extracted.get("location"):
             return f"你现在主要在{str(extracted['location']).strip()}。"
         if extracted.get("education"):
-            return f"学历是{str(extracted['education']).strip()}。"
+            return f"{str(extracted['education']).strip()}是吧。"
         if extracted.get("occupation"):
             occupation = self._render_occupation_for_ack(str(extracted["occupation"]).strip())
-            return f"你现在主要做{occupation}。"
+            return f"你现在在做{occupation}。"
         if extracted.get("age_label") or extracted.get("age"):
             age_text = str(extracted.get("age_label") or extracted.get("age") or "").strip()
-            return f"{self._render_age_value(age_text)}这个年龄段我先记下了。"
+            return f"{self._render_age_value(age_text)}这个年龄段。"
         if preference:
             natural_preference = self._render_preference_for_ack(preference)
             return f"你更偏向{natural_preference}这类。"
@@ -1320,11 +1413,11 @@ class TurnUnderstandingService:
         if field == "sex":
             variants = (
                 "你这边是男生。",
-                "男生这边我先记下了。",
+                "你这边是男生对吧。",
                 "男生，我大概清楚了。",
             ) if "男" in text else (
                 "你这边是女生。",
-                "女生这边我先记下了。",
+                "你这边是女生对吧。",
                 "女生，我大概清楚了。",
             )
             return random.choice(variants)
@@ -1332,29 +1425,29 @@ class TurnUnderstandingService:
             return ""
         if field == "location":
             variants = (
+                f"你现在在{text}。",
                 f"现在主要在{text}。",
                 f"在{text}这边。",
-                f"{text}这边我先记下了。",
             )
             return random.choice(variants)
         if field == "education":
             variants = (
-                f"学历是{text}。",
-                f"{text}这块我先记下了。",
+                f"{text}是吧。",
+                f"学历这块是{text}。",
             )
             return random.choice(variants)
         if field == "occupation":
             rendered = self._render_occupation_for_ack(text)
             variants = (
-                f"现在主要做{rendered}。",
-                f"{rendered}这行我大概清楚了。",
+                f"你现在在做{rendered}。",
+                f"现在主要是做{rendered}。",
             )
             return random.choice(variants)
         if field == "marital_status":
             if "离异" in text:
                 return "现在是这个状态。"
             if "单身" in text:
-                return "现在是单身状态在了解。"
+                return "现在是单身在了解。"
             return f"现在是{text}这个状态。"
         return ""
 

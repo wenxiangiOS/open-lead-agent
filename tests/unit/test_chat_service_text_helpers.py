@@ -118,6 +118,10 @@ def test_sanitize_robotic_tone_removes_new_ack_skeletons_before_followup():
     assert "现在主要做IT这块，是吧" not in cleaned
     assert "月收入" in cleaned
 
+    cleaned = ChatService._sanitize_robotic_tone("学历这块是本科。 另外我也确认下，你现在是单身吗？")
+    assert "学历这块是本科" not in cleaned
+    assert "单身吗" in cleaned
+
 
 def test_clean_response_removes_dangling_particles_and_truncated_tail():
     chat_service = _build_chat_service()

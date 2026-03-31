@@ -31,6 +31,7 @@ def test_build_interleaving_followup_combines_main_and_income_question():
 
     assert "工作" in response or "做什么" in response
     assert "月收入" in response or "收入" in response
+    assert "深圳" in response
 
 
 def test_build_interleaving_followup_prefers_bridge_mode_over_generic_income_fusion():
@@ -47,6 +48,24 @@ def test_build_interleaving_followup_prefers_bridge_mode_over_generic_income_fus
 
     assert "工作" in response or "做什么" in response
     assert "收入" in response or "月薪" in response
+    assert "深圳" in response
+
+
+def test_build_interleaving_followup_does_not_repeat_location_when_prompt_already_absorbs_city():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_interleave_location_dedupe")
+    profile.location = "深圳"
+
+    response = chat_service._build_interleaving_followup(
+        profile,
+        "来自深圳，单身，喜欢温柔的",
+        main_target="occupation",
+        preferred_side_target="monthly_income",
+        allow_medium_target=True,
+    )
+
+    assert "你现在在深圳。 那你现在在深圳" not in response
+    assert "现在在深圳主要做哪方面工作" in response or "在深圳主要做哪方面工作" in response
 
 
 def test_build_interleaving_followup_combines_main_and_partner_requirement():
@@ -104,7 +123,7 @@ def test_ensure_short_answer_ack_transition_prefixes_ack_before_question():
         user_profile=profile,
     )
 
-    assert response.startswith(("深圳呀", "在深圳", "深圳我"))
+    assert response.startswith(("深圳呀", "在深圳", "深圳我", "你现在在深圳", "现在主要在深圳"))
     assert "学历" in response
 
 
@@ -204,7 +223,7 @@ def test_prepend_multi_field_ack_transition_bridges_before_next_core_question():
     )
 
     assert "多大" in response
-    assert response.startswith(("做IT", "好，IT这块", "IT方向", "IT这行我接住了", "IT这行我有数了", "现在主要做IT这块", "你现在主要做IT", "在深圳", "深圳呀", "好，现在单身状态"))
+    assert response.startswith(("做IT", "好，IT这块", "IT方向", "IT这行我接住了", "IT这行我有数了", "现在主要做IT这块", "现在做IT这块呀", "你现在主要做IT", "你现在在做IT", "现在主要是做IT", "IT这行呀", "在深圳", "深圳呀", "好，现在单身状态"))
     assert "更有数一点" not in response
 
 
@@ -216,6 +235,67 @@ def test_build_contextual_short_ack_avoids_recent_opening_repeat_for_occupation(
     ack = chat_service._build_contextual_short_ack("occupation", "IT", profile)
 
     assert ack != "做IT是吧。"
+
+
+def test_build_contextual_short_ack_for_location_avoids_recording_style_copy():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_location_ack")
+
+    ack = chat_service._build_contextual_short_ack("location", "深圳", profile)
+
+    assert "记下了" not in ack
+    assert "深圳" in ack
+
+
+def test_build_contextual_short_ack_for_occupation_prefers_natural_bridge_copy():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_occupation_ack")
+
+    ack = chat_service._build_contextual_short_ack("occupation", "IT", profile)
+
+    assert "记下了" not in ack
+    assert "IT" in ack
+    assert "现在主要做IT。" not in ack
+    assert "现在主要是做IT。" not in ack
+    assert ack in {"做IT呀。", "现在做IT这块呀。", "IT这行呀。"}
+
+
+def test_build_contextual_followup_ack_for_occupation_to_education_prefers_human_bridge():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_occupation_education_bridge")
+
+    ack = chat_service._build_contextual_followup_ack(
+        "occupation",
+        "IT",
+        ask_field="education",
+        user_profile=profile,
+    )
+
+    assert "IT" in ack
+    assert "学历" in ack
+    assert "现在主要是做IT" not in ack
+    assert ack in {
+        "做IT呀，那学历这块一般也会看一点。",
+        "IT这行呀，学历这块通常也会看一下。",
+        "现在做IT这块呀，那我顺着问下学历。",
+    }
+
+
+def test_build_contextual_followup_ack_for_prepend_does_not_repeat_followup_intent():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_occupation_prepend_ack")
+
+    ack = chat_service._build_contextual_followup_ack(
+        "occupation",
+        "IT",
+        ask_field="education",
+        user_profile=profile,
+        include_followup_transition=False,
+    )
+
+    assert ack in {"做IT呀。", "现在做IT这块呀。", "IT这行呀。"}
+    assert "学历" not in ack
+    assert "顺着问" not in ack
 
 
 def test_prepend_single_field_ack_transition_bridges_short_answer_before_next_question():
@@ -257,3 +337,43 @@ def test_prepend_single_field_ack_transition_skips_when_model_already_acked_loca
     )
 
     assert response == "在深圳这边是吧。 你目前是做哪方面工作的？"
+
+
+def test_prepend_multi_field_ack_transition_skips_when_response_already_contains_location_value():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_multi_field_ack_location")
+    profile.location = "深圳"
+    profile.collection_progress["location"] = True
+
+    response = chat_service._prepend_multi_field_ack_transition(
+        "你现在在深圳主要做哪方面工作呀？顺带问下，收入大概在哪个范围？",
+        profile,
+        {"all_fields": [{"field": "location", "value": "深圳"}, {"field": "partner_requirement", "value": "温柔"}]},
+        user_message="我在深圳，喜欢温柔的",
+        response_channel="model",
+        primary_move="ack_and_ask",
+        ask_field="occupation",
+        followup_topic=None,
+    )
+
+    assert response == "你现在在深圳主要做哪方面工作呀？顺带问下，收入大概在哪个范围？"
+
+
+def test_prepend_multi_field_ack_transition_skips_when_location_is_already_absorbed_into_question():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_multi_field_ack_location_context")
+    profile.location = "深圳"
+    profile.collection_progress["location"] = True
+
+    response = chat_service._prepend_multi_field_ack_transition(
+        "那你现在在深圳主要做哪方面工作呀？ 我再轻轻补一句，你现在月收入大概在哪一档？ 不方便说也没关系。",
+        profile,
+        {"all_fields": [{"field": "location", "value": "深圳"}, {"field": "partner_requirement", "value": "温柔"}]},
+        user_message="我来自深圳，喜欢温柔的",
+        response_channel="model",
+        primary_move="ack_and_ask",
+        ask_field="occupation",
+        followup_topic=None,
+    )
+
+    assert response == "那你现在在深圳主要做哪方面工作呀？ 我再轻轻补一句，你现在月收入大概在哪一档？ 不方便说也没关系。"

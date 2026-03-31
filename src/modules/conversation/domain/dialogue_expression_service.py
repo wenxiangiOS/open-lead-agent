@@ -28,6 +28,9 @@ class DialogueExpressionService:
         "爱干净": 1.5,
         "会照顾人": 1.5,
         "会做饭": 2.0,
+        "长发": 1.5,
+        "白净": 1.5,
+        "甜美": 1.5,
         "不强势": 2.0,
         "性格软一点": 2.0,
         "小鸟依人": 2.0,
@@ -125,7 +128,7 @@ class DialogueExpressionService:
         "location": ("好呀", "那我再问你一个", "顺着聊到这儿"),
         "education": ("好呀", "那我再了解下", "顺着聊到这儿"),
         "occupation": ("好呀", "那我再问你一个", "顺着聊到这儿"),
-        "contact": ("我大概了解得差不多了", "这样的话"),
+        "contact": ("聊到这儿", "那我顺手问你一个"),
     }
 
     SENSITIVE_REASON_VARIANTS = {
@@ -234,6 +237,30 @@ class DialogueExpressionService:
         stage: str = "collect",
         user_message: str = "",
     ) -> str:
+        location = str(getattr(profile, "location", "") or "").strip() if profile else ""
+        occupation = str(getattr(profile, "occupation", "") or "").strip() if profile else ""
+        if location and occupation:
+            variants = (
+                f"你在{location}做{occupation}这块是吧，留个手机号会更方便一点，后面有合适的我也好联系上你。",
+                f"像你现在在{location}做{occupation}这块，留个手机号的话，后面有合适进展我也好及时联系你。",
+                f"你这边在{location}做{occupation}我有数了，方便的话留个手机号，后面有合适的我好联系你。",
+            )
+            base = self._pick_variant_avoiding_recent_openings("contact:context:location_occupation", variants, profile)
+            return self._maybe_add_transition_prefix("contact", base, user_message=user_message)
+        if location:
+            variants = (
+                f"你现在在{location}这边是吧，方便的话留个手机号，后面有合适的我也好联系上你。",
+                f"像你现在在{location}这边，留个手机号会更方便一点，后面有合适进展我也好联系你。",
+            )
+            base = self._pick_variant_avoiding_recent_openings("contact:context:location", variants, profile)
+            return self._maybe_add_transition_prefix("contact", base, user_message=user_message)
+        if occupation:
+            variants = (
+                f"你现在做{occupation}这块我有数了，方便的话留个手机号，后面有合适的我也好联系你。",
+                f"像你做{occupation}这行，留个手机号会更方便一点，后面有合适进展我也好联系上你。",
+            )
+            base = self._pick_variant_avoiding_recent_openings("contact:context:occupation", variants, profile)
+            return self._maybe_add_transition_prefix("contact", base, user_message=user_message)
         base = self._next_variant("contact", self.CONTACT_PROMPTS)
         return self._maybe_add_transition_prefix("contact", base, user_message=user_message)
 
@@ -251,9 +278,9 @@ class DialogueExpressionService:
             return base
         prefix = self._next_variant(f"prefix:{field}", prefixes)
         if field == "contact":
-            if prefix == "我大概了解得差不多了":
-                return f"{prefix}。留个手机号方便联系吗？"
-            if prefix == "这样的话":
+            if prefix == "聊到这儿":
+                return f"{prefix}，留个手机号方便联系吗？"
+            if prefix == "那我顺手问你一个":
                 return f"{prefix}，留个手机号方便联系吗？"
             return base
 
@@ -320,9 +347,8 @@ class DialogueExpressionService:
             confirm = self._next_variant(
                 f"sex:challenge:confirm:{guess_label}",
                 (
-                    f"你这边是{guess_label}在了解吗？",
-                    f"你这边现在是{guess_label}这个方向吗？",
-                    f"所以我理解得没偏的话，你这边是{guess_label}？",
+                    f"你这边是{guess_label}对吧？",
+                    f"你这边现在是{guess_label}这个方向是吧？",
                 ),
             )
             return f"{lead}，{inference_ack}，{reason}，{example}。{confirm}"
@@ -334,9 +360,8 @@ class DialogueExpressionService:
         confirm = self._next_variant(
             f"sex:soft:confirm:{guess_label}",
             (
-                f"你这边是{guess_label}在了解吗？",
-                f"你这边现在是{guess_label}这个方向吗？",
-                f"我理解得没偏的话，你这边是{guess_label}？",
+                f"你这边是{guess_label}对吧？",
+                f"你这边现在是{guess_label}这个方向是吧？",
             ),
         )
         return f"{prefix}，{confirm}"
@@ -479,8 +504,8 @@ class DialogueExpressionService:
             return None
         variants = (
             f"{education}是吧，那你现在大概什么年龄段呀？",
-            f"{education}我接住了，你今年大概多大呀？",
-            f"学历这块是{education}，那你现在大概多大呀？",
+            f"那我顺着问下，你现在大概什么年龄段呀？",
+            f"{education}这块我有数了，那你现在大概什么年龄段呀？",
         )
         return self._pick_variant_avoiding_recent_openings("bridge:age", variants, profile)
 
@@ -492,9 +517,9 @@ class DialogueExpressionService:
         if not age_label:
             return None
         variants = (
-            f"那你现在大概是{age_label}这个年龄段吗？你现在是单身状态在了解吗？",
+            f"那你现在大概是{age_label}这个年龄段吗？感情状态这边现在是单身吗？",
             f"你这个年龄段我大概有数了，那你现在感情状态是单身吗？",
-            f"{age_label}这个年龄段我先记下了。你现在是单身状态在了解吗？",
+            f"{age_label}这个年龄段我大概有数了。你现在是单身吗？",
         )
         return self._pick_variant_avoiding_recent_openings("bridge:marital", variants, profile)
 
@@ -503,9 +528,9 @@ class DialogueExpressionService:
         if not marital_status:
             return None
         variants = (
-            f"{marital_status}状态是吧，那你对另一半大概有什么要求呀？",
-            f"好，这个状态我接住了。你会更看重对方哪一点呀？",
-            f"现在这个状态我清楚了，那你找对象时会更在意哪方面呀？",
+            f"那你找对象的时候，会更看重对方哪一点呀？",
+            f"说到这儿，你会更在意对方哪方面呀？",
+            f"那你对另一半大概有什么要求呀？你会更看重哪一点？",
         )
         return self._pick_variant_avoiding_recent_openings("bridge:partner_requirement", variants, profile)
 

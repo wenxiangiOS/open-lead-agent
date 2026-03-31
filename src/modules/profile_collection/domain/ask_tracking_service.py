@@ -220,7 +220,7 @@ class AskTrackingService:
 
             user_profile.increment_ask_count(field)
             current_count = user_profile.get_ask_count(field)
-            logger.info(f"[智能追问] AI询问了字段 {field}，当前追问次数: {current_count}")
+            logger.debug(f"[智能追问] AI询问了字段 {field}，当前追问次数: {current_count}")
             if field in self.COOLDOWN_MANAGED_FIELDS and not recorded_primary:
                 user_profile.mark_recent_asked_field(field, max_history=max_history)
                 recorded_primary = True
@@ -228,13 +228,13 @@ class AskTrackingService:
             # 中等字段问过一次后转为被动提取，避免像表单机一样反复追问。
             if field in self.MEDIUM_FIELDS:
                 user_profile.close_active_ask(field)
-                logger.info(f"[智能追问] 中等字段 {field} 已关闭主动追问，后续仅被动提取")
+                logger.debug(f"[智能追问] 中等字段 {field} 已关闭主动追问，后续仅被动提取")
                 continue
 
             if current_count >= 2 and not skip_guard_enabled:
                 user_profile.skipped_fields[field] = True
-                logger.info(f"[智能追问] 字段 {field} 已问2次未回答，自动标记为跳过")
+                logger.debug(f"[智能追问] 字段 {field} 已问2次未回答，自动标记为跳过")
             elif current_count >= 2 and skip_guard_enabled:
-                logger.info(f"[智能追问-防抖] 字段 {field} 达到2次，已启用 skip 防抖，不自动标记跳过")
+                logger.debug(f"[智能追问-防抖] 字段 {field} 达到2次，已启用 skip 防抖，不自动标记跳过")
 
         await self.user_service.save_user_profile(account_id, user_profile)

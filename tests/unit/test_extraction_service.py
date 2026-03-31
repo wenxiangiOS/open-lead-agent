@@ -145,6 +145,23 @@ async def test_process_extracted_data_allows_affirmative_sex_confirmation_with_p
 
 
 @pytest.mark.anyio
+async def test_process_extracted_data_allows_correction_style_sex_write():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_correction_sex")
+
+    await service.process_extracted_data(
+        "user_correction_sex",
+        profile,
+        {"sex": "男"},
+        user_message="上面不是说了是男生吗？",
+    )
+
+    refreshed = await user_service.get_user_profile("user_correction_sex")
+    assert refreshed.sex == "男"
+
+
+@pytest.mark.anyio
 async def test_process_extracted_data_clears_stale_age_label_when_user_provides_exact_age():
     user_service = _FakeUserService()
     service = ExtractionService(user_service)
@@ -183,6 +200,27 @@ async def test_process_extracted_data_does_not_pollute_occupation_with_partner_r
     assert refreshed.education == "本科"
     assert refreshed.partner_requirement == "气质"
     assert refreshed.occupation is None
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_keeps_explicit_occupation_when_same_turn_also_contains_preference():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_occ_and_pref")
+
+    await service.process_extracted_data(
+        "user_occ_and_pref",
+        profile,
+        {
+            "occupation": "IT",
+            "partner_requirement": "温柔",
+        },
+        user_message="做it，看中对方温柔",
+    )
+
+    refreshed = await user_service.get_user_profile("user_occ_and_pref")
+    assert refreshed.occupation == "IT"
+    assert refreshed.partner_requirement == "温柔"
 
 
 @pytest.mark.anyio

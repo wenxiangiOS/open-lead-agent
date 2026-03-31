@@ -144,7 +144,7 @@ class UserService:
                     # 同时保存到内存缓存
                     self._memory_profiles[account_id] = profile
                     # === 调试日志 ===
-                    logger.info(f"[用户档案加载] account_id={account_id}, phone_ask_count={profile.phone_ask_count}, wechat_ask_count={profile.wechat_ask_count}, rejected_phone={profile.rejected_phone}")
+                    logger.debug(f"[用户档案加载] account_id={account_id}, phone_ask_count={profile.phone_ask_count}, wechat_ask_count={profile.wechat_ask_count}, rejected_phone={profile.rejected_phone}")
                     return profile
             except Exception as e:
                 logger.error(f"Redis get_user_profile error: {e}, using memory fallback")
@@ -166,7 +166,7 @@ class UserService:
         profile_dict = profile.to_dict()
 
         # === 调试日志 ===
-        logger.info(f"[用户档案保存] account_id={account_id}, phone_ask_count={profile.phone_ask_count}, wechat_ask_count={profile.wechat_ask_count}, rejected_phone={profile.rejected_phone}")
+        logger.debug(f"[用户档案保存] account_id={account_id}, phone_ask_count={profile.phone_ask_count}, wechat_ask_count={profile.wechat_ask_count}, rejected_phone={profile.rejected_phone}")
 
         if self.use_redis:
             try:
@@ -224,7 +224,7 @@ class UserService:
         success = profile.update_field(field_name, value)
 
         if success:
-            logger.info(f"Updated {field_name} for user {account_id}: {value}")
+            logger.debug(f"Updated {field_name} for user {account_id}: {value}")
             # 保存到Redis
             await self.save_user_profile(account_id, profile)
 

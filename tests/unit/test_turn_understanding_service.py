@@ -307,6 +307,35 @@ def test_turn_understanding_extracts_short_profile_answers():
     assert extracted["occupation"] == "IT"
 
 
+def test_turn_understanding_extracts_occupation_and_preference_from_compound_reply():
+    service = TurnUnderstandingService(_StubChatService())
+
+    extracted = service._extract_deterministic_profile_fields("做it，看中对方温柔")  # noqa: SLF001
+
+    assert extracted["occupation"] == "IT"
+    assert extracted["partner_requirement"] == "温柔"
+
+
+def test_turn_understanding_does_not_treat_income_token_after_education_as_occupation():
+    service = TurnUnderstandingService(_StubChatService())
+
+    extracted = service._extract_deterministic_profile_fields("本科，8万")  # noqa: SLF001
+
+    assert extracted["education"] == "本科"
+    assert extracted["monthly_income"] == "8万"
+    assert extracted.get("occupation") in (None, "")
+
+
+def test_turn_understanding_does_not_parse_post_90_bucket_as_ninety_years_old():
+    service = TurnUnderstandingService(_StubChatService())
+
+    extracted = service._extract_deterministic_profile_fields("我90后，")  # noqa: SLF001
+
+    assert extracted["age_label"] == "90后"
+    assert int(extracted["age"]) < 60
+    assert int(extracted["age"]) != 90
+
+
 def test_turn_understanding_extracts_monthly_income():
     service = TurnUnderstandingService(_StubChatService())
     extracted = service._extract_deterministic_profile_fields("收入大概1w左右")  # noqa: SLF001
@@ -389,3 +418,14 @@ def test_turn_understanding_guard_allows_affirmative_confirmation_to_confirm_sex
         last_response="我再确认下，你这边是男生对吧？",
     )
     assert guarded["sex"] == "男"
+
+
+def test_turn_understanding_guard_binds_affirmative_prefix_to_confirmed_sex_with_marital_answer():
+    service = TurnUnderstandingService(_StubChatService())
+    guarded = service._apply_extraction_guards(  # noqa: SLF001
+        {"marital_status": "单身"},
+        "是的，单身",
+        last_response="我这边确认一下，你这边是男生？ 感情状态这边我也顺手确认一下，你现在是单身状态吗？",
+    )
+    assert guarded["sex"] == "男"
+    assert guarded["marital_status"] == "单身"
