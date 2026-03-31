@@ -278,10 +278,6 @@ class DialogueExpressionService:
             return base
         prefix = self._next_variant(f"prefix:{field}", prefixes)
         if field == "contact":
-            if prefix == "聊到这儿":
-                return f"{prefix}，留个手机号方便联系吗？"
-            if prefix == "那我顺手问你一个":
-                return f"{prefix}，留个手机号方便联系吗？"
             return base
 
         if prefix in {"好呀", "那我再了解下", "顺着聊到这儿", "那我再问你一个"}:

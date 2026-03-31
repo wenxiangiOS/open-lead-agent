@@ -2721,6 +2721,9 @@ class ChatService:
             return text
         if self._has_active_contact_context(user_profile, collection_result=collection_result, user_message=user_message):
             return text
+        asked_fields = self._detect_asked_fields_in_response(text)
+        if asked_fields - {"contact"}:
+            return text
 
         all_fields = [
             item for item in (collection_result or {}).get("all_fields", [])
@@ -2731,6 +2734,8 @@ class ChatService:
 
         asked_fields = self._detect_asked_fields_in_response(text)
         if ask_field not in asked_fields:
+            return text
+        if len(asked_fields) >= 2:
             return text
 
         candidate_order = ("occupation", "location", "marital_status", "education", "age", "sex")
@@ -6547,6 +6552,23 @@ class ChatService:
                     return rewritten.strip()
             return text
 
+        soft_confirmation = self.dialogue_expression_service._build_soft_gender_confirmation_prompt(  # noqa: SLF001
+            user_profile,
+            user_message=user_message,
+        )
+        if soft_confirmation and any(token in text for token in ("男生还是女生", "性别")) and "对吧" not in text:
+            generic_patterns = (
+                r"(?:我再确认一下，?)?\s*你这边是男生还是女生呀[？?]?",
+                r"(?:了解[，,、 ]*)?你是男生还是女生呀[？?]?",
+                r"(?:了解[，,、 ]*)?你这边是男生还是女生呀[？?]?",
+                r"你这边是男生还是女生呀[？?]?",
+                r"你是男生还是女生呀[？?]?",
+            )
+            rewritten = text
+            for pattern in generic_patterns:
+                rewritten = re.sub(pattern, soft_confirmation, rewritten)
+            return rewritten.strip()
+
         generic_hold_markers = (
             "好的，信息我先记下了",
             "好，信息我先记下了",
@@ -6599,6 +6621,8 @@ class ChatService:
             return text
 
         asked_fields = self._detect_asked_fields_in_response(text)
+        if len(asked_fields) >= 2:
+            return text
         if "sex" in asked_fields:
             return text
 
