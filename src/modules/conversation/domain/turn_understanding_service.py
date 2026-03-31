@@ -998,9 +998,21 @@ class TurnUnderstandingService:
             extracted["age"] = str(datetime.now().year - birth_year)
             extracted["age_label"] = f"{age_match.group(1)}后"
         else:
-            explicit_age = re.search(r"(\d{2})岁", user_message)
-            if explicit_age:
-                extracted["age"] = explicit_age.group(1)
+            birth_year_full = re.search(r"(19\d{2}|20\d{2})年(?:出生)?", user_message)
+            birth_year_short = re.search(r"(?<!\d)(\d{2})年(?:的)?(?:出生)?", user_message)
+            if birth_year_full:
+                birth_year = int(birth_year_full.group(1))
+                extracted["age"] = str(datetime.now().year - birth_year)
+                extracted["age_label"] = f"{birth_year}年"
+            elif birth_year_short:
+                suffix = int(birth_year_short.group(1))
+                birth_year = 2000 + suffix if suffix <= datetime.now().year % 100 else 1900 + suffix
+                extracted["age"] = str(datetime.now().year - birth_year)
+                extracted["age_label"] = f"{birth_year_short.group(1)}年"
+            else:
+                explicit_age = re.search(r"(\d{2})岁", user_message)
+                if explicit_age:
+                    extracted["age"] = explicit_age.group(1)
 
         city_candidates = {"深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港"}
         preference_context = bool(re.search(r"(喜欢|想找|找).*(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)", user_message))

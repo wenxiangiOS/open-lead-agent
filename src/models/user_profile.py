@@ -221,15 +221,22 @@ class UserProfile(BaseModel):
                     birth_year = 2000 + year_suffix if year_suffix <= current_year_suffix else 1900 + year_suffix
                     v = datetime.now().year - birth_year
                 else:
-                    birth_year_match = re.search(r'^(19\d{2}|20\d{2})年?$', value_str)
+                    birth_year_match = re.search(r'(19\d{2}|20\d{2})年?(?:出生)?', value_str)
                     if birth_year_match:
                         birth_year = int(birth_year_match.group(1))
                         v = datetime.now().year - birth_year
                     else:
-                        age_match = re.search(r'(\d{1,3})\s*岁?', value_str)
-                        if not age_match:
-                            return None
-                        v = int(age_match.group(1))
+                        short_birth_year_match = re.search(r'(?<!\d)(\d{2})年(?:的)?(?:出生)?', value_str)
+                        if short_birth_year_match:
+                            year_suffix = int(short_birth_year_match.group(1))
+                            current_year_suffix = datetime.now().year % 100
+                            birth_year = 2000 + year_suffix if year_suffix <= current_year_suffix else 1900 + year_suffix
+                            v = datetime.now().year - birth_year
+                        else:
+                            age_match = re.search(r'(\d{1,3})\s*岁?', value_str)
+                            if not age_match:
+                                return None
+                            v = int(age_match.group(1))
             if 18 <= v <= 100:
                 return v
             return None

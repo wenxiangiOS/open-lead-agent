@@ -401,12 +401,21 @@ class ExtractionService:
             birth_year = 2000 + year_suffix if year_suffix <= current_year_suffix else 1900 + year_suffix
             return current_year - birth_year
 
-        # 3. 尝试匹配出生年份（支持“1998”或“1998年”）
-        match = re.search(r'^(19\d{2}|20\d{2})年?$', value_str)
+        # 3. 尝试匹配出生年份（支持“1998”“1998年”“89年”“89年的”）
+        match = re.search(r'(19\d{2}|20\d{2})年?(?:出生)?', value_str)
         if match:
             birth_year = int(match.group(1))
             from datetime import datetime
             current_year = datetime.now().year
+            return current_year - birth_year
+
+        match = re.search(r'(?<!\d)(\d{2})年(?:的)?(?:出生)?', value_str)
+        if match:
+            year_suffix = int(match.group(1))
+            from datetime import datetime
+            current_year = datetime.now().year
+            current_year_suffix = current_year % 100
+            birth_year = 2000 + year_suffix if year_suffix <= current_year_suffix else 1900 + year_suffix
             return current_year - birth_year
 
         # 4. 尝试提取任意数字
@@ -432,6 +441,10 @@ class ExtractionService:
         match = re.search(r'(\d{2})后', value_str)
         if match:
             return f"{match.group(1)}后"
+
+        match = re.search(r'((?:19\d{2}|20\d{2})年|(?:\d{2})年(?:的)?)', value_str)
+        if match:
+            return match.group(1)
 
         return None
 

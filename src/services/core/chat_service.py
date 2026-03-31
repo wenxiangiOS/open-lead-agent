@@ -4639,6 +4639,24 @@ class ChatService:
         return "微信我看到了，我们接着往下聊就行。"
 
     @staticmethod
+    def _build_ask_wechat_fallback() -> str:
+        variants = (
+            "你要是方便的话，留个常用微信也行，后面有合适进展时联系你会更顺一些。",
+            "如果你更习惯微信的话，发个常用微信给我就行，后面沟通起来会方便一点。",
+            "方便的话，也可以留个常用微信，后面真有匹配进展时联系你会更顺手。",
+        )
+        return random.choice(variants)
+
+    @staticmethod
+    def _build_persuade_wechat_fallback() -> str:
+        variants = (
+            "我再解释一下，继续问微信主要是想着后面如果真有合适的人，微信联系你会方便一点。你要是方便的话，留个常用微信就行。",
+            "明白你现在对微信这块还有点顾虑。我这边再问一句，主要是后面有匹配进展时，微信沟通会顺一些。你要是方便的话，发个常用微信就可以。",
+            "我懂，你现在不太想留也正常。我这边继续问微信，主要是想着后面真有合适的人时联系你会更方便。你要是方便的话，留个常用微信就行。",
+        )
+        return random.choice(variants)
+
+    @staticmethod
     def _build_phone_persuasion_fallback() -> str:
         """电话二次争取的软性兜底，不用固定句式硬复读。"""
         variants = (
@@ -4858,12 +4876,12 @@ class ChatService:
                 return response
             if user_profile.phone_collected and user_profile.phone:
                 return self._build_contact_followup_response("ask_wechat", "phone")
-            return "没关系，你要是觉得微信更方便，留个微信也可以。"
+            return self._build_ask_wechat_fallback()
 
         if action_value == "persuade_wechat":
             if self._response_matches_contact_action(response, "persuade_wechat"):
                 return response
-            return "你要是更习惯微信的话，留个常用微信就行，后面沟通也方便一些。"
+            return self._build_persuade_wechat_fallback()
 
         if action_value == "ask_phone":
             if self._response_matches_contact_action(response, "ask_phone"):
@@ -4950,7 +4968,9 @@ class ChatService:
             return response
 
         if action_value == "persuade_wechat":
-            return "你要是更习惯微信的话，留个常用微信就行，后面沟通也方便一些。"
+            if self._response_matches_contact_action(response, "persuade_wechat"):
+                return response
+            return self._build_persuade_wechat_fallback()
 
         if action_value == "persuade_phone":
             if self._response_mentions_phone_request(response) and any(
@@ -5585,6 +5605,13 @@ class ChatService:
         )
         next_field = decision.main_target
         if next_field and next_field not in {"partner_requirement", "contact"}:
+            if next_field == "marital_status":
+                bridge_variants = (
+                    f"{ack} 我再顺手确认一下，你现在是单身状态吗？",
+                    f"{ack} 对了，我也确认下，你现在是单身吗？",
+                    f"{ack} 那我再接着问一句，你现在是单身状态吗？",
+                )
+                return random.choice(bridge_variants).strip()
             followup = self._build_policy_field_prompt(next_field, shadow_profile, user_message=user_message)
             return f"{ack} {followup}".strip()
         return ack
@@ -6182,9 +6209,9 @@ class ChatService:
             return self._get_contact_completion_ending_response(user_profile)
 
         if action_value == "ask_wechat":
-            return "没关系，你要是觉得微信更方便，留个微信也可以。"
+            return self._build_ask_wechat_fallback()
         if action_value == "persuade_wechat":
-            return "你要是更习惯微信的话，留个常用微信就行，后面沟通也方便一些。"
+            return self._build_persuade_wechat_fallback()
         if action_value == "ask_phone":
             return "我知道你这会儿可能对电话有点顾虑。只是后面要是真有合适的方向，留个常用手机号会更方便联系上你。"
         if action_value == "persuade_phone":
@@ -6830,9 +6857,7 @@ class ChatService:
             host_field = self.collection_policy.get_medium_transition_host(user_profile, "partner_requirement")
             if host_field:
                 if host_field == "age":
-                    age_hint = self._render_age_value(user_message or getattr(user_profile, "age_label", "") or getattr(user_profile, "age", ""))
-                    if age_hint:
-                        return f"{age_hint}这个阶段的话，你找对象时会更看重哪方面？"
+                    return self._build_partner_requirement_followup_by_age_context(user_profile)
                 return self._build_interleaving_followup(
                     user_profile,
                     user_message,
@@ -6982,6 +7007,25 @@ class ChatService:
         if text.isdigit():
             return f"{text}岁"
         return text
+
+    def _build_partner_requirement_followup_by_age_context(self, user_profile: UserProfile) -> str:
+        age_hint = self._render_age_value(
+            getattr(user_profile, "age_label", "") or getattr(user_profile, "age", "")
+        )
+        if age_hint:
+            prompts = [
+                "像你现在这个年龄段，找对象时会更看重哪方面呀？",
+                f"{age_hint}这个年龄段的话，你找另一半通常会更在意什么？",
+                "到你现在这个阶段，找对象时你会更看重性格、相处还是现实条件？",
+            ]
+        else:
+            prompts = [
+                "那你找对象时会更看重哪方面呀？",
+                "你对另一半更在意哪些点？",
+                "你找另一半时，通常更看重性格、相处还是现实条件？",
+            ]
+        signatures = list(getattr(user_profile, "recent_prompt_signatures", []) or [])
+        return prompts[len(signatures) % len(prompts)]
 
     def _canonicalize_extracted_fields(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """将提取字段映射为统一字段名，清理空值。"""
@@ -7173,9 +7217,9 @@ class ChatService:
             if action_value == "ask_wechat":
                 if user_profile.phone_collected and user_profile.phone:
                     return self._build_contact_followup_response("ask_wechat", "phone")
-                return "没关系，你要是觉得微信更方便，留个微信也可以。"
+                return self._build_ask_wechat_fallback()
             if action_value == "persuade_wechat":
-                return "你要是更习惯微信的话，留个常用微信就行，后面沟通也方便一些。"
+                return self._build_persuade_wechat_fallback()
             if action_value == "end":
                 return self._get_both_rejected_ending_response()
             if action_value in {"none", "", None}:
