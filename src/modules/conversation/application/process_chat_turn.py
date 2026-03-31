@@ -19,6 +19,15 @@ class ProcessChatTurnUseCase:
     """Behavior-preserving extraction of the main chat turn orchestration."""
 
     ALREADY_ENDED_LOW_INFO_ACKS = ("嗯嗯", "好呀", "收到啦")
+    TERMINAL_REPLY_MARKERS = (
+        "等好消息",
+        "祝你早日脱单",
+        "提前约时间",
+        "不打扰你",
+        "会联系你",
+        "优先打你留的电话联系你",
+        "通过微信联系你",
+    )
 
     def __init__(self, chat_service: "ChatService") -> None:
         self.chat_service = chat_service
@@ -93,6 +102,13 @@ class ProcessChatTurnUseCase:
             return False
         variants = {cls._normalize_compact_text(base_response), *(cls._normalize_compact_text(item) for item in cls.ALREADY_ENDED_LOW_INFO_ACKS)}
         return normalized in variants
+
+    @classmethod
+    def _looks_like_terminal_reply(cls, text: str) -> bool:
+        normalized = cls._normalize_compact_text(text)
+        if not normalized:
+            return False
+        return any(cls._normalize_compact_text(marker) in normalized for marker in cls.TERMINAL_REPLY_MARKERS)
 
     @classmethod
     def _build_already_ended_reply(
@@ -206,6 +222,38 @@ class ProcessChatTurnUseCase:
                 user_profile.conversation_ended = False
                 await self.chat_service.user_service.save_user_profile(account_id, user_profile)
                 _mark("new_session_reset", t0)
+
+            if self._is_low_info_confirmation(request.question) and not is_new_user_session:
+                t0 = time.perf_counter()
+                conversation_context = await self.chat_service.dialogue_manager.get_conversation_context(account_id)
+                _mark("context_load", t0)
+                recent_responses = conversation_context.get("recent_responses") or []
+                last_response = str(recent_responses[-1] or "").strip() if recent_responses else ""
+                if last_response and self._looks_like_terminal_reply(last_response):
+                    final_response = self._build_already_ended_reply(
+                        request.question,
+                        last_response,
+                        recent_responses,
+                    )
+                    final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                    route_name = "already_ended"
+                    response_channel = "model"
+                    t0 = time.perf_counter()
+                    await self.chat_service._update_conversation_state(  # noqa: SLF001
+                        account_id,
+                        request.question,
+                        final_response,
+                        final_response,
+                        track_asked_fields=False,
+                    )
+                    _mark("state_update", t0)
+                    payload = {
+                        "success": True,
+                        "response": final_response,
+                        "dialogId": request.dialogId,
+                        "meta": {"route": route_name},
+                    }
+                    return self._sync_payload_response(payload, final_response)
 
             if user_profile.conversation_ended and not is_new_user_session:
                 t0 = time.perf_counter()
