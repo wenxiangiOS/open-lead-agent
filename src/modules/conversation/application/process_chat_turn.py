@@ -1053,6 +1053,14 @@ class ProcessChatTurnUseCase:
                 ask_field=turn_decision.ask_field,
                 followup_topic=turn_decision.followup_topic,
             )
+            final_response = self.chat_service._enforce_missing_sex_followup_after_preference(  # noqa: SLF001
+                final_response,
+                user_profile,
+                collection_result=collection_result,
+                user_message=request.question,
+                response_channel=turn_decision.response_channel,
+                primary_move=turn_decision.primary_move,
+            )
             final_response = self.chat_service._append_safe_short_answer_followup(  # noqa: SLF001
                 final_response,
                 user_profile,

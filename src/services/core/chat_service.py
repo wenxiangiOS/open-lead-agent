@@ -827,6 +827,43 @@ class ChatService:
                 return False
         return self._matches_any_pattern(message, BOUNDARY_PAUSE_PATTERNS)
 
+    def _should_keep_contact_refusal_in_contact_flow(
+        self,
+        user_message: str,
+        user_profile: Optional[UserProfile],
+        *,
+        understanding: Optional[TurnUnderstandingResult] = None,
+    ) -> bool:
+        """联系方式场景中的委婉拒绝继续走现有联系方式追问链路，不被边界收口吞掉。"""
+        if user_profile is None:
+            return False
+        if understanding is not None and not (
+            understanding.primary_turn_type == "refusal_boundary_complaint"
+            and (understanding.subtype or "") == "contact_refusal"
+        ):
+            return False
+
+        message = (user_message or "").strip()
+        if not message:
+            return False
+        if not any(token in message for token in ("不方便", "不想留", "不留", "不给", "算了")):
+            return False
+
+        last_contact_type = str(getattr(user_profile, "last_contact_request_type", "") or "").strip()
+        if last_contact_type not in {"phone", "wechat"} and not self._has_active_contact_context(
+            user_profile,
+            user_message=message,
+        ):
+            return False
+
+        try:
+            next_action = self.contact_service.get_next_action(user_profile, message)
+            action_value = getattr(next_action, "value", str(next_action))
+        except Exception:
+            return False
+
+        return action_value in {"ask_phone", "persuade_phone", "ask_wechat", "persuade_wechat"}
+
     @staticmethod
     def _looks_like_fake_info_message(user_message: str) -> bool:
         message = str(user_message or "").strip()
@@ -1516,7 +1553,7 @@ class ChatService:
             risk = "high_risk"
             primary_move = "answer_then_pause"
             allow_contact_target = False
-        elif self._is_boundary_pause_triggered(message, user_profile):
+        elif self._is_boundary_pause_triggered(message, user_profile) and not self._should_keep_contact_refusal_in_contact_flow(message, user_profile):
             risk = "boundary"
             primary_move = "soft_hold"
             allow_contact_target = False
@@ -1716,6 +1753,15 @@ class ChatService:
                 and understanding.primary_turn_type == "faq_concern"
                 and understanding.subtype == "clarification"
                 and self._looks_like_contact_clarification_in_context(message, user_profile)
+            ):
+                quick_decision = None
+            if (
+                quick_decision is not None
+                and self._should_keep_contact_refusal_in_contact_flow(
+                    message,
+                    user_profile,
+                    understanding=understanding,
+                )
             ):
                 quick_decision = None
             if quick_decision is not None:
@@ -1981,6 +2027,35 @@ class ChatService:
                 message,
             )
         )
+
+    def _opening_message_has_substantive_profile_content(self, user_message: str) -> bool:
+        """开场轮里如果用户已经提供了画像/偏好信息，就不该再被打回开放自述模板。"""
+        message = str(user_message or "").strip()
+        if not message:
+            return False
+
+        extracted = self.turn_understanding_service._extract_deterministic_profile_fields(message)  # noqa: SLF001
+        canonical = self._canonicalize_extracted_fields(extracted)
+        substantive_fields = {
+            "location",
+            "age",
+            "age_label",
+            "education",
+            "occupation",
+            "marital_status",
+            "monthly_income",
+            "partner_requirement",
+            "height",
+            "weight",
+        }
+        if substantive_fields & set(canonical.keys()):
+            return True
+
+        preference = self.turn_understanding_service._extract_simple_partner_requirement(message)  # noqa: SLF001
+        if preference:
+            return True
+
+        return False
 
     @staticmethod
     def _is_opening_probe_followup_message(user_message: str, last_response: str = "") -> bool:
@@ -3357,6 +3432,8 @@ class ChatService:
             turn_decision.allow_medium_target = False
             turn_decision.followup_topic = None
         elif signal.intent in {"explicit_matchmaking_opening", "low_pressure_opening", "opening_light_consult"}:
+            if self._opening_message_has_substantive_profile_content(user_message):
+                return
             turn_decision.intent = "opening_self_intro"
             turn_decision.primary_move = "answer_then_pause"
             turn_decision.ask_field = None
@@ -3399,6 +3476,8 @@ class ChatService:
             if self._contains_contact_push_markers(text) or self._detect_asked_fields_in_response(text):
                 return self.greeting_service.get_opening_clarify_response(seed_hint=seed_hint)
         if signal.intent in {"explicit_matchmaking_opening", "low_pressure_opening", "opening_light_consult"}:
+            if self._opening_message_has_substantive_profile_content(user_message):
+                return text
             if self._contains_contact_push_markers(text) or self._detect_asked_fields_in_response(text):
                 return self.greeting_service.get_open_self_intro_response(seed_hint=seed_hint)
         if signal.intent == "opening_faq":
@@ -6409,6 +6488,24 @@ class ChatService:
 
         asked_fields = self._detect_asked_fields_in_response(text)
         if effective_ask_field in asked_fields:
+            if effective_ask_field == "sex":
+                soft_confirmation = self.dialogue_expression_service._build_soft_gender_confirmation_prompt(  # noqa: SLF001
+                    user_profile,
+                    user_message=user_message,
+                )
+                if soft_confirmation and any(
+                    token in text for token in ("男生还是女生", "性别")
+                ) and "对吧" not in text:
+                    generic_patterns = (
+                        r"(?:我再确认一下，?)?\s*你这边是男生还是女生呀[？?]?",
+                        r"(?:了解[，,、 ]*)?你是男生还是女生呀[？?]?",
+                        r"(?:了解[，,、 ]*)?你这边是男生还是女生呀[？?]?",
+                        r"你是男生还是女生呀[？?]?",
+                    )
+                    rewritten = text
+                    for pattern in generic_patterns:
+                        rewritten = re.sub(pattern, soft_confirmation, rewritten)
+                    return rewritten.strip()
             return text
 
         generic_hold_markers = (
@@ -6432,6 +6529,44 @@ class ChatService:
             return self._build_policy_field_prompt(effective_ask_field, user_profile, user_message=user_message)
 
         return text
+
+    def _enforce_missing_sex_followup_after_preference(
+        self,
+        response: str,
+        user_profile: UserProfile,
+        *,
+        collection_result: Optional[Dict[str, Any]] = None,
+        user_message: str = "",
+        response_channel: str = "model",
+        primary_move: str = "ack_and_ask",
+    ) -> str:
+        """本轮刚收下择偶偏好但 sex 仍缺失时，强制补一个自然的性别确认。"""
+        text = str(response or "").strip()
+        if not text or response_channel != "model":
+            return text
+        if primary_move in {"repair_and_release", "answer_then_pause", "soft_hold", "ack_only", "confirm_status_only"}:
+            return text
+        if getattr(user_profile, "sex", None):
+            return text
+        if self._contains_contact_push_markers(text):
+            return text
+
+        collected_fields = {
+            str(item.get("field") or "").strip()
+            for item in (collection_result or {}).get("all_fields", [])
+            if isinstance(item, dict)
+        }
+        if "partner_requirement" not in collected_fields or "sex" in collected_fields:
+            return text
+
+        asked_fields = self._detect_asked_fields_in_response(text)
+        if "sex" in asked_fields:
+            return text
+
+        followup = self._build_policy_field_prompt("sex", user_profile, user_message=user_message).strip()
+        if not followup:
+            return text
+        return f"{text} {followup}"
 
     def _enforce_pending_partner_requirement_followup(
         self,

@@ -355,13 +355,13 @@ class DialogueExpressionService:
 
         prefix = self._next_variant(
             f"sex:soft:prefix:{guess_label}",
-            ("我再确认下", "我顺手确认一下", "我这边确认一下"),
+            ("我再确认一下", "我顺手确认一下", "我这边再确认一下"),
         )
         confirm = self._next_variant(
             f"sex:soft:confirm:{guess_label}",
             (
                 f"你这边是{guess_label}对吧？",
-                f"你这边现在是{guess_label}这个方向是吧？",
+                f"你这边是{guess_label}，对吧？",
             ),
         )
         return f"{prefix}，{confirm}"

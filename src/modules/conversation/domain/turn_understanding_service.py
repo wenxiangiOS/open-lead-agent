@@ -1126,6 +1126,10 @@ class TurnUnderstandingService:
             r"^\s*(?:你们)?\s*(男生|女生|男的|女的|男|女)\s*[，,、 ]+\s*$",
             message,
         )
+        embedded_context_sex_answer = re.search(
+            r"(?:^|[，,、 ]|是|就是)\s*(男生|女生|男的|女的|男|女)\s*(?:呀|呢|哈|哦|啊)?(?:$|[，,。！？!? ])",
+            message,
+        )
         confirmation_context_sex = self._extract_confirmed_sex_candidate_from_context(last_ai)
         affirmative_confirmation = self._is_affirmative_confirmation_answer(message)
         if sex_question_context and short_sex_answer:
@@ -1140,6 +1144,10 @@ class TurnUnderstandingService:
             raw = trailing_punct_sex_answer.group(1)
             guarded["sex"] = "男" if "男" in raw else "女"
             logger.info("[提取保护] 性别问答上下文命中，按 trailing short answer 强制写入 sex")
+        elif sex_question_context and embedded_context_sex_answer:
+            raw = embedded_context_sex_answer.group(1)
+            guarded["sex"] = "男" if "男" in raw else "女"
+            logger.info("[提取保护] 性别问答上下文命中，按 embedded answer 强制写入 sex")
         elif confirmation_context_sex and affirmative_confirmation:
             guarded["sex"] = confirmation_context_sex
             logger.info("[提取保护] 性别确认上下文命中，按 affirmative answer 强制写入 sex")

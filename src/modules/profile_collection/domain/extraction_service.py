@@ -818,16 +818,27 @@ class ExtractionService:
                         r"^\s*(男生|女生|男的|女的|男|女)\s*[，,、 ]+\s*$",
                         user_message or "",
                     ) or re.search(
-                        r"^\s*(男生|女生|男的|女的|男|女)\s*[，,、 ]\s*(?:单身|未婚|离异|已婚|分居)",
+                        r"^\s*(男生|女生|男的|女的|男|女)\s*(?:呀|呢|哈|哦|啊)?\s*[，,、 ]?\s*(?:单身|未婚|离异|已婚|分居)",
                         user_message or "",
                     ) or re.search(
-                        r"^\s*(男生|女生|男的|女的|男|女)\s*[，,、 ]\s*(?:是的|对|嗯|好的|好)\s*[，,、 ]\s*(?:单身|未婚|离异|已婚|分居)",
+                        r"^\s*(男生|女生|男的|女的|男|女)\s*(?:呀|呢|哈|哦|啊)?\s*[，,、 ]?\s*(?:是的|对|嗯|好的|好)\s*[，,、 ]?\s*(?:单身|未婚|离异|已婚|分居)",
+                        user_message or "",
+                    ) or re.search(
+                        r"(?:^|[，,、 ])\s*(男生|女生|男的|女的|男|女)\s*(?:呀|呢|哈|哦|啊)?\s*[，,、 ]?\s*(?:单身|未婚|离异|已婚|分居)(?:$|[，,。！？!? ])",
                         user_message or "",
                     )
                     confirmation_context_sex = (
                         user_profile.pending_sex_confirmation
                         or self._extract_confirmed_sex_candidate_from_context(last_response)
                     )
+                    contextual_embedded_sex = re.search(
+                        r"(?:^|[，,、 ]|是|就是)\s*(男生|女生|男的|女的|男|女)\s*(?:呀|呢|哈|哦|啊)?(?:$|[，,。！？!? ])",
+                        user_message or "",
+                    )
+                    if confirmation_context_sex and contextual_embedded_sex:
+                        explicit_self_sex = True
+                        raw = contextual_embedded_sex.group(1)
+                        value = "男" if "男" in raw else "女"
                     if confirmation_context_sex and self._is_affirmative_confirmation_answer(user_message):
                         explicit_self_sex = True
                         value = confirmation_context_sex
