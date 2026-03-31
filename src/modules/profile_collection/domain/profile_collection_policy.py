@@ -424,6 +424,16 @@ class ProfileCollectionPolicy:
             if not self._message_contains_profile_context(user_message):
                 return None
 
+        if self.can_use_as_side_target(profile, "monthly_income"):
+            if main_target == "occupation" and (
+                message_count == 0
+                or message_count >= 2
+                or self._message_contains_profile_context(user_message)
+            ):
+                return "monthly_income"
+            if any(keyword in user_message for keyword in self.INCOME_TRIGGER_KEYWORDS):
+                return "monthly_income"
+
         if self.can_actively_ask(profile, "partner_requirement"):
             if main_target == "marital_status":
                 return "partner_requirement"
@@ -435,23 +445,12 @@ class ProfileCollectionPolicy:
                 return "partner_requirement"
 
         if self.can_actively_ask(profile, "marital_status"):
-            if main_target in {"age", "location", "education", "occupation", "sex"} and (
+            if main_target in {"age", "location", "education", "sex"} and (
                 message_count >= 5 or self.is_profile_sufficient_for_contact(profile)
             ):
                 return "marital_status"
             if any(keyword in user_message for keyword in self.MARITAL_STATUS_TRIGGER_KEYWORDS):
                 return "marital_status"
-
-        # 职业语境下可低压顺带问一次月薪。
-        if self.can_use_as_side_target(profile, "monthly_income"):
-            if main_target == "occupation" and (
-                message_count == 0
-                or message_count >= 7
-                or self._message_contains_profile_context(user_message)
-            ):
-                return "monthly_income"
-            if any(keyword in user_message for keyword in self.INCOME_TRIGGER_KEYWORDS):
-                return "monthly_income"
 
         return None
 
@@ -485,7 +484,7 @@ class ProfileCollectionPolicy:
             return True
 
         if (
-            main_target in {"location", "education", "occupation"}
+            main_target in {"location", "education"}
             and self.can_actively_ask(profile, "marital_status")
             and message_count >= 2
         ):
@@ -555,6 +554,9 @@ class ProfileCollectionPolicy:
         if not cue_order:
             return None
         cues = {field: True for field in cue_order}
+
+        if cues.get("location") and self.can_actively_ask(profile, "occupation"):
+            return "occupation"
 
         if cues.get("location") and cues.get("occupation"):
             for field in ("age", "education", "sex"):
@@ -735,7 +737,7 @@ class ProfileCollectionPolicy:
         host_orders = {
             "monthly_income": ("occupation", "education"),
             "partner_requirement": ("age", "location", "education", "occupation", "sex"),
-            "marital_status": ("sex", "age", "location", "education", "occupation"),
+            "marital_status": ("sex", "age", "location", "education"),
         }
         for host in host_orders.get(medium_field, ()):
             if getattr(profile, host, None) or profile.collection_progress.get(host):

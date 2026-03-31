@@ -2783,10 +2783,6 @@ class ChatService:
         if occupation and occupation not in response and ("工作" in message or "忙" in message):
             return f"你平时做{occupation}，我知道你工作节奏可能会比较忙。{response}"
 
-        preference = str(getattr(user_profile, "partner_requirement", "") or "").strip()
-        if preference and preference not in response:
-            return f"你前面提过更偏向{preference}这一类，这个我知道。{response}"
-
         return response
 
     def _apply_priority_question_guard(
@@ -6504,8 +6500,13 @@ class ChatService:
             allow_medium_target=allow_medium_target,
         )
         next_field = decision.main_target
-        if ask_field == "location" and not self.collection_policy.is_collected(user_profile, "education"):
-            return "education"
+        if ask_field == "location":
+            if not self.collection_policy.is_collected(user_profile, "occupation"):
+                return "occupation"
+            if not self.collection_policy.is_collected(user_profile, "education"):
+                return "education"
+        if ask_field == "occupation" and self.collection_policy.can_actively_ask(user_profile, "monthly_income"):
+            return "monthly_income"
         if next_field and next_field != ask_field:
             return next_field
         forced_target = decision.forced_cover_target

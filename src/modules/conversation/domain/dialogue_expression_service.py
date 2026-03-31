@@ -371,6 +371,11 @@ class DialogueExpressionService:
         if not text:
             return {"guess": "unknown", "confidence": "weak", "seek_female_score": 0.0, "seek_male_score": 0.0}
 
+        if re.search(r"(?:^|想找|想要|喜欢|偏向|找)(?:一个|个)?(?:同城|本地|深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)?的?(女生|女孩子|女性)", text):
+            return {"guess": "male", "confidence": "strong", "seek_female_score": 100.0, "seek_male_score": 0.0}
+        if re.search(r"(?:^|想找|想要|喜欢|偏向|找)(?:一个|个)?(?:同城|本地|深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)?的?(男生|男孩子|男性)", text):
+            return {"guess": "female", "confidence": "strong", "seek_female_score": 0.0, "seek_male_score": 100.0}
+
         if any(cue in text for cue in self.STRONG_SEEK_FEMALE_CUES):
             return {"guess": "male", "confidence": "strong", "seek_female_score": 100.0, "seek_male_score": 0.0}
         if any(cue in text for cue in self.STRONG_SEEK_MALE_CUES):

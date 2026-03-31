@@ -366,8 +366,7 @@
     <script>
         const API_BASE = window.location.origin;
         let accountId = '';
-        let isDrainingQueue = false;
-        const pendingMessages = [];
+        let isSubmittingMessage = false;
         let hasStarted = false;
         let showDebugInfo = true;  // 默认显示已收集信息
         let replyPollTimer = null;
@@ -504,6 +503,15 @@
             document.getElementById('typingIndicator').classList.remove('show');
         }
 
+        function setSendingState(isSending) {
+            const input = document.getElementById('messageInput');
+            const sendBtn = document.getElementById('sendBtn');
+            isSubmittingMessage = isSending;
+            input.disabled = isSending;
+            sendBtn.textContent = isSending ? '发送中...' : '发送';
+            updateCharCount();
+        }
+
         // 开始聊天
         async function startChat() {
             if (hasStarted) return;
@@ -542,55 +550,6 @@
             startReplyPolling();
         }
 
-        async function drainMessageQueue() {
-            if (isDrainingQueue) return;
-            isDrainingQueue = true;
-
-            while (pendingMessages.length > 0) {
-                const message = pendingMessages.shift();
-                waitingReply = true;
-                showTyping();
-
-                // 发送到服务器
-                try {
-                    localMsgSeq += 1;
-                    const platformMsgId = `${accountId}_${Date.now()}_${localMsgSeq}`;
-                    const response = await fetch(`${API_BASE}/api/xiaohongshu/messages/ingest`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            accountId: accountId,
-                            dialogId: 'web_test_dialog',
-                            message: message,
-                            platformMsgId: platformMsgId,
-                            sex: 'unknown',
-                            timestamp: new Date().toISOString()
-                        })
-                    });
-
-                    const data = await response.json();
-
-                    if (!data.success || !data.accepted) {
-                        if (data.status === 'queue_full') {
-                            addMessage('ai', '当前消息较多，我正在排队处理中，请稍等一下再发～');
-                        } else if (data.status === 'duplicate') {
-                            console.log('重复消息已去重:', platformMsgId);
-                        } else if (data.status === 'invalid_payload' || data.status === 'ignored_empty') {
-                            addMessage('ai', '这条消息我暂时没收到完整内容，可以再发一次吗？');
-                        } else {
-                            addMessage('ai', '消息入队失败，请稍后再试～');
-                        }
-                    } else {
-                        console.log('消息已入队:', platformMsgId, data);
-                    }
-                } catch (error) {
-                    addMessage('ai', '抱歉，网络出错啦，请检查连接后重试～');
-                }
-            }
-
-            isDrainingQueue = false;
-        }
-
         async function pollReplies() {
             if (!hasStarted) return;
             try {
@@ -616,6 +575,7 @@
                     }
                     waitingReply = false;
                     hideTyping();
+                    setSendingState(false);
                 } else if (waitingReply) {
                     showTyping();
                 }
@@ -630,12 +590,12 @@
             pollReplies();
         }
 
-        // 发送消息（支持连续快速发送：先入队，再顺序发送）
+        // 发送消息（当前测试页限制为单条串行发送，收到回复前不允许继续发送）
         async function sendMessage() {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
 
-            if (!message) return;
+            if (!message || isSubmittingMessage || waitingReply) return;
 
             input.value = '';
             input.blur(); // 发送后移除焦点
@@ -644,9 +604,52 @@
 
             // 添加用户消息
             addMessage('user', message);
+            waitingReply = true;
+            showTyping();
+            setSendingState(true);
 
-            pendingMessages.push(message);
-            await drainMessageQueue();
+            // 发送到服务器
+            try {
+                localMsgSeq += 1;
+                const platformMsgId = `${accountId}_${Date.now()}_${localMsgSeq}`;
+                const response = await fetch(`${API_BASE}/api/xiaohongshu/messages/ingest`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        accountId: accountId,
+                        dialogId: 'web_test_dialog',
+                        message: message,
+                        platformMsgId: platformMsgId,
+                        sex: 'unknown',
+                        timestamp: new Date().toISOString()
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!data.success || !data.accepted) {
+                    waitingReply = false;
+                    hideTyping();
+                    setSendingState(false);
+                    if (data.status === 'queue_full') {
+                        addMessage('ai', '当前消息较多，我正在排队处理中，请稍等一下再发～');
+                    } else if (data.status === 'duplicate') {
+                        console.log('重复消息已去重:', platformMsgId);
+                    } else if (data.status === 'invalid_payload' || data.status === 'ignored_empty') {
+                        addMessage('ai', '这条消息我暂时没收到完整内容，可以再发一次吗？');
+                    } else {
+                        addMessage('ai', '消息入队失败，请稍后再试～');
+                    }
+                    return;
+                }
+
+                console.log('消息已入队:', platformMsgId, data);
+            } catch (error) {
+                waitingReply = false;
+                hideTyping();
+                setSendingState(false);
+                addMessage('ai', '抱歉，网络出错啦，请检查连接后重试～');
+            }
         }
 
         // 事件监听
@@ -675,6 +678,10 @@
             charCount.classList.remove('warning', 'error');
             if (length > MAX_CHARS * 0.8) {
                 charCount.classList.add('warning');
+            }
+            if (isSubmittingMessage || waitingReply) {
+                sendBtn.disabled = true;
+                return;
             }
             if (length >= MAX_CHARS) {
                 charCount.classList.add('error');

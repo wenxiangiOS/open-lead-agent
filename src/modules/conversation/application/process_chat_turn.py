@@ -360,7 +360,12 @@ class ProcessChatTurnUseCase:
                     repeat_count=1,
                     recent_responses=conversation_context.get("recent_responses") or (),
                 ) or await self.chat_service._build_no_ai_response(account_id, user_profile, request.question)  # noqa: SLF001
-                if final_response and not self.chat_service._looks_like_strong_concern_interrupt(request.question):  # noqa: SLF001
+                should_resume_after_quick_answer = (
+                    final_response
+                    and turn_understanding.primary_turn_type == "faq_concern"
+                    and not self.chat_service._looks_like_strong_concern_interrupt(request.question)  # noqa: SLF001
+                )
+                if should_resume_after_quick_answer:
                     final_response = self.chat_service._build_resume_after_interrupt_response(  # noqa: SLF001
                         final_response,
                         decision_profile,

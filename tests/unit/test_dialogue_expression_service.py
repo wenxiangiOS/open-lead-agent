@@ -162,6 +162,18 @@ def test_render_field_question_for_sex_uses_soft_confirmation_when_preference_st
     assert "我理解得没偏" not in response
 
 
+def test_render_field_question_for_sex_uses_soft_confirmation_when_preference_explicitly_targets_city_female():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_sex_city_female")
+    profile.partner_requirement = "深圳的女生"
+
+    response = service.render_field_question("sex", profile=profile, stage="trust", user_message="做it，单身")
+
+    assert "男生还是女生" not in response
+    assert "男生" in response
+    assert any(token in response for token in ("对吧", "是吧"))
+
+
 def test_render_field_question_for_sex_keeps_neutral_question_when_only_single_weak_height_cue():
     service = DialogueExpressionService()
     profile = UserProfile(account_id="u_expr_sex_weak_height")

@@ -2696,18 +2696,6 @@ def test_ensure_humanlike_memory_ack_reuses_occupation_or_busy():
     assert any(k in resp for k in ["运营", "工作", "忙"])
 
 
-def test_ensure_humanlike_memory_ack_reuses_preference():
-    chat_service = _build_chat_service()
-    profile = UserProfile(account_id="u_pref")
-    profile.partner_requirement = "成熟稳重"
-    resp = chat_service._ensure_humanlike_memory_ack(
-        "有什么推荐吗",
-        profile,
-        "当然有呀，不过得先多了解点你的情况才能给你推更适配的人选哦。",
-    )
-    assert any(k in resp for k in ["成熟", "稳重", "合拍", "推荐"])
-
-
 def test_enforce_opening_listener_first_policy_acknowledges_city_preference_before_intro():
     chat_service = _build_chat_service()
     understanding = SimpleNamespace(primary_turn_type="opening", subtype="matchmaking_intent")
@@ -3632,6 +3620,8 @@ def test_enforce_natural_completion_transition_keeps_non_contact_response_when_n
     assert response == "这个我知道了，我们接着往下聊。"
 
 
+
+
 def test_apply_humanlike_turn_structure_policy_does_not_prefix_contact_prompt_twice():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_contact_prefix")
@@ -4325,6 +4315,40 @@ def test_build_service_confirmation_resume_response_returns_to_interrupted_work_
 
     assert any(token in response for token in ("工作", "做哪方面", "做什么"))
     assert "学历" not in response
+
+
+def test_resolve_effective_followup_field_prefers_occupation_after_location_collected():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_followup_location")
+
+    next_field = chat_service._resolve_effective_followup_field(
+        profile,
+        ask_field="location",
+        collected_fields={"location"},
+        user_message="我来自深圳，今年35岁",
+        allow_medium_target=True,
+    )
+
+    assert next_field == "occupation"
+
+
+def test_resolve_effective_followup_field_prefers_monthly_income_after_occupation():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_followup_occupation")
+    profile.location = "深圳"
+    profile.age = 35
+    profile.education = "本科"
+    profile.collection_progress.update({"location": True, "age": True, "education": True})
+
+    next_field = chat_service._resolve_effective_followup_field(
+        profile,
+        ask_field="occupation",
+        collected_fields={"occupation"},
+        user_message="做it，单身",
+        allow_medium_target=True,
+    )
+
+    assert next_field == "monthly_income"
 
 
 def test_enforce_contact_outcome_policy_does_not_end_when_contact_done_but_profile_incomplete():

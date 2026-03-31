@@ -142,7 +142,8 @@ class TestProfileCollectionPolicy:
             message_count=0,
         )
 
-        assert decision.main_target in {"age", "education", "sex"}
+        assert decision.main_target == "occupation"
+        assert decision.side_target == "monthly_income"
 
     def test_opening_with_location_prefers_occupation_with_income_side_target(self):
         profile = UserProfile(account_id="u_opening_location")
@@ -201,6 +202,35 @@ class TestProfileCollectionPolicy:
 
         assert decision.main_target == "occupation"
 
+    def test_location_and_age_with_preference_still_prefers_occupation_before_education(self):
+        profile = UserProfile(account_id="u_location_age_prefers_work")
+
+        decision = self.policy.decide(
+            profile,
+            user_message="我来自深圳，今年35岁，想找一个深圳的女生",
+            message_count=1,
+        )
+
+        assert decision.main_target == "occupation"
+
+    def test_occupation_prefers_monthly_income_side_target_over_marital_status(self):
+        profile = UserProfile(account_id="u_occ_income_side")
+        profile.sex = "男"
+        profile.age = 35
+        profile.location = "深圳"
+        profile.education = "本科"
+        for field in ("sex", "age", "location", "education"):
+            profile.collection_progress[field] = True
+
+        decision = self.policy.decide(
+            profile,
+            user_message="本科",
+            message_count=2,
+        )
+
+        assert decision.main_target == "occupation"
+        assert decision.side_target == "monthly_income"
+
     def test_latest_location_and_occupation_opening_prefers_low_pressure_core(self):
         profile = UserProfile(account_id="u_latest_location_occupation")
 
@@ -210,7 +240,8 @@ class TestProfileCollectionPolicy:
             message_count=0,
         )
 
-        assert decision.main_target in {"age", "education", "sex"}
+        assert decision.main_target == "occupation"
+        assert decision.side_target == "monthly_income"
 
     def test_cost_control_light_mode_after_repeated_non_cooperation(self):
         profile = UserProfile(account_id="u1")
