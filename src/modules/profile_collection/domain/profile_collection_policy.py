@@ -559,34 +559,34 @@ class ProfileCollectionPolicy:
             return "occupation"
 
         if cues.get("location") and cues.get("occupation"):
-            for field in ("age", "education", "sex"):
+            for field in ("education", "age", "sex"):
                 if self.can_actively_ask(profile, field):
                     return field
 
         latest_cue = cue_order[-1]
 
         if latest_cue == "location":
-            for field in ("occupation", "education", "age", "sex"):
+            for field in ("occupation", "education"):
                 if self.can_actively_ask(profile, field):
                     return field
 
         if latest_cue == "occupation":
-            for field in ("education", "age", "location", "sex"):
+            for field in ("education",):
                 if self.can_actively_ask(profile, field):
                     return field
 
         if latest_cue == "age":
-            for field in ("location", "education", "occupation", "sex"):
+            for field in ("sex", "location"):
                 if self.can_actively_ask(profile, field):
                     return field
 
         if latest_cue == "education":
-            for field in ("occupation", "location", "age", "sex"):
+            for field in ("marital_status",):
                 if self.can_actively_ask(profile, field):
                     return field
 
         if latest_cue == "sex":
-            for field in ("location", "age", "education", "occupation"):
+            for field in ("location", "occupation"):
                 if self.can_actively_ask(profile, field):
                     return field
 

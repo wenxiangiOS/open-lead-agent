@@ -437,6 +437,41 @@ class TurnUnderstandingService:
             slot_name = "wechat" if contact_candidate.get("type") == "wechat" else "phone"
             raw_fields[slot_name] = str(contact_candidate["value"]).strip()
 
+        profile_phone = str(getattr(turn_input.user_profile, "phone", "") or "").strip()
+        if (
+            profile_phone
+            and getattr(turn_input.user_profile, "phone_collected", False)
+            and not getattr(turn_input.user_profile, "wechat_collected", False)
+            and "wechat" not in raw_fields
+            and re.search(r"(电话.*加微信|微信.*电话一样|电话同微信|这个号码也是微信|微信就是手机号|号码也是微信|这个号也是微信)", message)
+        ):
+            raw_fields["wechat"] = profile_phone
+
+        if "wechat" not in raw_fields and re.search(r"(微信|微信号|加微信)", message):
+            embedded_phone = self._extract_bare_contact_candidate(message)
+            if embedded_phone and embedded_phone.get("type") == "phone":
+                raw_fields["wechat"] = str(embedded_phone["value"]).strip()
+
+        pending_contact_candidate = str(getattr(turn_input.user_profile, "pending_contact_candidate", "") or "").strip()
+        pending_contact_field = str(getattr(turn_input.user_profile, "pending_contact_field", "") or "").strip()
+        pending_contact_hint = str(getattr(turn_input.user_profile, "pending_contact_hint", "") or "").strip()
+        if (
+            pending_contact_candidate
+            and pending_contact_field in {"phone", "wechat"}
+            and pending_contact_hint == "soft_region_mismatch_hk"
+            and pending_contact_field not in raw_fields
+            and (
+                self._is_affirmative_confirmation_answer(message)
+                or "香港手机号" in message
+                or "香港号码" in message
+                or "港号" in message
+                or "这个是香港" in message
+                or "这是香港" in message
+                or "常用号码" in message
+            )
+        ):
+            raw_fields[pending_contact_field] = pending_contact_candidate
+
         for field_name, value in raw_fields.items():
             normalized_value = "" if value is None else str(value).strip()
             if not normalized_value:
@@ -491,7 +526,8 @@ class TurnUnderstandingService:
         elif re.search(r"(我是单身|目前单身|现在单身)", message):
             extracted["marital_status"] = "单身"
 
-        age_match = re.search(r"我(?:今年|现在)?\s*(\d{2})(?!后)\s*岁?", message)
+        # 这里只吃明确年龄表达，避免把“我88年的”误识别成 88 岁。
+        age_match = re.search(r"我(?:今年|现在)?\s*(\d{2})(?!后|年)\s*岁\b", message)
         if age_match:
             extracted["age"] = age_match.group(1)
 
@@ -757,6 +793,10 @@ class TurnUnderstandingService:
         compact_message = re.sub(r"\s+", "", str(message or "").strip())
         if not compact_message:
             return None
+        if any(token in compact_message for token in ("没有要求", "没要求", "没有别的", "没有其他", "没别的", "都可以", "都行", "无所谓")):
+            return "无特别要求"
+        if any(token in compact_message for token in ("随缘", "看感觉", "看眼缘", "看缘分", "顺其自然")):
+            return "看感觉/随缘"
         compact_message = re.sub(
             r"(^|[，,])我(?=(温柔|性格好|聊得来|合适|人好|高挑|高一点|同城优先|成熟稳重|三观合拍))",
             r"\1",
@@ -1099,30 +1139,9 @@ class TurnUnderstandingService:
         *,
         last_response: str = "",
     ) -> Dict[str, str]:
-        if not extracted_data:
-            return extracted_data
-
-        guarded = dict(extracted_data)
+        guarded = dict(extracted_data or {})
         message = str(user_message or "").strip()
         last_ai = str(last_response or "")
-
-        explicit_self_sex = re.search(r"(我是|本人|我)\s*(男生|女生|男的|女的|男|女)", message)
-        preference_sex_hint = re.search(r"(找|想找|喜欢|偏好).{0,4}(男生|女生|男的|女的|男|女)", message)
-        if "sex" in guarded and not explicit_self_sex and preference_sex_hint:
-            guarded.pop("sex", None)
-            logger.info("[提取保护] 检测到择偶偏好语境，忽略 sex 提取，避免误写用户性别")
-
-        explicit_self_location = re.search(
-            r"(?:我在|来自|人在|目前在|现在在|住在)\s*([^\s，。！？!?]{2,8})",
-            message,
-        )
-        preference_location_hint = re.search(
-            r"(找|想找|喜欢|偏向|更想找).{0,6}(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)",
-            message,
-        )
-        if "location" in guarded and not explicit_self_location and preference_location_hint:
-            guarded.pop("location", None)
-            logger.info("[提取保护] 检测到择偶偏好城市语境，忽略 location 提取，避免误写用户所在地")
 
         sex_question_context = bool(
             re.search(r"(你是|是)(男生|女生|男的|女的|男|女)", last_ai)
@@ -1144,6 +1163,9 @@ class TurnUnderstandingService:
         )
         confirmation_context_sex = self._extract_confirmed_sex_candidate_from_context(last_ai)
         affirmative_confirmation = self._is_affirmative_confirmation_answer(message)
+        marital_question_context = bool(
+            re.search(r"(单身状态|现在是单身吗|现在单身吗|感情状态.*单身|婚况.*单身)", last_ai)
+        )
         if sex_question_context and short_sex_answer:
             raw = short_sex_answer.group(1)
             guarded["sex"] = "男" if "男" in raw else "女"
@@ -1163,6 +1185,30 @@ class TurnUnderstandingService:
         elif confirmation_context_sex and affirmative_confirmation:
             guarded["sex"] = confirmation_context_sex
             logger.info("[提取保护] 性别确认上下文命中，按 affirmative answer 强制写入 sex")
+        elif marital_question_context and affirmative_confirmation:
+            guarded["marital_status"] = "单身"
+            logger.info("[提取保护] 婚况问答上下文命中，按 affirmative answer 强制写入 marital_status")
+
+        if not guarded:
+            return guarded
+
+        explicit_self_sex = re.search(r"(我是|本人|我)\s*(男生|女生|男的|女的|男|女)", message)
+        preference_sex_hint = re.search(r"(找|想找|喜欢|偏好).{0,4}(男生|女生|男的|女的|男|女)", message)
+        if "sex" in guarded and not explicit_self_sex and preference_sex_hint:
+            guarded.pop("sex", None)
+            logger.info("[提取保护] 检测到择偶偏好语境，忽略 sex 提取，避免误写用户性别")
+
+        explicit_self_location = re.search(
+            r"(?:我在|来自|人在|目前在|现在在|住在)\s*([^\s，。！？!?]{2,8})",
+            message,
+        )
+        preference_location_hint = re.search(
+            r"(找|想找|喜欢|偏向|更想找).{0,6}(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)",
+            message,
+        )
+        if "location" in guarded and not explicit_self_location and preference_location_hint:
+            guarded.pop("location", None)
+            logger.info("[提取保护] 检测到择偶偏好城市语境，忽略 location 提取，避免误写用户所在地")
 
         return guarded
 
@@ -1431,16 +1477,7 @@ class TurnUnderstandingService:
         if not text:
             return ""
         if field == "sex":
-            variants = (
-                "你这边是男生。",
-                "你这边是男生对吧。",
-                "男生，我大概清楚了。",
-            ) if "男" in text else (
-                "你这边是女生。",
-                "你这边是女生对吧。",
-                "女生，我大概清楚了。",
-            )
-            return random.choice(variants)
+            return ""
         if field in {"age", "age_label"}:
             return ""
         if field == "location":

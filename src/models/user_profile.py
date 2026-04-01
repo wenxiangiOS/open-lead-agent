@@ -120,6 +120,9 @@ class UserProfile(BaseModel):
     contact_complete: bool = Field(default=False, description="联系方式流程是否已完成（电话流程和微信流程都已完成）")
     last_contact_request_type: Optional[str] = Field(default=None, description="最近一次真实展示给用户的联系方式类型（phone/wechat）")
     is_hongkong_user: Optional[bool] = Field(default=None, description="是否是香港用户（缓存）")
+    pending_contact_candidate: Optional[str] = Field(default=None, description="待用户确认的联系方式候选")
+    pending_contact_field: Optional[str] = Field(default=None, description="待确认的联系方式字段（phone/wechat）")
+    pending_contact_hint: Optional[str] = Field(default=None, description="待确认联系方式的提示类型")
 
     # 联系方式拒绝状态（兼容旧字段，逐步迁移）
     rejected_wechat: bool = Field(default=False, description="用户是否拒绝微信")

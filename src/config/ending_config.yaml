@@ -122,9 +122,6 @@ endings:
     detection:
       type: keywords
       keywords:
-        - "加微信"
-        - "加我微信"
-        - "加个微信"
         - "加我v"
         - "加我V"
         - "互推"

@@ -518,9 +518,9 @@ class DialogueExpressionService:
         if not age_label:
             return None
         variants = (
-            f"那你现在大概是{age_label}这个年龄段吗？感情状态这边现在是单身吗？",
-            f"你这个年龄段我大概有数了，那你现在感情状态是单身吗？",
-            f"{age_label}这个年龄段我大概有数了。你现在是单身吗？",
+            "我再顺手确认一下，你现在是单身状态吗？",
+            "对了，我也确认下，你现在是单身吗？",
+            "那我再接着问一句，你现在感情状态是单身吗？",
         )
         return self._pick_variant_avoiding_recent_openings("bridge:marital", variants, profile)
 

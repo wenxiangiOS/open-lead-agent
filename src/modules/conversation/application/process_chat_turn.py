@@ -759,6 +759,33 @@ class ProcessChatTurnUseCase:
                     break
 
             user_profile = await self.chat_service.user_service.get_user_profile(account_id)
+            if turn_decision.response_channel == "model":
+                refreshed_decision_profile = self.chat_service._build_shadow_profile_for_decision(  # noqa: SLF001
+                    user_profile,
+                    request.question,
+                    last_response=last_response,
+                    understanding_result=turn_understanding,
+                )
+                refreshed_turn_decision = self.chat_service._build_turn_decision(  # noqa: SLF001
+                    request.question,
+                    refreshed_decision_profile,
+                    conversation_context=conversation_context,
+                    understanding_result=turn_understanding,
+                )
+                ai_response = await self.chat_service._refresh_followup_after_collection(  # noqa: SLF001
+                    ai_response,
+                    account_id=account_id,
+                    user_message=request.question,
+                    user_profile=user_profile,
+                    conversation_context=conversation_context,
+                    previous_ask_field=turn_decision.ask_field,
+                    current_ask_field=refreshed_turn_decision.ask_field,
+                    previous_response_channel=turn_decision.response_channel,
+                    current_response_channel=refreshed_turn_decision.response_channel,
+                    collection_result=collection_result,
+                )
+                turn_decision = refreshed_turn_decision
+                response_channel = turn_decision.response_channel
             _ = self.chat_service.profile_collection_coordinator.build_contact_decision(user_profile, request.question)
             preset_response = str(collection_result.get("response") or "").strip()
             if preset_response:

@@ -3599,6 +3599,57 @@ class ChatService:
             return f"{rewritten}\n{extract_block}"
         return rewritten
 
+    async def _refresh_followup_after_collection(
+        self,
+        response: str,
+        *,
+        account_id: str,
+        user_message: str,
+        user_profile: UserProfile,
+        conversation_context: Optional[Dict[str, Any]],
+        previous_ask_field: Optional[str],
+        current_ask_field: Optional[str],
+        previous_response_channel: str,
+        current_response_channel: str,
+        collection_result: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        当本轮已经回答了旧目标字段，且收集后的真实下一问发生变化时，
+        用更新后的目标字段重写一句自然追问，避免旧目标 AI 回复再被固定兜底抢话。
+        """
+        text = str(response or "").strip()
+        if not text:
+            return text
+        if previous_response_channel != "model" or current_response_channel != "model":
+            return text
+        if not current_ask_field or current_ask_field == previous_ask_field:
+            return text
+
+        collected_fields = {
+            str(item.get("field") or "").strip()
+            for item in ((collection_result or {}).get("all_fields", []) or [])
+            if isinstance(item, dict)
+        }
+        if not previous_ask_field or previous_ask_field not in collected_fields:
+            return text
+
+        natural_seed = self._build_policy_field_prompt(
+            current_ask_field,
+            user_profile,
+            user_message=user_message,
+        ).strip()
+        if not natural_seed:
+            return text
+
+        rewritten = await self._rewrite_response_for_style(
+            natural_response=natural_seed,
+            account_id=account_id,
+            user_message=user_message,
+            conversation_context=conversation_context,
+            ask_field=current_ask_field,
+        )
+        return rewritten or natural_seed
+
     def _ensure_short_answer_ack_transition(
         self,
         response: str,
@@ -4135,6 +4186,9 @@ class ChatService:
         if collected_wechat:
             user_profile.wechat = collected_wechat
             user_profile.wechat_collected = True
+            user_profile.pending_contact_candidate = None
+            user_profile.pending_contact_field = None
+            user_profile.pending_contact_hint = None
             self.contact_service.reset_invalid_input(user_profile, 'wechat')
             self.contact_service.is_contact_complete(user_profile)
             # 非香港用户：微信也可以作为联系方式
@@ -4286,6 +4340,9 @@ class ChatService:
 
             user_profile.phone = normalized_phone or contact_value
             user_profile.phone_collected = True
+            user_profile.pending_contact_candidate = None
+            user_profile.pending_contact_field = None
+            user_profile.pending_contact_hint = None
             self.contact_service.reset_invalid_input(user_profile, 'phone')
             self.contact_service.is_contact_complete(user_profile)
             user_profile.contact = user_profile.get_contact_status()
@@ -4372,6 +4429,7 @@ class ChatService:
             "attempt": info.get("attempt"),
             "silent": bool(info.get("silent")),
             "retry_active": True,
+            "retry_lock_response": True,
         }
         contact_type = str(info.get("field") or "contact")
         if contact_type not in {"phone", "wechat"}:
@@ -4381,6 +4439,21 @@ class ChatService:
         if contact_type in {"phone", "wechat"}:
             self.contact_service.record_invalid_input(user_profile, contact_type)
             self.contact_service.is_contact_complete(user_profile)
+            detail = self._classify_contact_validation_detail(
+                field=contact_type,
+                invalid_value=invalid_value,
+                detail=info.get("detail"),
+                user_profile=user_profile,
+            )
+            if detail == "soft_region_mismatch_hk":
+                candidate = str(invalid_value or "").strip()
+                user_profile.pending_contact_candidate = candidate or None
+                user_profile.pending_contact_field = contact_type
+                user_profile.pending_contact_hint = detail
+            else:
+                user_profile.pending_contact_candidate = None
+                user_profile.pending_contact_field = None
+                user_profile.pending_contact_hint = None
             await self.user_service.save_user_profile(account_id, user_profile)
 
         if info.get("silent"):
@@ -4411,35 +4484,81 @@ class ChatService:
         field = error_info.get("field") or "contact"
         field_label = "微信号" if field == "wechat" else "联系方式"
         attempt = error_info.get("attempt") or 1
-        detail = error_info.get("detail") or "invalid_format"
-        local_retry = self._build_contact_validation_retry_fallback(
+        detail = self._classify_contact_validation_detail(
+            invalid_value=invalid_value,
             field=field,
-            attempt=attempt,
-            detail=detail,
+            detail=error_info.get("detail"),
+            user_profile=user_profile,
         )
-        if local_retry:
-            return local_retry
         prompt = (
             "你在继续一段婚恋咨询对话。"
-            "用户刚发来的联系方式未通过校验，请只输出一条自然、简短、口语化的中文回复。\n"
+            "用户刚发来的联系方式需要重新确认，请只输出一条自然、简短、口语化的中文回复。\n"
             "要求：\n"
             "1. 不要提 AI、系统、校验规则、错误码。\n"
-            "2. 轻轻提醒对方重新发一个可用的手机号或微信号。\n"
+            "2. 根据给定判断，自然提醒对方核对并重新发一个可用的联系方式。\n"
             "3. 保持一到两句，像真人聊天，不要模板腔。\n"
-            "4. 给对方保留余地，如果现在不方便可以稍后再发。\n"
+            "4. 如果判断是地区不一致但仍像有效号码，不要直接否定，先柔性确认这是不是对方常用联系方式。\n"
+            "5. 给对方保留余地，如果现在不方便可以稍后再发。\n"
+            "6. 如果当前字段是电话，就只提醒对方重发手机号，不要提微信，不要把微信当替代项。\n"
+            "7. 如果当前字段是微信，就只提醒对方重发微信，不要提手机号。\n"
             f"当前字段：{field_label}\n"
-            f"错误细节：{detail}\n"
+            f"判断结果：{detail}\n"
             f"第几次无效输入：{attempt}\n"
+            f"用户地区：{getattr(user_profile, 'location', None) or '-'}\n"
+            f"是否香港用户：{user_profile.check_is_hongkong_user()}\n"
             f"用户称呼：{user_profile.get_greeting()}\n"
             f"用户原话：{user_message or '-'}\n"
             f"本次疑似输入：{invalid_value or '-'}\n"
         )
         try:
             response = await self._call_ai(prompt, account_id, user_message or str(invalid_value or ""))
-            return response.strip() if response else ""
+            if response and response.strip():
+                return response.strip()
         except Exception as exc:
             logger.warning("[联系方式验证] 生成 AI 引导失败: %s", exc)
-            return local_retry or ""
+        return self._build_contact_validation_retry_fallback(
+            field=field,
+            attempt=attempt,
+            detail=detail,
+        ) or ""
+
+    @staticmethod
+    def _classify_contact_validation_detail(
+        *,
+        invalid_value: Optional[str],
+        field: str,
+        detail: Optional[str],
+        user_profile: UserProfile,
+    ) -> str:
+        if field == "wechat":
+            return "invalid_format"
+
+        digits = re.sub(r"\D", "", str(invalid_value or ""))
+        if not digits:
+            return "invalid_format"
+
+        is_hk_user = user_profile.check_is_hongkong_user()
+        has_known_location = bool(str(getattr(user_profile, "location", "") or "").strip())
+
+        if re.fullmatch(r"1[3-9]\d{10}", digits):
+            return "valid_cn"
+        if re.fullmatch(r"(?:852)?[5-9]\d{7}", digits):
+            if is_hk_user or not has_known_location:
+                return "valid_hk"
+            return "soft_region_mismatch_hk"
+        if re.fullmatch(r"1[3-9]\d{11,}", digits):
+            return "too_long_cn"
+        if re.fullmatch(r"1[3-9]\d{7,9}", digits):
+            return "too_short_cn"
+        if re.fullmatch(r"[5-9]\d{8,}", digits):
+            return "too_long_hk"
+        if re.fullmatch(r"[5-9]\d{5,6}", digits):
+            return "too_short_hk"
+
+        normalized_detail = str(detail or "").lower()
+        if "placeholder" in normalized_detail:
+            return "invalid_format"
+        return "invalid_format"
 
     @staticmethod
     def _build_contact_validation_retry_fallback(*, field: str, attempt: int, detail: str) -> str:
@@ -4448,16 +4567,22 @@ class ChatService:
 
         if normalized_field == "phone":
             if attempt <= 1:
-                return "这个号码看着像是没发完整，你直接重新发个能联系到你的手机号就行。"
+                if "soft_region_mismatch_hk" in normalized_detail:
+                    return "这个号码看着像香港那边常用的联系方式，如果这是你平时常用的，也可以直接留这个。"
+                if "too_long" in normalized_detail:
+                    return "这个号码我看着位数有点多，你再核对一下常用手机号发我就行。"
+                if "too_short" in normalized_detail:
+                    return "这个号码我看着像是还差一位，你再确认一下常用手机号发我就行。"
+                return "这个号码我看着格式有点不太对，你再核对一下常用手机号发我就行。"
             if attempt == 2:
-                return "这个手机号格式还是有点不对，你再发一遍常用的号码给我就行，后面有合适的也方便联系你。"
+                return "这个号码还是有点对不上，你再发一遍常用手机号给我就行，后面联系你也更顺。"
             return "电话这块我先不反复追着问了，等你方便的时候再发个能联系到你的手机号就行。"
 
         if normalized_field == "wechat":
             if "length" in normalized_detail or "short" in normalized_detail or attempt <= 1:
                 return "这个微信号看着像是没发完整，你直接重新发个常用微信给我就行。"
             if attempt == 2:
-                return "这个微信号格式还是有点不对，你再发一遍常用微信给我就行，后面联系会顺一点。"
+                return "这个微信号格式还是有点不对，你再发一遍常用微信给我就行。"
             return "微信这块我先不反复追着问了，等你方便的时候再发个常用微信就行。"
 
         return ""
@@ -4623,41 +4748,41 @@ class ChatService:
         if collected_type == "phone":
             if next_action_value == "ask_wechat":
                 variants = (
-                    "电话我收到了。方便的话，再留个微信也行吗？后面沟通会更顺一点。",
-                    "电话这边我记下了。你要是方便的话，也可以再留个微信，后面联系会顺一些。",
-                    "电话我收到了。要是你方便的话，再补个微信也行，后面沟通会更顺手。",
+                    "电话我收到了。方便的话，微信也可以发我一下。",
+                    "电话这边我记下了。你要是方便，也可以顺手留个微信。",
+                    "电话我收到了。要是你方便的话，再补个微信也行。",
                 )
                 return random.choice(variants)
             if next_action_value == "persuade_wechat":
                 variants = (
-                    "电话我收到了。你要是方便的话，微信也可以顺手留一个，后面沟通会顺一点。",
-                    "电话这边没问题了。你要是更习惯微信的话，也可以留个常用微信，后面联系会方便些。",
-                    "电话我先记下了。要是你方便，再留个微信也行，后面沟通起来会更顺。",
+                    "电话我收到了。你要是方便的话，微信也可以顺手留一个。",
+                    "电话这边没问题了。你要是更习惯微信的话，也可以留个常用微信。",
+                    "电话我先记下了。要是你方便，再留个微信也行。",
                 )
                 return random.choice(variants)
             return "电话我收到了，我们接着往下聊就行。"
 
         if next_action_value == "ask_phone":
-            return "微信我看到了。你要是方便的话，留个手机号也行，后面联系会顺一些。"
+            return "微信我看到了。你要是方便的话，也可以留个常用手机号。"
         if next_action_value == "persuade_phone":
-            return "微信我看到了。你要是方便的话，留个手机号也行，后面沟通会顺一点。"
+            return "微信我看到了。你要是方便的话，也可以补个常用手机号。"
         return "微信我看到了，我们接着往下聊就行。"
 
     @staticmethod
     def _build_ask_wechat_fallback() -> str:
         variants = (
-            "你要是方便的话，留个常用微信也行，后面有合适进展时联系你会更顺一些。",
-            "如果你更习惯微信的话，发个常用微信给我就行，后面沟通起来会方便一点。",
-            "方便的话，也可以留个常用微信，后面真有匹配进展时联系你会更顺手。",
+            "你要是方便的话，留个常用微信也行。",
+            "如果你更习惯微信的话，发个常用微信给我就行。",
+            "方便的话，也可以留个常用微信。",
         )
         return random.choice(variants)
 
     @staticmethod
     def _build_persuade_wechat_fallback() -> str:
         variants = (
-            "我再解释一下，继续问微信主要是想着后面如果真有合适的人，微信联系你会方便一点。你要是方便的话，留个常用微信就行。",
-            "明白你现在对微信这块还有点顾虑。我这边再问一句，主要是后面有匹配进展时，微信沟通会顺一些。你要是方便的话，发个常用微信就可以。",
-            "我懂，你现在不太想留也正常。我这边继续问微信，主要是想着后面真有合适的人时联系你会更方便。你要是方便的话，留个常用微信就行。",
+            "我再轻轻问一句，你要是方便的话，留个常用微信就行。",
+            "明白你现在对微信这块还有点顾虑。你要是方便的话，发个常用微信给我就可以。",
+            "我懂，你现在不太想留也正常。你要是方便的话，留个常用微信就行。",
         )
         return random.choice(variants)
 
@@ -4665,10 +4790,10 @@ class ChatService:
     def _build_phone_persuasion_fallback() -> str:
         """电话二次争取的软性兜底，不用固定句式硬复读。"""
         variants = (
-            "电话这块我再轻轻问一句，你要是方便的话，留个常用手机号就行，后面真有合适的，我们也好联系到你。",
-            "我解释一下，留个常用手机号主要是为了后面真有合适的方向时，能及时联系上你。",
-            "这边问电话主要是考虑到后面如果有匹配对象，我们联系你会更顺一点。你要是方便的话，留个常用手机号就行。",
-            "你要是现在对电话这块还有点顾虑我能理解，我这边只是想留个常用手机号，后面有合适进展也好及时联系你。",
+            "电话这块我再轻轻问一句，你要是方便的话，留个常用手机号就行。",
+            "我再确认一下，你要是方便的话，发个常用手机号给我就行。",
+            "这边电话我再问一句，方便的话留个常用手机号就好。",
+            "你要是现在对电话这块还有点顾虑我能理解，方便的话留个常用手机号就行。",
         )
         return random.choice(variants)
 
@@ -4893,7 +5018,7 @@ class ChatService:
                 return response
             if user_profile.wechat_collected and user_profile.wechat:
                 return self._build_contact_followup_response("ask_phone", "wechat")
-            return "你要是方便的话，留个手机号也行，后面联系会顺一些。"
+            return response or "方便的话，也可以留个常用手机号。"
 
         if action_value == "persuade_phone":
             if self._response_matches_contact_action(response, "persuade_phone"):
@@ -4921,9 +5046,13 @@ class ChatService:
             return not self._contains_contact_push_markers(text)
         return False
 
-    def _has_active_validation_retry_feedback(self) -> bool:
+    def _has_active_validation_retry_feedback(self, field: Optional[str] = None) -> bool:
         meta = self._last_validation_feedback_meta or {}
-        return bool(meta.get("retry_active"))
+        if not meta.get("retry_active"):
+            return False
+        if field is None:
+            return True
+        return str(meta.get("field") or "").strip() == str(field or "").strip()
 
     def _has_active_contact_context(
         self,
@@ -4964,6 +5093,8 @@ class ChatService:
         联系方式第一次说服轮次统一降压，避免重复解释和销售腔。
         """
         if not response or user_profile.conversation_ended:
+            return response
+        if self._has_active_validation_retry_feedback():
             return response
 
         try:
@@ -5007,6 +5138,8 @@ class ChatService:
         """
         if not response or user_profile.conversation_ended:
             return response
+        if self._has_active_validation_retry_feedback():
+            return response
         if not self._is_contact_boundary_message(user_message):
             return response
 
@@ -5024,7 +5157,7 @@ class ChatService:
         if action_value == "ask_phone":
             if self._response_matches_contact_action(response, "ask_phone"):
                 return response
-            return "你要是方便的话，留个手机号也行，后面联系会顺一些。"
+            return response or "方便的话，也可以留个常用手机号。"
 
         if action_value == "persuade_wechat":
             return "好，那微信这块我先不往下问了，我们先聊别的。"
@@ -5047,6 +5180,8 @@ class ChatService:
         当联系方式状态机已经判定本轮不该继续推进时，硬阻断任何新的联系方式追问。
         """
         if not response or user_profile.conversation_ended:
+            return response
+        if self._has_active_validation_retry_feedback():
             return response
 
         try:
@@ -5093,6 +5228,8 @@ class ChatService:
         """联系方式澄清/推进轮次只允许继续聊联系方式，禁止混入其他字段。"""
         if not response or user_profile.conversation_ended:
             return response
+        if self._has_active_validation_retry_feedback():
+            return response
         if not self._has_active_contact_context(user_profile, user_message=user_message):
             return response
 
@@ -5129,9 +5266,9 @@ class ChatService:
         if action_value == "persuade_wechat":
             return "对，我们就先把微信这条说完。你要是更习惯微信的话，留个常用微信就行，不想留也没关系。"
         if action_value == "ask_phone":
-            return "对，刚刚是在说电话这块。你要是方便的话，留个常用手机号就行，后面要是真有合适的方向，我们也好联系你。"
+            return "对，刚刚是在说电话这块。你要是方便的话，留个常用手机号就行。"
         if action_value == "persuade_phone":
-            return "对，我们先把电话这条说完。问这个主要是考虑到后面如果有合适的方向，我们也好及时联系上你。你要是方便的话，留个常用手机号就行。"
+            return "对，我们先把电话这条说完。你要是方便的话，留个常用手机号就行。"
         return "对，我们先把联系方式这条说清楚，其他信息先不往里插。"
 
 
@@ -5734,16 +5871,7 @@ class ChatService:
             return ""
 
         if field == "sex":
-            variants = (
-                "你这边是男生。",
-                "男生这边我先记下了。",
-                "男生，我大概清楚了。",
-            ) if "男" in text else (
-                "你这边是女生。",
-                "女生这边我先记下了。",
-                "女生，我大概清楚了。",
-            )
-            return random.choice(variants)
+            return ""
 
         if field in {"age", "age_label"}:
             return ""
@@ -6230,9 +6358,9 @@ class ChatService:
         if action_value == "persuade_wechat":
             return self._build_persuade_wechat_fallback()
         if action_value == "ask_phone":
-            return "我知道你这会儿可能对电话有点顾虑。只是后面要是真有合适的方向，留个常用手机号会更方便联系上你。"
+            return "我知道你这会儿可能对电话有点顾虑。你要是方便的话，留个常用手机号就行。"
         if action_value == "persuade_phone":
-            return "我懂，你现在可能对电话这块还有点犹豫。问这个主要是考虑到后面真有合适的对象时，我们也好及时联系你。你要是方便的话，留个常用手机号就行。"
+            return "我懂，你现在可能对电话这块还有点犹豫。你要是方便的话，留个常用手机号就行。"
         if self._contains_contact_push_markers(text):
             return "没关系，这块我们先不急，继续聊别的也可以。"
         if not any(marker in text for marker in ("没关系", "不急", "不勉强", "理解", "那我们先")):
@@ -6889,6 +7017,17 @@ class ChatService:
         if self.collection_policy.get_uncovered_core_fields(user_profile):
             return text
 
+        if self.collection_policy.can_actively_ask(user_profile, "marital_status"):
+            host_field = self.collection_policy.get_medium_transition_host(user_profile, "marital_status")
+            if host_field:
+                return self._build_interleaving_followup(
+                    user_profile,
+                    user_message,
+                    main_target=host_field,
+                    preferred_side_target="marital_status",
+                    allow_medium_target=True,
+                )
+            return self._build_policy_field_prompt("marital_status", user_profile, user_message=user_message)
         if self.collection_policy.can_actively_ask(user_profile, "partner_requirement"):
             host_field = self.collection_policy.get_medium_transition_host(user_profile, "partner_requirement")
             if host_field:
@@ -6902,17 +7041,6 @@ class ChatService:
                     allow_medium_target=True,
                 )
             return self._build_policy_field_prompt("partner_requirement", user_profile, user_message=user_message)
-        if self.collection_policy.can_actively_ask(user_profile, "marital_status"):
-            host_field = self.collection_policy.get_medium_transition_host(user_profile, "marital_status")
-            if host_field:
-                return self._build_interleaving_followup(
-                    user_profile,
-                    user_message,
-                    main_target=host_field,
-                    preferred_side_target="marital_status",
-                    allow_medium_target=True,
-                )
-            return self._build_policy_field_prompt("marital_status", user_profile, user_message=user_message)
         if self.collection_policy.can_actively_ask(user_profile, "monthly_income"):
             return self._build_policy_field_prompt("monthly_income", user_profile, user_message=user_message)
         return text
@@ -7050,9 +7178,9 @@ class ChatService:
         )
         if age_hint:
             prompts = [
-                "像你现在这个年龄段，找对象时会更看重哪方面呀？",
-                f"{age_hint}这个年龄段的话，你找另一半通常会更在意什么？",
-                "到你现在这个阶段，找对象时你会更看重性格、相处还是现实条件？",
+                "那你找对象时会更看重哪方面呀？",
+                "你找另一半时，通常会更在意什么？",
+                "那你在找对象这件事上，会更看重性格、相处还是现实条件呀？",
             ]
         else:
             prompts = [
@@ -7247,7 +7375,7 @@ class ChatService:
             if action_value == "ask_phone":
                 if user_profile.wechat_collected and user_profile.wechat:
                     return self._build_contact_followup_response("ask_phone", "wechat")
-                return "你要是方便的话，留个手机号也行，后面联系会顺一些。"
+                return "方便的话，也可以留个常用手机号。"
             if action_value == "persuade_phone":
                 return self._build_phone_persuasion_fallback()
             if action_value == "ask_wechat":
@@ -7326,6 +7454,7 @@ class ChatService:
             return "我们先不把资料问得太密，你也可以先说说自己更看重哪方面，我顺着往下了解。"
         if (
             decision.main_target in ASK_GUARD_CORE_FIELDS
+            and decision.main_target != "marital_status"
             and recent_core_streak >= 3
             and allow_medium_target
             and (decision.side_target or decision.main_target in {"education", "occupation"})
