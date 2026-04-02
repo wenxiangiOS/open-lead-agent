@@ -9,6 +9,7 @@ from src.models.user_profile import UserProfile
 from src.modules.conversation.domain.dialogue_expression_service import DialogueExpressionService
 from src.modules.conversation.domain.expectation_service import ExpectationService
 from src.modules.conversation.domain.turn_decision import TurnDecision
+from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingResult
 from src.modules.profile_collection.domain.profile_collection_policy import ProfileCollectionPolicy
 from src.services.ai_service import AIService
 from src.services.core.chat_service import ChatService
@@ -20,6 +21,14 @@ from src.modules.profile_collection.domain.extraction_service import ExtractionS
 class _FakeAIService:
     async def generate_response(self, *args, **kwargs):
         return ""
+
+
+class _ConfirmationAIService:
+    def __init__(self, response: str):
+        self.response = response
+
+    async def generate_response(self, *args, **kwargs):
+        return self.response
 
 
 def _build_chat_service() -> ChatService:
@@ -42,6 +51,158 @@ class _FakeProfileUserService:
 
     async def get_user_profile(self, account_id: str):
         return self.profile
+
+
+@pytest.mark.asyncio
+async def test_confirmation_ai_fallback_confirms_pending_sex_when_rule_misses():
+    user_service = AsyncMock()
+    chat_service = ChatService(
+        _ConfirmationAIService('{"result":"confirmed","field":"sex"}'),
+        user_service,
+    )
+    profile = UserProfile(account_id="u_confirmation_ai")
+    profile.pending_sex_confirmation = "男"
+
+    extracted_data, extraction_meta = await chat_service._apply_confirmation_ai_fallback(
+        {},
+        {},
+        user_message="你猜对了",
+        last_response="我再确认一下，你这边是男生对吧？",
+        user_profile=profile,
+    )
+
+    assert extracted_data["sex"] == "男"
+    assert extraction_meta["sex"]["source"] == "confirmation_ai_fallback"
+
+
+@pytest.mark.asyncio
+async def test_handle_refusal_detection_closes_birth_year_followup_without_skipping_age():
+    profile = UserProfile(account_id="u_birth_year_refusal")
+    profile.pending_birth_year_bucket = "90后"
+    user_service = _FakeProfileUserService(profile)
+    chat_service = ChatService(_FakeAIService(), user_service)
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="好，那你具体是90几年的呀？")
+    chat_service.refusal_service = SimpleNamespace(is_refusing=lambda message: True)
+    chat_service.contact_service = SimpleNamespace(
+        detect_refusal=lambda **kwargs: None,
+        should_end_conversation=lambda profile: False,
+        get_status_display=lambda profile: "",
+    )
+
+    await chat_service._handle_refusal_detection("这个先不说", "u_birth_year_refusal", profile)
+
+    assert profile.birth_year_confirmation_closed is True
+    assert profile.is_active_ask_closed("age") is True
+    assert "u_birth_year_refusal" not in chat_service._temp_refused_fields
+
+
+def test_build_shadow_profile_for_decision_keeps_age_uncovered_for_bucket_only_age():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_shadow_age_bucket")
+
+    understanding = SimpleNamespace(resolved_slots={"age": "36", "age_label": "90后"})
+    shadow = chat_service._build_shadow_profile_for_decision(
+        profile,
+        "90后",
+        understanding_result=understanding,
+    )
+
+    assert shadow.pending_birth_year_bucket == "90后"
+    assert shadow.collection_progress["age"] is False
+
+
+def test_policy_decide_keeps_age_as_main_target_when_birth_year_bucket_pending():
+    policy = ProfileCollectionPolicy()
+    profile = UserProfile(account_id="u_policy_age_bucket")
+    profile.sex = "女"
+    profile.collection_progress["sex"] = True
+    profile.partner_requirement = "找男朋友"
+    profile.collection_progress["partner_requirement"] = True
+    profile.pending_birth_year_bucket = "90后"
+    profile.birth_year_confirmation_closed = False
+    profile.age_label = "90后"
+    profile.age = 36
+    profile.collection_progress["age"] = False
+
+    decision = policy.decide(
+        profile,
+        user_message="90后",
+        message_count=2,
+    )
+
+    assert decision.main_target == "age"
+
+
+def test_avoid_reasking_current_field_keeps_birth_year_followup_for_bucket_only_age():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_keep_birth_year_followup")
+    profile.pending_birth_year_bucket = "90后"
+    profile.birth_year_confirmation_closed = False
+    profile.age_label = "90后"
+    profile.age = 36
+    profile.collection_progress["age"] = False
+
+    response = "90后跨度还挺大的呢，具体是九几年出生的呀？"
+    collection_result = {
+        "all_fields": [
+            {"field": "age", "value": "36"},
+            {"field": "age_label", "value": "90后"},
+        ]
+    }
+
+    rewritten = chat_service._avoid_reasking_just_collected_field(
+        response,
+        profile,
+        collection_result,
+        current_ask_field="age",
+        user_message="90后",
+        allow_medium_target=True,
+    )
+
+    assert rewritten == response
+
+
+def test_resolve_effective_followup_field_keeps_age_when_birth_year_bucket_pending():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_effective_age_bucket")
+    profile.pending_birth_year_bucket = "90后"
+    profile.birth_year_confirmation_closed = False
+    profile.age_label = "90后"
+    profile.age = 36
+    profile.collection_progress["age"] = False
+
+    effective = chat_service._resolve_effective_followup_field(
+        profile,
+        ask_field="age",
+        collected_fields={"age", "age_label"},
+        user_message="90后",
+        allow_medium_target=True,
+    )
+
+    assert effective == "age"
+
+
+def test_contact_refusal_does_not_short_circuit_into_boundary_quick_decision():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_contact_refusal")
+
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="refusal_boundary_complaint",
+        subtype="contact_refusal",
+        answer_first=True,
+        confidence=0.9,
+        context_ack_type="contact_refusal",
+    )
+
+    decision = chat_service._build_understanding_quick_decision(  # noqa: SLF001
+        understanding=understanding,
+        user_profile=profile,
+        stage="completing",
+        followup_topic="contact_refusal",
+        context_ack_payload={},
+    )
+
+    assert decision is None
 
 
 def test_core_personality_does_not_hardcode_fake_resume():

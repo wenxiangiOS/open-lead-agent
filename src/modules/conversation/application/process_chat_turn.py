@@ -436,7 +436,8 @@ class ProcessChatTurnUseCase:
                     decision_profile,
                     final_response,
                 )
-                final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
+                if response_channel != "quick_faq":
+                    final_response = self.chat_service._sanitize_robotic_tone(final_response)  # noqa: SLF001
                 # Phase 2: FAQ 结束后设置 bridge_back 标记
                 user_profile.needs_bridge_back = True
                 user_profile.last_side_topic_type = "faq"
@@ -731,6 +732,13 @@ class ProcessChatTurnUseCase:
                         "confidence": 0.86,
                         "source_text": request.question,
                     }
+            extracted_data, extraction_meta = await self.chat_service._apply_confirmation_ai_fallback(  # noqa: SLF001
+                extracted_data,
+                extraction_meta,
+                user_message=request.question,
+                last_response=last_response,
+                user_profile=user_profile,
+            )
             _mark("extract_fuse", t0)
             extracted_fields_count = len(extracted_data or {})
             contact_gate_before = self.chat_service.collection_policy.can_enter_contact(user_profile)  # noqa: SLF001

@@ -171,11 +171,17 @@ class ProfileCollectionPolicy:
         user_type = self.classify_user_type(user_message, message_count)
         complaint_reason = getattr(understanding_result, "complaint_reason", None) if understanding_result else None
         if understanding_result:
-            if understanding_result.primary_turn_type in {"faq_concern", "refusal_boundary_complaint"}:
-                prioritize_user_question = True
-                allow_contact_target = False
+            if understanding_result.primary_turn_type == "refusal_boundary_complaint" and understanding_result.subtype == "contact_refusal":
+                prioritize_user_question = False
+                allow_contact_target = True
                 allow_medium_target = False
-                primary_move = "answer_then_resume" if understanding_result.primary_turn_type == "faq_concern" else "ack_and_hold"
+                primary_move = "ack_and_ask"
+            if understanding_result.primary_turn_type in {"faq_concern", "refusal_boundary_complaint"}:
+                if not (understanding_result.primary_turn_type == "refusal_boundary_complaint" and understanding_result.subtype == "contact_refusal"):
+                    prioritize_user_question = True
+                    allow_contact_target = False
+                    allow_medium_target = False
+                    primary_move = "answer_then_resume" if understanding_result.primary_turn_type == "faq_concern" else "ack_and_hold"
             elif understanding_result.primary_turn_type in {"closing_exit", "risk_guard"}:
                 allow_contact_target = False
                 allow_medium_target = False
@@ -280,7 +286,10 @@ class ProfileCollectionPolicy:
                 resolved_primary_move = "answer_then_pause"
             elif understanding_result.primary_turn_type in {"faq_concern"}:
                 resolved_primary_move = "answer_then_pause"
-            elif understanding_result.primary_turn_type in {"refusal_boundary_complaint", "closing_exit"}:
+            elif understanding_result.primary_turn_type == "refusal_boundary_complaint":
+                if understanding_result.subtype != "contact_refusal":
+                    resolved_primary_move = "soft_hold"
+            elif understanding_result.primary_turn_type == "closing_exit":
                 resolved_primary_move = "soft_hold"
         if resume_profile_collection:
             resolved_primary_move = "light_followup"
@@ -554,6 +563,13 @@ class ProfileCollectionPolicy:
         if not cue_order:
             return None
         cues = {field: True for field in cue_order}
+        pending_birth_year_bucket = str(getattr(profile, "pending_birth_year_bucket", "") or "").strip()
+        birth_year_pending = bool(
+            pending_birth_year_bucket and not getattr(profile, "birth_year_confirmation_closed", False)
+        )
+
+        if birth_year_pending and cues.get("age") and self.can_actively_ask(profile, "age"):
+            return "age"
 
         if cues.get("location") and self.can_actively_ask(profile, "occupation"):
             return "occupation"
@@ -576,6 +592,8 @@ class ProfileCollectionPolicy:
                     return field
 
         if latest_cue == "age":
+            if birth_year_pending and self.can_actively_ask(profile, "age"):
+                return "age"
             for field in ("sex", "location"):
                 if self.can_actively_ask(profile, field):
                     return field
@@ -659,6 +677,12 @@ class ProfileCollectionPolicy:
     def is_core_field_covered(self, profile: UserProfile, field: str) -> bool:
         if profile.skipped_fields.get(field, False) or profile.is_active_ask_closed(field):
             return True
+        if (
+            field == "age"
+            and str(getattr(profile, "pending_birth_year_bucket", "") or "").strip()
+            and not getattr(profile, "birth_year_confirmation_closed", False)
+        ):
+            return False
         return self.is_collected(profile, field) or profile.get_ask_count(field) >= 2
 
     def is_medium_field_covered(self, profile: UserProfile, field: str) -> bool:
@@ -920,6 +944,14 @@ class ProfileCollectionPolicy:
             return self.DISABLED
         if self.is_collected(profile, field):
             return self.DISABLED
+        if (
+            field == "age"
+            and str(getattr(profile, "pending_birth_year_bucket", "") or "").strip()
+            and not getattr(profile, "birth_year_confirmation_closed", False)
+        ):
+            return self.ACTIVE
+        if str(getattr(profile, "pending_retry_field", "") or "").strip() == field:
+            return self.ACTIVE
         if profile.skipped_fields.get(field, False):
             return self.DISABLED
         if profile.is_active_ask_closed(field):
@@ -956,6 +988,10 @@ class ProfileCollectionPolicy:
                 (profile.phone and profile.phone_collected) or
                 (profile.wechat and profile.wechat_collected)
             )
+        if field == "age":
+            pending_bucket = str(getattr(profile, "pending_birth_year_bucket", "") or "").strip()
+            if pending_bucket and not getattr(profile, "birth_year_confirmation_closed", False):
+                return False
         return bool(profile.collection_progress.get(field, False))
 
     def should_block_preference_ask(self, profile: UserProfile, user_message: str = "") -> bool:

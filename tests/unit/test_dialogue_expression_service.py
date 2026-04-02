@@ -87,7 +87,7 @@ def test_render_field_question_for_age_can_optionally_add_light_reason():
 
     first = service.render_field_question("age")
 
-    assert "多大" in first or "年龄段" in first
+    assert "几年" in first or "哪一年" in first or "出生" in first
     assert any(token in first for token in ["接话会更顺", "顺着往下聊"])
 
 
@@ -99,7 +99,7 @@ def test_render_field_question_for_age_bridge_avoids_flat_i_know_wording():
     response = service.render_field_question("age", profile=profile, stage="trust")
 
     assert "博士" in response
-    assert "什么年龄段" in response or "多大" in response
+    assert "几年" in response or "哪一年" in response or "出生" in response
     assert "这边我知道了" not in response
     assert "年龄这块" not in response
 
@@ -172,6 +172,38 @@ def test_render_field_question_for_sex_uses_soft_confirmation_when_preference_ex
     assert "男生还是女生" not in response
     assert "男生" in response
     assert any(token in response for token in ("对吧", "是吧"))
+
+
+def test_render_field_question_for_sex_uses_soft_confirmation_for_explicit_boyfriend_request_without_profile_preference():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_sex_boyfriend_message")
+
+    response = service.render_field_question("sex", profile=profile, stage="trust", user_message="找男朋友")
+
+    assert "男生还是女生" not in response
+    assert "想找男朋友" in response or "找男朋友" in response
+    assert "女生" in response
+    assert "对吗" in response
+
+
+def test_render_field_question_for_sex_keeps_neutral_question_for_weak_preference_message_only():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_sex_weak_message")
+
+    response = service.render_field_question("sex", profile=profile, stage="trust", user_message="找漂亮的，苗条的")
+
+    assert "男生还是女生" in response
+    assert "对吧" not in response
+
+
+def test_render_field_question_for_age_uses_birth_year_bucket_followup_when_bucket_pending():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_birth_year_bucket")
+    profile.pending_birth_year_bucket = "90后"
+
+    response = service.render_field_question("age", profile=profile, stage="trust", user_message="嗯")
+
+    assert "90几年的" in response or "哪一年" in response
 
 
 def test_render_field_question_for_sex_keeps_neutral_question_when_only_single_weak_height_cue():

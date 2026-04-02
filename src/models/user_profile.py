@@ -27,6 +27,8 @@ class UserProfile(BaseModel):
     last_name: Optional[str] = Field(None, description="用户主动提供的称呼/昵称（低优字段）")
     age: Optional[int] = Field(None, description="年龄（数字）")
     age_label: Optional[str] = Field(None, description="年龄原始表达（如90后、95后）")
+    pending_birth_year_bucket: Optional[str] = Field(None, description="待确认的出生年份桶（如90后）")
+    birth_year_confirmation_closed: bool = Field(default=False, description="是否已停止主动追问具体出生年份")
     extraction_evidence: Dict[str, Dict[str, Any]] = Field(
         default_factory=dict,
         description="字段提取证据链：value/source_text/turn_id/confidence/source"
@@ -174,6 +176,10 @@ class UserProfile(BaseModel):
         description="字段被错位回答的连续次数，用于第一次错位不计 ask_count",
     )
     last_effective_progress: bool = Field(default=False, description="最近一轮是否产生有效推进")
+    pending_retry_field: Optional[str] = Field(
+        default=None,
+        description="当前允许无视普通冷却再追问一次的字段（用于核心字段隐晦拒绝后的解释型重问）",
+    )
 
     # 通用资料概览只统计业务关键字段；低优字段和派生展示字段不计入公共完成度。
     SUMMARY_PROGRESS_FIELDS: ClassVar[tuple[str, ...]] = (
@@ -368,6 +374,22 @@ class UserProfile(BaseModel):
                 self.reset_ask_count(field_name)
                 if field_name == 'sex':
                     self.pending_sex_confirmation = None
+                if field_name == 'age':
+                    age_label = str(getattr(self, 'age_label', '') or '').strip()
+                    if re.search(r'^\d{2}年$', age_label) or re.search(r'^(19|20)\d{2}年$', age_label):
+                        self.pending_birth_year_bucket = None
+                        self.birth_year_confirmation_closed = False
+                elif field_name == 'age_label':
+                    age_label = str(validated or "").strip()
+                    if re.search(r'^\d{2}后$', age_label):
+                        self.pending_birth_year_bucket = age_label
+                        self.birth_year_confirmation_closed = False
+                        # 年龄桶不是最终精度，不算年龄字段完成
+                        self.collection_progress['age'] = False
+                    elif re.search(r'^(\d{2}|19\d{2}|20\d{2})年$', age_label):
+                        self.pending_birth_year_bucket = None
+                        self.birth_year_confirmation_closed = False
+                        self.collection_progress['age'] = True
 
                 # 特殊处理：phone 和 wechat 字段收集成功后更新状态
                 if field_name == 'phone':
@@ -645,6 +667,14 @@ class UserProfile(BaseModel):
         self.last_user_concern_type = None
         self.updated_at = datetime.now()
 
+    def set_pending_retry_field(self, field_name: Optional[str]) -> None:
+        self.pending_retry_field = field_name or None
+        self.updated_at = datetime.now()
+
+    def clear_pending_retry_field(self) -> None:
+        self.pending_retry_field = None
+        self.updated_at = datetime.now()
+
     def get_fields_asked_multiple_times(self, min_times: int = 2) -> list:
         """
         获取被问过多次但未回答的字段列表
@@ -813,6 +843,8 @@ class UserProfile(BaseModel):
             "last_name": self.last_name,
             "age": self.age,
             "age_label": self.age_label,
+            "pending_birth_year_bucket": self.pending_birth_year_bucket,
+            "birth_year_confirmation_closed": self.birth_year_confirmation_closed,
             "height": self.height,
             "weight": self.weight,
             "location": self.location,

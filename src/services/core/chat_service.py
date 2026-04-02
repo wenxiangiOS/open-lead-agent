@@ -181,6 +181,7 @@ def _is_affirmative_confirmation_answer(text: str) -> bool:
     return bool(
         re.search(
             r"^\s*(?:是的|对|对的|嗯|嗯嗯|没错|是|好的|好)"
+            r"(?:[呀呢啊哦哈啦嘛]*)?"
             r"(?:\s*[，,、 ]\s*(?:单身|未婚|离异|已婚|分居))?\s*$",
             str(text or ""),
         )
@@ -456,6 +457,35 @@ PROFILE_PARTIAL_BOUNDARY_ACK_VARIANTS = (
     "{field_ack} 我先接住，这一轮先不往这上面压。",
     "{field_ack} 这个我先放这儿，我们先按你舒服的节奏来。",
 )
+FIELD_SOFT_REFUSAL_RETRY_ACK_VARIANTS = {
+    "location": (
+        "没事，我不是想问得很细，就是想大概了解下你常住哪个城市，后面聊起来会更顺一点。",
+        "这个我理解，我主要是想知道你现在大概在哪个城市生活，方便我顺着你的情况往下聊。",
+        "没关系，不用说得太细，我就是想先知道你现在主要在哪个城市。",
+    ),
+    "education": (
+        "这个我理解，我不是想问得很细，就是想大概了解下你的学历背景，后面沟通会更顺一点。",
+        "没事，这里不用展开说很多，你告诉我大概是什么学历就行。",
+        "这个我能理解，我主要是想先知道你学历大概在哪个范围。",
+    ),
+    "occupation": (
+        "没事，我不是想问得太细，就是想大概了解下你现在做什么方向，后面聊起来更顺一点。",
+        "这个我理解，你说个大概的工作方向就行，不用讲得很细。",
+        "没关系，我主要是想先知道你现在大概做哪方面工作。",
+    ),
+    "sex": (
+        "这个我理解，我就是先确认下基本情况，后面沟通会更顺一点。",
+        "没事，这里我只是想先确认下你的基本信息。",
+    ),
+    "age": (
+        "这个我理解，我主要是想先知道你大概是哪个年龄段，后面聊起来会更顺一点。",
+        "没事，不用说得特别细，我就是想先确认下你大概多大。",
+    ),
+    "marital_status": (
+        "这个我理解，我只是想先确认下你现在大概是什么感情状态，后面沟通会更顺一点。",
+        "没事，这里不用说得很细，我主要是想先了解下你现在是不是单身状态。",
+    ),
+}
 OPENING_PROFILE_ACK_VARIANTS = (
     "{field_ack} 这个我有数了。",
     "{field_ack}。",
@@ -704,6 +734,16 @@ class ChatService:
 
         # 检测用户是否拒绝（通用拒绝检测）
         is_refusing = self.refusal_service.is_refusing(user_message)
+        if (
+            is_refusing
+            and getattr(user_profile, "pending_birth_year_bucket", None)
+            and self._is_birth_year_bucket_question(last_response)
+        ):
+            user_profile.birth_year_confirmation_closed = True
+            user_profile.close_active_ask("age")
+            await self.user_service.save_user_profile(account_id, user_profile)
+            logger.info("[年龄年份确认] 用户拒绝补充具体年份，保留年龄桶并继续主线")
+            is_refusing = False
         if is_refusing and last_response:
             refused_fields = self.extraction_service.infer_refused_fields(last_response)
             self._temp_refused_fields[account_id] = refused_fields
@@ -755,6 +795,13 @@ class ChatService:
         # 提示词中出现联系方式强约束时，强制主模型
         prompt_markers = ["立即执行-询问电话", "立即执行-询问微信", "立即执行-争取微信", "收尾"]
         return any(marker in (prompt or "") for marker in prompt_markers)
+
+    @staticmethod
+    def _is_birth_year_bucket_question(last_response: str) -> bool:
+        text = str(last_response or "")
+        return bool(
+            re.search(r"(具体是\d{2}几年的|具体是哪一年的|哪一年出生)", text)
+        )
 
     def _select_model_for_turn(self, user_message: str, prompt: str) -> str:
         """
@@ -1115,7 +1162,7 @@ class ChatService:
                 return self.greeting_service.get_open_self_intro_response()
             return text
 
-        if understanding.primary_turn_type == "refusal_boundary_complaint" and (understanding.subtype or "") in {"boundary_defensive", "refusal", "contact_refusal"}:
+        if understanding.primary_turn_type == "refusal_boundary_complaint" and (understanding.subtype or "") in {"boundary_defensive", "refusal"}:
             if not any(marker in text for marker in ("可以", "不强求", "不留也行", "先聊")):
                 return "可以，不想留也行，我们先聊别的。"
             return text
@@ -1295,7 +1342,9 @@ class ChatService:
                     in_repair_mode=True,
                     repair_cooldown_remaining=user_profile.ask_cooldown_turns,
                 )
-            if subtype in {"boundary_defensive", "refusal", "contact_refusal"}:
+            if subtype == "contact_refusal":
+                return None
+            if subtype in {"boundary_defensive", "refusal"}:
                 return self._build_quick_turn_decision(
                     intent="boundary",
                     risk="boundary",
@@ -1388,6 +1437,7 @@ class ChatService:
         resume_mode = policy_decision.resume_mode or user_profile.resume_profile_mode
         next_action = "continue"
         resume_applied = False
+        soft_retry_field = str((understanding.context_ack_payload or {}).get("field") or "").strip()
 
         if contact_context and intent == "general" and risk == "none":
             ask_field = "contact"
@@ -1412,6 +1462,17 @@ class ChatService:
             )
             resume_target = policy_decision.resume_target or policy_decision.main_target
             resume_mode = policy_decision.resume_mode or policy_decision.next_mode
+
+        if (
+            understanding.subtype == "soft_refusal_current_field"
+            and soft_retry_field
+            and soft_retry_field in ASK_GUARD_CORE_FIELDS
+            and not self.collection_policy.is_collected(user_profile, soft_retry_field)
+        ):
+            ask_field = soft_retry_field
+            allow_contact_target = False
+            allow_medium_target = False
+            user_profile.set_pending_retry_field(soft_retry_field)
 
         if (
             not prioritize_user_question
@@ -1528,6 +1589,7 @@ class ChatService:
         *,
         message: str,
         user_profile: UserProfile,
+        understanding: TurnUnderstandingResult,
         complaint_reason: Optional[str],
         primary_move: str,
         user_concern_type: Optional[str],
@@ -1553,7 +1615,11 @@ class ChatService:
             risk = "high_risk"
             primary_move = "answer_then_pause"
             allow_contact_target = False
-        elif self._is_boundary_pause_triggered(message, user_profile) and not self._should_keep_contact_refusal_in_contact_flow(message, user_profile):
+        elif (
+            self._is_boundary_pause_triggered(message, user_profile)
+            and understanding.subtype != "soft_refusal_current_field"
+            and not self._should_keep_contact_refusal_in_contact_flow(message, user_profile)
+        ):
             risk = "boundary"
             primary_move = "soft_hold"
             allow_contact_target = False
@@ -1808,6 +1874,7 @@ class ChatService:
         ) = self._apply_turn_state_overrides(
             message=message,
             user_profile=user_profile,
+            understanding=understanding,
             complaint_reason=complaint_reason,
             primary_move=primary_move,
             user_concern_type=user_concern_type,
@@ -2131,6 +2198,13 @@ class ChatService:
             variants = tuple(v.format(field_ack=field_ack) for v in PROFILE_PARTIAL_BOUNDARY_ACK_VARIANTS)
             return self._pick_seeded_variant("context:partial_boundary", variants, seed_hint)
 
+        if ack_type == "field_soft_refusal_retry":
+            field = str(payload.get("field") or "").strip()
+            variants = FIELD_SOFT_REFUSAL_RETRY_ACK_VARIANTS.get(field) or ()
+            if variants:
+                return self._pick_seeded_variant(f"context:soft_refusal_retry:{field}", variants, seed_hint)
+            return self._pick_seeded_variant("context:boundary", BOUNDARY_ACK_VARIANTS, seed_hint)
+
         if ack_type == "opening_profile_ack":
             field_ack = str(payload.get("field_ack") or self.turn_understanding_service._build_opening_profile_ack(user_message)).strip()  # noqa: SLF001
             if not field_ack:
@@ -2167,6 +2241,19 @@ class ChatService:
         if ack_type == "opening_profile_ack":
             field_ack = str(payload.get("field_ack") or "").strip()
             return bool(field_ack) and any(token and token in text for token in (field_ack, "知道了", "接住", "这点"))
+        if ack_type == "field_soft_refusal_retry":
+            field = str(payload.get("field") or "").strip()
+            field_tokens = {
+                "location": ("城市", "哪边", "常住"),
+                "education": ("学历", "背景", "读书"),
+                "occupation": ("工作", "做什么", "方向"),
+                "sex": ("男生", "女生", "基本情况"),
+                "age": ("年龄", "多大", "年龄段"),
+                "marital_status": ("单身", "感情状态", "婚况"),
+            }.get(field, ())
+            return any(token in text for token in ("我不是想问得很细", "大概了解下", "不用说得太细")) and any(
+                token in text for token in field_tokens
+            )
         if ack_type in {"boundary_pause", "topic_shift", "profile_partial_with_boundary"}:
             boundary_tokens = ("先不追", "不勉强", "没关系", "先不聊", "先收住", "舒服的节奏", "先顺着")
             if ack_type == "profile_partial_with_boundary":
@@ -2468,6 +2555,12 @@ class ChatService:
             if isinstance(item, dict)
         }
         if current_ask_field not in collected_fields:
+            return text
+        if (
+            current_ask_field == "age"
+            and str(getattr(user_profile, "pending_birth_year_bucket", "") or "").strip()
+            and not getattr(user_profile, "birth_year_confirmation_closed", False)
+        ):
             return text
 
         asked_fields = self._detect_asked_fields_in_response(text)
@@ -3553,7 +3646,7 @@ class ChatService:
             "1. 保持原本要问的核心问题不变，只改说法。\n"
             "2. 更像真人聊天，先承接，再自然发问。\n"
             "3. 不要复用这些固定句：'你好呀～对了，想问下'、'对了，想问下'、'方便说下'、'我再确认一下'、'学历这块'、'婚况这块'。\n"
-            "4. 如果涉及婚况，只问是否单身状态，不要并列说未婚和离异。\n"
+            "4. 如果涉及婚况，优先轻问感情状态或婚况，不要并列说未婚和离异；必要时可补半句自然解释。\n"
             "5. 不要照抄最近两轮回复的开头。\n"
             f"本轮目标字段：{ask_field or '-'}\n"
             f"用户原话：{user_message or '-'}\n"
@@ -4119,6 +4212,102 @@ class ChatService:
             del self._temp_refused_fields[account_id]
 
         return collection_result
+
+    @staticmethod
+    def _extract_pending_confirmation_targets(last_response: str, user_profile: UserProfile) -> Dict[str, str]:
+        targets: Dict[str, str] = {}
+        sex_candidate = getattr(user_profile, "pending_sex_confirmation", None) or _extract_confirmed_sex_candidate_from_context(last_response)
+        if sex_candidate:
+            targets["sex"] = sex_candidate
+        if re.search(r"(单身状态|现在是单身吗|现在单身吗|感情状态.*单身|婚况.*单身)", str(last_response or "")):
+            targets["marital_status"] = "单身"
+        return targets
+
+    @staticmethod
+    def _should_use_confirmation_ai_fallback(user_message: str) -> bool:
+        text = str(user_message or "").strip()
+        if not text:
+            return False
+        if len(text) > 12:
+            return False
+        if re.search(r"(我是|我就是|本人|男生|女生|男的|女的|单身|未婚|离异|已婚)", text):
+            return False
+        if _is_affirmative_confirmation_answer(text):
+            return False
+        if re.search(r"(不是|不对|并不是|没有)", text):
+            return False
+        return True
+
+    async def _apply_confirmation_ai_fallback(
+        self,
+        extracted_data: Dict[str, Any],
+        extraction_meta: Dict[str, Dict[str, Any]],
+        *,
+        user_message: str,
+        last_response: str,
+        user_profile: UserProfile,
+    ) -> tuple[Dict[str, Any], Dict[str, Dict[str, Any]]]:
+        if not self._should_use_confirmation_ai_fallback(user_message):
+            return extracted_data, extraction_meta
+
+        pending_targets = self._extract_pending_confirmation_targets(last_response, user_profile)
+        unresolved_targets = {
+            field: value
+            for field, value in pending_targets.items()
+            if not extracted_data.get(field)
+        }
+        if not unresolved_targets:
+            return extracted_data, extraction_meta
+
+        allowed_fields = ", ".join(f"{field}={value}" for field, value in unresolved_targets.items())
+        system_prompt = (
+            "你是一个确认回复分类器。"
+            "根据上一轮助手回复、当前用户回复、待确认字段和值，判断用户是否是在确认该候选值。"
+            "只输出一行 JSON。"
+            '确认时输出 {"result":"confirmed","field":"字段名"}。'
+            '否认或纠正时输出 {"result":"denied","field":"字段名"}。'
+            '不确定时输出 {"result":"unclear","field":""}。'
+            f"本次只允许这些字段：{allowed_fields}。不要输出任何解释。"
+        )
+        prompt = (
+            f"上一轮助手回复：{last_response}\n"
+            f"当前用户回复：{user_message}\n"
+            f"待确认字段：{allowed_fields}"
+        )
+
+        try:
+            raw = await self.ai_service.generate_response(
+                prompt,
+                system_prompt,
+                temperature=0.0,
+                max_tokens=40,
+                timeout=8.0,
+            )
+        except AIServiceException as exc:
+            logger.warning("[confirmation_ai_fallback] failed: %s", exc)
+            return extracted_data, extraction_meta
+
+        match = re.search(
+            r'\{\s*"result"\s*:\s*"(?P<result>confirmed|denied|unclear)"\s*,\s*"field"\s*:\s*"(?P<field>[a-z_]*?)"\s*\}',
+            str(raw or ""),
+        )
+        if not match:
+            logger.info("[confirmation_ai_fallback] unparseable=%r", raw)
+            return extracted_data, extraction_meta
+
+        result = match.group("result")
+        field = match.group("field")
+        if result != "confirmed" or field not in unresolved_targets:
+            return extracted_data, extraction_meta
+
+        extracted_data[field] = unresolved_targets[field]
+        extraction_meta[field] = {
+            "source": "confirmation_ai_fallback",
+            "confidence": 0.72,
+            "source_text": user_message,
+        }
+        logger.info("[confirmation_ai_fallback] field=%s value=%s", field, unresolved_targets[field])
+        return extracted_data, extraction_meta
 
     async def _handle_contact_validation(
         self,
@@ -4729,10 +4918,10 @@ class ChatService:
 
         text = re.sub(
             r"^(挺好的|好呀|好的|嗯，不错呀|行呀)[，,]\s*你是哪年的呀([？?])$",
-            r"\1，那你现在大概什么年龄段呀\2",
+            r"\1，那你大概是哪一年出生的呀\2",
             text,
         )
-        text = re.sub(r"^你是哪年的呀([？?])$", r"你现在大概什么年龄段呀\1", text)
+        text = re.sub(r"^你是哪年的呀([？?])$", r"你大概是哪一年出生的呀\1", text)
         return re.sub(r"\s+", " ", text).strip()
 
     @staticmethod
@@ -5623,14 +5812,29 @@ class ChatService:
             if value in (None, ""):
                 continue
             if field == "age_label":
-                shadow_profile.age_label = str(value).strip()
+                age_label = str(value).strip()
+                shadow_profile.age_label = age_label
+                if re.search(r"^\d{2}后$", age_label):
+                    shadow_profile.pending_birth_year_bucket = age_label
+                    shadow_profile.birth_year_confirmation_closed = False
+                    shadow_profile.collection_progress["age"] = False
+                elif re.search(r"^(\d{2}|19\d{2}|20\d{2})年$", age_label):
+                    shadow_profile.pending_birth_year_bucket = None
+                    shadow_profile.birth_year_confirmation_closed = False
+                    shadow_profile.collection_progress["age"] = True
                 continue
             if hasattr(shadow_profile, field):
                 shadow_profile.update_field(field, value)
                 if field in shadow_profile.collection_progress:
                     shadow_profile.collection_progress[field] = True
 
-        if extracted.get("age") and not shadow_profile.collection_progress.get("age"):
+        age_label = str(extracted.get("age_label") or "").strip()
+        has_bucket_only_age = bool(re.search(r"^\d{2}后$", age_label))
+        if has_bucket_only_age:
+            shadow_profile.pending_birth_year_bucket = age_label
+            shadow_profile.birth_year_confirmation_closed = False
+            shadow_profile.collection_progress["age"] = False
+        if extracted.get("age") and not shadow_profile.collection_progress.get("age") and not has_bucket_only_age:
             shadow_profile.collection_progress["age"] = True
         if extracted.get("partner_requirement"):
             shadow_profile.collection_progress["partner_requirement"] = True
@@ -5761,9 +5965,9 @@ class ChatService:
         if next_field and next_field not in {"partner_requirement", "contact"}:
             if next_field == "marital_status":
                 bridge_variants = (
-                    f"{ack} 我再顺手确认一下，你现在是单身状态吗？",
-                    f"{ack} 对了，我也确认下，你现在是单身吗？",
-                    f"{ack} 那我再接着问一句，你现在是单身状态吗？",
+                    f"{ack} 我再顺手了解一句，你现在婚况方便说个大概吗？我想确认准一点，因为有的人分居中也会直接说自己单身。",
+                    f"{ack} 对了，感情状态这边你也可以顺手说个大概，我多问一句哈，主要是有些情况不一定一句单身就能概括。",
+                    f"{ack} 那我再接着问一句，你现在婚况大概是怎样的呀？像分居中这种情况，很多人也会直接说自己单身，所以我先确认细一点。",
                 )
                 return random.choice(bridge_variants).strip()
             followup = self._build_policy_field_prompt(next_field, shadow_profile, user_message=user_message)
@@ -5772,6 +5976,13 @@ class ChatService:
 
     @staticmethod
     def _build_fused_partner_requirement_prompt(main_target: Optional[str]) -> str:
+        if main_target == "age":
+            variants = (
+                "你大概是哪一年出生的呀？顺着这个聊，你对另一半更看重哪一点也可以一起说说。",
+                "你是几几年的呀？另外你找对象时更在意对方哪方面，也能顺手带一句。",
+                "你大概是哪一年的呀？说到这儿，你对另一半会更看重什么？",
+            )
+            return random.choice(variants)
         if main_target == "education":
             variants = (
                 "你大概是什么学历呀？平时更看重另一半哪一点，也可以一起说说。",
@@ -5828,18 +6039,23 @@ class ChatService:
     def _build_fused_marital_status_prompt(main_target: Optional[str]) -> str:
         if main_target == "occupation":
             variants = (
-                "你现在主要做哪方面工作呀？感情状态这边我也顺手确认一下，你现在是单身吗？",
-                "平时是做什么工作的？另外感情状态这边，我也顺手确认一下，你现在是单身吗？",
-                "你现在主要做哪方面工作呀？对了，我也确认下，你现在是单身吗？",
+                "你现在主要做哪方面工作呀？另外婚况这边也方便说个大概吗？我想确认准一点，因为有的人分居中也会直接说自己单身。",
+                "平时是做什么工作的？还有你现在的感情状态，也可以顺手带一句，我多问一句哈，主要是有些情况不一定一句单身就能概括。",
+                "你现在主要做哪方面工作呀？另外婚况这边我也想先了解个大概，像分居中这种情况，很多人也会直接说自己单身。",
             )
             return random.choice(variants)
         if main_target == "education":
             variants = (
-                "你大概是什么学历呀？感情状态这边我也顺手确认一下，你现在是单身吗？",
-                "学历这边你方便说个大概吗？另外我也确认下，你现在是单身吗？",
+                "你大概是什么学历呀？另外你现在婚况也方便顺手说个大概吗？我想确认准一点，因为有的人分居中也会直接说自己单身。",
+                "学历这边你方便说个大概吗？还有感情状态这边我也想先了解一下，我多问一句哈，主要是有些情况不一定一句单身就能概括。",
             )
             return random.choice(variants)
-        return "我顺手确认一下，你现在是单身吗？"
+        variants = (
+            "你现在婚况方便说个大概吗？我想确认准一点，因为有的人分居中也会直接说自己单身。",
+            "感情状态这边你方便说个大概吗？我多问一句哈，主要是有些情况不一定一句单身就能概括。",
+            "我想先了解下你现在婚况大概是怎样的呀？像分居中这种情况，很多人也会直接说自己单身。",
+        )
+        return random.choice(variants)
 
     @staticmethod
     def _build_response_opening_signature(text: str) -> str:
@@ -6098,7 +6314,7 @@ class ChatService:
             and preferred_side_target == "partner_requirement"
             and self.collection_policy.can_actively_ask(user_profile, "partner_requirement")
         ):
-            if main_target in {"education", "occupation"}:
+            if main_target in {"age", "education", "occupation"}:
                 return self._build_fused_partner_requirement_prompt(main_target)
             elif bridge_context:
                 side_prompt = random.choice(PARTNER_REQUIREMENT_ASK_VARIANTS)
@@ -6127,7 +6343,7 @@ class ChatService:
         ):
             if main_target in {"age", "location", "education", "occupation"}:
                 return self._build_fused_marital_status_prompt(main_target)
-            side_prompt = "感情状态这边我也顺手确认一下，你现在是单身状态吗？"
+            side_prompt = "你现在的感情状态方便说个大概吗？我这边先了解一下，后面接话会更顺一点。"
         elif allow_medium_target and preferred_side_target:
             side_prompt = self._build_policy_field_prompt(preferred_side_target, user_profile, user_message=user_message)
 
@@ -6490,11 +6706,14 @@ class ChatService:
         *,
         user_message: str = "",
         stage: str = "trust",
+        collection_result: Optional[Dict[str, Any]] = None,
     ) -> str:
         if field == "sex" and user_profile and not getattr(user_profile, "sex", None):
+            preference_hint = self._extract_partner_requirement_hint(collection_result)
             soft_confirmation = self.dialogue_expression_service._build_soft_gender_confirmation_prompt(  # noqa: SLF001
                 user_profile,
                 user_message=user_message,
+                preference_hint=preference_hint,
             )
             if soft_confirmation:
                 return soft_confirmation
@@ -6503,7 +6722,25 @@ class ChatService:
             profile=user_profile,
             stage=stage,
             user_message=user_message,
+            preference_hint=self._extract_partner_requirement_hint(collection_result) if field == "sex" else "",
         )
+
+    @staticmethod
+    def _extract_partner_requirement_hint(collection_result: Optional[Dict[str, Any]] = None) -> str:
+        if not isinstance(collection_result, dict):
+            return ""
+        for item in collection_result.get("all_fields", []):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("field") or "").strip() != "partner_requirement":
+                continue
+            value = str(item.get("value") or "").strip()
+            if value:
+                return value
+        value = str(collection_result.get("value") or "").strip()
+        if str(collection_result.get("field") or "").strip() == "partner_requirement" and value:
+            return value
+        return ""
 
     def _enforce_core_mainline_followup(
         self,
@@ -6664,6 +6901,7 @@ class ChatService:
                 soft_confirmation = self.dialogue_expression_service._build_soft_gender_confirmation_prompt(  # noqa: SLF001
                     user_profile,
                     user_message=user_message,
+                    preference_hint=self._extract_partner_requirement_hint(collection_result),
                 )
                 if soft_confirmation and any(
                     token in text for token in ("男生还是女生", "性别")
@@ -6683,6 +6921,7 @@ class ChatService:
         soft_confirmation = self.dialogue_expression_service._build_soft_gender_confirmation_prompt(  # noqa: SLF001
             user_profile,
             user_message=user_message,
+            preference_hint=self._extract_partner_requirement_hint(collection_result),
         )
         if soft_confirmation and any(token in text for token in ("男生还是女生", "性别")) and "对吧" not in text:
             generic_patterns = (
@@ -6709,13 +6948,28 @@ class ChatService:
             "顺着聊",
         )
         if any(marker in text for marker in generic_hold_markers):
-            return self._build_policy_field_prompt(effective_ask_field, user_profile, user_message=user_message)
+            return self._build_policy_field_prompt(
+                effective_ask_field,
+                user_profile,
+                user_message=user_message,
+                collection_result=collection_result,
+            )
 
         if not asked_fields and len(text) <= 18:
-            return self._build_policy_field_prompt(effective_ask_field, user_profile, user_message=user_message)
+            return self._build_policy_field_prompt(
+                effective_ask_field,
+                user_profile,
+                user_message=user_message,
+                collection_result=collection_result,
+            )
 
         if asked_fields and effective_ask_field not in asked_fields:
-            return self._build_policy_field_prompt(effective_ask_field, user_profile, user_message=user_message)
+            return self._build_policy_field_prompt(
+                effective_ask_field,
+                user_profile,
+                user_message=user_message,
+                collection_result=collection_result,
+            )
 
         return text
 
@@ -6754,7 +7008,12 @@ class ChatService:
         if "sex" in asked_fields:
             return text
 
-        followup = self._build_policy_field_prompt("sex", user_profile, user_message=user_message).strip()
+        followup = self._build_policy_field_prompt(
+            "sex",
+            user_profile,
+            user_message=user_message,
+            collection_result=collection_result,
+        ).strip()
         if not followup:
             return text
         return f"{text} {followup}"
@@ -6818,6 +7077,12 @@ class ChatService:
             return ask_field
         if ask_field not in collected_fields:
             return ask_field
+        if (
+            ask_field == "age"
+            and str(getattr(user_profile, "pending_birth_year_bucket", "") or "").strip()
+            and not getattr(user_profile, "birth_year_confirmation_closed", False)
+        ):
+            return "age"
 
         decision = self.collection_policy.decide(
             user_profile,
@@ -7573,6 +7838,8 @@ class ChatService:
                 )
             else:
                 logger.debug(f"[短答槽位绑定] 记录本轮追问字段: {asked_field}, turn_index: {message_count}")
+            if str(getattr(user_profile, "pending_retry_field", "") or "").strip() == asked_field:
+                user_profile.clear_pending_retry_field()
             profile_changed = True
         elif user_profile.last_asked_field:
             # 如果本轮没有追问，清除上一轮记录
@@ -7597,7 +7864,8 @@ class ChatService:
             field_ask_count_before: AI询问前的字段计数快照，用于正确显示"已跳过"时机
                                    （使用"增加前"的值，这样用户还有机会回答当前问题）
         """
-        response = self._sanitize_forbidden_sales_phrases(response)
+        if response_route != "quick_faq":
+            response = self._sanitize_forbidden_sales_phrases(response)
         latest_profile = await self.user_service.get_user_profile(account_id)
         if isinstance(latest_profile, UserProfile):
             user_profile = latest_profile
@@ -7756,6 +8024,8 @@ class ChatService:
             text = text.replace(before, after)
 
         # 只做安全的整句级清洗，避免片段替换把句子洗坏。
+        text = re.sub(r"我记下来了", "我先记下了", text)
+        text = re.sub(r"我记下来了。", "我先记下了。", text)
         text = re.sub(r"我记下你是", "你是", text)
         text = re.sub(r"我记下来啦", "我先记下了", text)
         text = re.sub(r"我记下来", "我先记下了", text)

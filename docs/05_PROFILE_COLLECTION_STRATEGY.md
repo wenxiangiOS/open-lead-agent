@@ -410,6 +410,73 @@
 - 用户说：`90后，深圳，做IT`
   - 更顺的下一步应优先补 `education / marital_status` 等缺失字段，而不是回头重问城市或工作
 
+补充说明：
+
+- 这里的“邻近优先”不是随机跳字段，也不是完全固定顺序
+- 系统会先看用户这一轮刚刚明确给出的资料，再从语义更顺的相邻字段里选下一问
+- 只有当当前轮没有明显资料落点时，才回到受控主线顺序
+- 目标是减少“表单回跳感”，让追问更像顺着用户刚说的话往下聊
+
+当前口径下，核心字段推进应遵守以下关系：
+
+- 用户刚给出 `location`
+  - 优先下一问 `occupation`
+  - 其次 `education`
+- 用户刚给出 `occupation`
+  - 优先下一问 `education`
+- 用户刚给出 `age`
+  - 优先下一问 `sex`
+  - 其次 `location`
+- 用户刚给出 `education`
+  - 优先下一问 `marital_status`
+- 用户刚给出 `sex`
+  - 优先下一问 `location`
+  - 其次 `occupation`
+- 用户刚给出 `location + occupation`
+  - 优先补低压缺失核心字段，如 `education / age / sex`
+
+边界要求：
+
+- 邻近优先只是在“当前缺失字段集合”里做局部路由，不允许越过未完成核心字段直接跳联系方式
+- 邻近优先不改变“核心优先于中等字段”的总原则
+- `marital_status / partner_requirement / monthly_income` 仍属于中等或准核心穿插字段，不能因为当前轮语义接近就长期抢占主线
+
+### 7.9.1 中等字段宿主吸附规则
+
+`marital_status`、`partner_requirement`、`monthly_income` 这类字段，不应理解为独立主线字段，而应优先吸附在语义最接近的宿主字段后面自然带出。
+
+统一要求：
+
+- 先确定当前核心主目标
+- 再判断是否存在适合吸附的中等字段
+- 中等字段默认不单独抢主问
+- 只有在成为 Coverage 唯一阻塞项时，才允许升级为兜底目标
+
+当前推荐宿主关系：
+
+- `monthly_income`
+  - 优先吸附在 `occupation`
+  - 其次 `education`
+- `partner_requirement`
+  - 优先吸附在 `age`
+  - 其次 `location / education / occupation / sex`
+- `marital_status`
+  - 优先吸附在 `sex`
+  - 其次 `age / location / education`
+
+执行口径：
+
+- 当主目标是 `occupation` 时，可以顺带带出 `monthly_income`
+- 当主目标是 `age / location / education / occupation / sex` 中的相邻字段时，可以自然带出 `partner_requirement`
+- 当主目标是 `sex / age / location / education` 时，可以自然确认 `marital_status`
+
+纠偏说明：
+
+- 问两个信息点本身不是问题
+- `婚况`、`月薪`、`择偶要求` 本来就允许且应该和相近字段融合追问
+- 真正要避免的是把融合追问做成固定模板拼句，导致流程感、表单感过强
+- 文档约束的是“字段挂载关系与优先级”，不是要求某一种固定句式
+
 ### 7.10 明确求偶意图时的开放自述入口
 
 当用户已经明确表达“想找对象”，但还没有提供任何资料时，系统不必每次都立刻进入硬字段提问。

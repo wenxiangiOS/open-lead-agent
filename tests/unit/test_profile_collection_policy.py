@@ -1,6 +1,7 @@
 """Profile collection policy unit tests."""
 
 from src.models.user_profile import UserProfile
+from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingResult
 from src.services.collection.profile_collection_policy import ProfileCollectionPolicy
 
 
@@ -242,6 +243,56 @@ class TestProfileCollectionPolicy:
 
         assert decision.main_target == "occupation"
         assert decision.side_target == "monthly_income"
+
+    def test_contextual_core_target_keeps_age_when_birth_year_bucket_is_pending(self):
+        profile = UserProfile(account_id="u_pending_birth_year_age")
+        profile.sex = "女"
+        profile.collection_progress["sex"] = True
+        profile.pending_birth_year_bucket = "90后"
+        profile.birth_year_confirmation_closed = False
+        profile.age_label = "90后"
+        profile.age = 36
+        profile.collection_progress["age"] = False
+
+        target = self.policy._get_contextual_core_target(  # noqa: SLF001
+            profile,
+            user_message="90后",
+            message_count=2,
+        )
+
+        assert target == "age"
+
+    def test_contact_refusal_keeps_contact_flow_enabled(self):
+        profile = UserProfile(account_id="u_contact_refusal_policy")
+        profile.sex = "女"
+        profile.age = 28
+        profile.location = "深圳"
+        profile.education = "本科"
+        profile.occupation = "IT"
+        profile.marital_status = "单身"
+        profile.monthly_income = "7万"
+        profile.partner_requirement = "找男朋友"
+        for field in ("sex", "age", "location", "education", "occupation", "marital_status", "monthly_income", "partner_requirement"):
+            profile.collection_progress[field] = True
+        profile.phone_ask_count = 1
+
+        understanding = TurnUnderstandingResult(
+            primary_turn_type="refusal_boundary_complaint",
+            subtype="contact_refusal",
+            answer_first=True,
+            confidence=0.9,
+            context_ack_type="contact_refusal",
+        )
+
+        decision = self.policy.decide(
+            profile,
+            user_message="不方便",
+            message_count=6,
+            understanding_result=understanding,
+        )
+
+        assert decision.allow_contact_target is True
+        assert decision.primary_move in {"ack_and_ask", "light_followup"}
 
     def test_cost_control_light_mode_after_repeated_non_cooperation(self):
         profile = UserProfile(account_id="u1")

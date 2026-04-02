@@ -1,5 +1,7 @@
 """Xiaohongshu async ingest route."""
 
+import asyncio
+import json
 import logging
 import hashlib
 import hmac
@@ -8,6 +10,7 @@ import time
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 from src.modules.message_queue.application.message_orchestrator import MessageOrchestrator
 from src.modules.shared.models.use_case_models import IngestMessageCommand
@@ -152,3 +155,69 @@ async def poll_replies(
         "nextAfter": next_after,
         "replies": replies,
     }
+
+
+@router.get("/api/xiaohongshu/messages/replies/stream")
+async def stream_replies(
+    request: Request,
+    accountId: str = Query(..., min_length=1),
+    after: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+) -> StreamingResponse:
+    if orchestrator is None:
+        raise HTTPException(
+            status_code=500,
+            detail=_http_detail("INGEST_SERVICE_NOT_INITIALIZED", "ingest_service_not_initialized", route="xhs_replies_stream"),
+        )
+
+    expected_api_key = os.getenv("XHS_INGEST_API_KEY", "").strip()
+    if expected_api_key:
+        provided_api_key = (request.headers.get("X-API-Key") or "").strip()
+        if not hmac.compare_digest(provided_api_key, expected_api_key):
+            raise HTTPException(
+                status_code=401,
+                detail=_http_detail("XHS_REPLIES_UNAUTHORIZED", "unauthorized", route="xhs_replies_stream"),
+            )
+
+    async def event_generator():
+        current_after = after
+        heartbeat_interval = 15.0
+        last_heartbeat = time.monotonic()
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            replies = await orchestrator.queue_store.fetch_delivered_replies(
+                account_id=accountId,
+                after_id=current_after,
+                limit=limit,
+            )
+
+            if replies:
+                current_after = max(int(item.get("id", 0)) for item in replies)
+                payload = {
+                    "success": True,
+                    "accountId": accountId,
+                    "nextAfter": current_after,
+                    "replies": replies,
+                }
+                yield f"event: replies\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                last_heartbeat = time.monotonic()
+            else:
+                now = time.monotonic()
+                if now - last_heartbeat >= heartbeat_interval:
+                    yield "event: ping\ndata: {}\n\n"
+                    last_heartbeat = now
+
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

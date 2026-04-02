@@ -135,7 +135,9 @@ class ExtractionService:
     def _is_affirmative_confirmation_answer(text: str) -> bool:
         return bool(
             re.search(
-                r"^\s*(?:是的|对|对的|嗯|嗯嗯|没错|是|好的|好)\s*[，,、 ]*\s*$",
+                r"^\s*(?:是的|对|对的|嗯|嗯嗯|没错|是|好的|好)"
+                r"(?:[呀呢啊哦哈啦嘛]*)?"
+                r"(?:\s*[，,、 ]\s*)?$",
                 str(text or ""),
             )
         )

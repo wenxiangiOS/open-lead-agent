@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from src.models.user_profile import UserProfile
 
@@ -10,10 +10,10 @@ class DialogueExpressionService:
     """负责将结构化意图翻译成更自然的人类化表达。"""
 
     STRONG_SEEK_FEMALE_CUES = (
-        "找女生", "找女孩子", "找小姐姐", "找个女生", "找个女朋友", "找老婆", "喜欢女生", "想找女性",
+        "找女生", "找女孩子", "找小姐姐", "找个女生", "找女朋友", "找个女朋友", "找老婆", "喜欢女生", "想找女性",
     )
     STRONG_SEEK_MALE_CUES = (
-        "找男生", "找男孩子", "找小哥哥", "找个男生", "找个男朋友", "找老公", "喜欢男生", "想找男性",
+        "找男生", "找男孩子", "找小哥哥", "找个男生", "找男朋友", "找个男朋友", "找老公", "喜欢男生", "想找男性",
     )
     WEAK_SEEK_FEMALE_CUES = {
         "温柔": 2.0,
@@ -85,9 +85,9 @@ class DialogueExpressionService:
             "我先简单了解下，你这边是男生还是女生呀？",
         ),
         "age": (
-            "你今年大概多大呀？",
-            "方便说下你今年多大吗？",
-            "你现在大概什么年龄段？",
+            "你是几几年的呀？",
+            "方便说下你是哪一年出生的吗？",
+            "你大概是哪一年的呀？",
         ),
         "location": (
             "你现在主要在哪个城市生活呀？",
@@ -168,13 +168,18 @@ class DialogueExpressionService:
         profile: Optional[UserProfile] = None,
         stage: str = "collect",
         user_message: str = "",
+        preference_hint: str = "",
     ) -> str:
         if not field:
             return "你继续说，我顺着往下了解。"
         if field == "contact":
             return self.render_contact_question(profile=profile, stage=stage, user_message=user_message)
         if field == "sex":
-            soft_confirmation = self._build_soft_gender_confirmation_prompt(profile, user_message=user_message)
+            soft_confirmation = self._build_soft_gender_confirmation_prompt(
+                profile,
+                user_message=user_message,
+                preference_hint=preference_hint,
+            )
             if soft_confirmation:
                 return soft_confirmation
         if field == "sex" and self._looks_like_opening_matchmaking_intent(user_message):
@@ -190,10 +195,12 @@ class DialogueExpressionService:
             bridged_marital = self._build_bridged_marital_status_prompt(profile)
             if bridged_marital:
                 return bridged_marital
-            return self._maybe_add_reason(
-                "marital_status",
-                "我顺手确认一下，你现在是单身状态吗？",
+            variants = (
+                "你现在婚况方便说个大概吗？我想先确认准一点，因为有的人分居中也会直接说自己单身。",
+                "感情状态这边你方便说个大概吗？我多问一句哈，主要是有些情况不一定一句单身就能概括。",
+                "婚况这边我想先了解一下，像分居中这种情况，很多人也会直接说自己单身，所以我先确认细一点。",
             )
+            return self._pick_variant_avoiding_recent_openings("core:marital_status", variants, profile)
         if field == "monthly_income":
             bridged_income = self._build_bridged_income_prompt(profile)
             if bridged_income:
@@ -210,14 +217,19 @@ class DialogueExpressionService:
             if contextual_occupation:
                 return contextual_occupation
         if field == "age":
+            birth_year_bucket_prompt = self._build_birth_year_bucket_prompt(profile)
+            if birth_year_bucket_prompt:
+                return birth_year_bucket_prompt
             if profile and (getattr(profile, "age", None) or str(getattr(profile, "age_label", "") or "").strip()):
                 bridged_marital = self._build_bridged_marital_status_prompt(profile)
                 if bridged_marital:
                     return bridged_marital
-                return self._maybe_add_reason(
-                    "marital_status",
-                    "我顺手确认一下，你现在是单身状态吗？",
+                variants = (
+                    "你现在婚况方便说个大概吗？我想先确认准一点，因为有的人分居中也会直接说自己单身。",
+                    "感情状态这边你方便说个大概吗？我多问一句哈，主要是有些情况不一定一句单身就能概括。",
+                    "婚况这边我想先了解一下，像分居中这种情况，很多人也会直接说自己单身，所以我先确认细一点。",
                 )
+                return self._pick_variant_avoiding_recent_openings("age:marital_status", variants, profile)
             bridged_age = self._build_bridged_age_prompt(profile)
             if bridged_age:
                 return bridged_age
@@ -304,20 +316,33 @@ class DialogueExpressionService:
         profile: Optional[UserProfile],
         *,
         user_message: str = "",
+        preference_hint: str = "",
     ) -> Optional[str]:
         if not profile or getattr(profile, "sex", None):
             return None
 
-        preference = str(getattr(profile, "partner_requirement", "") or "").strip()
-        if not preference:
+        inference_context = self.resolve_gender_inference_context(
+            profile=profile,
+            user_message=user_message,
+            preference_hint=preference_hint,
+        )
+        if inference_context["guess"] == "unknown":
             return None
 
-        inference = self._infer_gender_from_preference(preference)
-        if inference["guess"] == "unknown" or inference["confidence"] == "weak":
+        guess = str(inference_context["guess"])
+        confidence = str(inference_context["confidence"])
+        if confidence == "weak":
             return None
 
-        guess_label = "男生" if inference["guess"] == "male" else "女生"
+        guess_label = "男生" if guess == "male" else "女生"
         is_challenge = self._looks_like_gender_confirmation_challenge(user_message)
+        evidence = str(inference_context.get("evidence") or "").strip()
+
+        explicit_relationship_preference = ""
+        if "找男朋友" in evidence:
+            explicit_relationship_preference = "找男朋友"
+        elif "找女朋友" in evidence:
+            explicit_relationship_preference = "找女朋友"
 
         if is_challenge:
             lead = self._next_variant(
@@ -349,6 +374,24 @@ class DialogueExpressionService:
             )
             return f"{lead}，{inference_ack}，{reason}，{example}。{confirm}"
 
+        if explicit_relationship_preference:
+            lead = self._next_variant(
+                f"sex:explicit_pref:lead:{explicit_relationship_preference}",
+                (
+                    f"想{explicit_relationship_preference}是吧",
+                    f"好呀，你这边是想{explicit_relationship_preference}",
+                    f"明白，你这边是想{explicit_relationship_preference}",
+                ),
+            )
+            confirm = self._next_variant(
+                f"sex:explicit_pref:confirm:{guess_label}",
+                (
+                    f"你这边是{guess_label}对吗？",
+                    f"我顺手确认下，你是{guess_label}对吗？",
+                ),
+            )
+            return f"{lead}，{confirm}"
+
         prefix = self._next_variant(
             f"sex:soft:prefix:{guess_label}",
             ("我再确认一下", "我顺手确认一下", "我这边再确认一下"),
@@ -362,10 +405,65 @@ class DialogueExpressionService:
         )
         return f"{prefix}，{confirm}"
 
+    def resolve_gender_inference_context(
+        self,
+        *,
+        profile: Optional[UserProfile],
+        user_message: str = "",
+        preference_hint: str = "",
+    ) -> Dict[str, Any]:
+        preference = str(preference_hint or "").strip()
+        source = "hint" if preference else ""
+        if not preference and profile:
+            preference = str(getattr(profile, "partner_requirement", "") or "").strip()
+            if preference:
+                source = "profile"
+        if not preference:
+            preference = self._extract_preference_hint_from_message(user_message)
+            if preference:
+                source = "message"
+
+        if not preference:
+            return {"guess": "unknown", "confidence": "weak", "evidence": "", "source": ""}
+
+        inference = self._infer_gender_from_preference(preference)
+        inference["evidence"] = preference
+        inference["source"] = source
+        return inference
+
+    @staticmethod
+    def _extract_preference_hint_from_message(user_message: str) -> str:
+        message = str(user_message or "").strip()
+        if not message:
+            return ""
+
+        patterns = (
+            r"(找(?:个|一个)?男朋友)",
+            r"(找(?:个|一个)?女朋友)",
+            r"(找(?:个|一个)?男生)",
+            r"(找(?:个|一个)?女生)",
+            r"(喜欢男生)",
+            r"(喜欢女生)",
+            r"(想找男性)",
+            r"(想找女性)",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, message)
+            if match:
+                return match.group(1)
+
+        return ""
+
     def _infer_gender_from_preference(self, preference_text: str) -> Dict[str, object]:
         text = re.sub(r"\s+", "", str(preference_text or ""))
         if not text:
             return {"guess": "unknown", "confidence": "weak", "seek_female_score": 0.0, "seek_male_score": 0.0}
+
+        # 显式关系词优先单独处理，避免被后续泛化词表覆盖。
+        if "找男朋友" in text:
+            return {"guess": "female", "confidence": "strong", "seek_female_score": 0.0, "seek_male_score": 100.0}
+        if "找女朋友" in text:
+            return {"guess": "male", "confidence": "strong", "seek_female_score": 100.0, "seek_male_score": 0.0}
 
         if re.search(r"(?:^|想找|想要|喜欢|偏向|找)(?:一个|个)?(?:同城|本地|深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)?的?(女生|女孩子|女性)", text):
             return {"guess": "male", "confidence": "strong", "seek_female_score": 100.0, "seek_male_score": 0.0}
@@ -504,11 +602,26 @@ class DialogueExpressionService:
         if age or age_label:
             return None
         variants = (
-            f"{education}是吧，那你现在大概什么年龄段呀？",
-            f"那我顺着问下，你现在大概什么年龄段呀？",
-            f"{education}这块我有数了，那你现在大概什么年龄段呀？",
+            f"{education}是吧，那你是几几年的呀？",
+            f"那我顺着问下，你是哪一年的呀？",
+            f"{education}这块我有数了，那你大概是哪一年出生的呀？",
         )
         return self._pick_variant_avoiding_recent_openings("bridge:age", variants, profile)
+
+    def _build_birth_year_bucket_prompt(self, profile: Optional[UserProfile]) -> Optional[str]:
+        bucket = str(getattr(profile, "pending_birth_year_bucket", "") or "").strip()
+        if not bucket or getattr(profile, "birth_year_confirmation_closed", False):
+            return None
+        bucket_match = re.search(r"^(\d{2})后$", bucket)
+        if not bucket_match:
+            return None
+        prefix = bucket_match.group(1)
+        variants = (
+            f"好，那你具体是{prefix}几年的呀？",
+            f"{bucket}我先知道了，那你具体是哪一年的呀？",
+            f"那我再确认下，你是{prefix}几年的呀？",
+        )
+        return self._pick_variant_avoiding_recent_openings("bridge:birth_year_bucket", variants, profile)
 
     def _build_bridged_marital_status_prompt(self, profile: Optional[UserProfile]) -> Optional[str]:
         age_label = str(getattr(profile, "age_label", "") or "").strip()
@@ -518,9 +631,9 @@ class DialogueExpressionService:
         if not age_label:
             return None
         variants = (
-            "我再顺手确认一下，你现在是单身状态吗？",
-            "对了，我也确认下，你现在是单身吗？",
-            "那我再接着问一句，你现在感情状态是单身吗？",
+            "那我顺着问一句，你现在婚况方便说个大概吗？我想确认准一点，因为有的人分居中也会直接说自己单身。",
+            "说到这儿，你现在感情状态也方便简单说下吗？我多问一句，主要是有些情况不一定一句单身就能概括。",
+            "我再接着了解一句，你现在婚况大概是怎样的呀？像分居中这种情况，很多人也会直接说自己单身，所以我先确认细一点。",
         )
         return self._pick_variant_avoiding_recent_openings("bridge:marital", variants, profile)
 

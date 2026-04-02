@@ -579,6 +579,10 @@ class TurnUnderstandingService:
         if self._looks_like_confirmation(message, turn_input):
             return "confirmation", "weak_confirmation", 0.85
 
+        soft_refusal_field = self._detect_soft_refusal_current_field(turn_input, resolved_slots)
+        if soft_refusal_field:
+            return "invalid_input", "soft_refusal_current_field", 0.88
+
         if self._looks_like_opening_clarify(turn_input, resolved_slots):
             return "opening", "opening_clarify", 0.9
 
@@ -628,6 +632,10 @@ class TurnUnderstandingService:
             signals.append("weak_confirmation")
         if primary_turn_type == "invalid_input" and len(message) <= 4:
             signals.append("ambiguous_short_answer")
+        if primary_turn_type == "invalid_input" and (turn_input.last_response or "") and (turn_input.user_message or ""):
+            soft_refusal_field = self._detect_soft_refusal_current_field(turn_input, resolved_slots)
+            if soft_refusal_field:
+                signals.append("soft_refusal_current_field")
         if turn_input.conversation_context.get("recent_responses") and primary_turn_type in {"faq_concern", "refusal_boundary_complaint"}:
             signals.append("needs_resume_mainline")
         return signals
@@ -655,6 +663,9 @@ class TurnUnderstandingService:
                 return subtype
             return None
 
+        if primary_turn_type == "invalid_input" and subtype == "soft_refusal_current_field":
+            return "field_soft_refusal_retry"
+
         if getattr(profile, "occupation", None) and self._matches_any_pattern(message, WORK_BUSY_HINT_PATTERNS):
             return "work_busy"
         if getattr(profile, "location", None) and self._matches_any_pattern(message, LOCATION_REUSE_HINT_PATTERNS):
@@ -678,6 +689,25 @@ class TurnUnderstandingService:
         if "pending_confirmation_reply" in secondary_signals:
             return "confirmation_ack"
         return None
+
+    def _detect_soft_refusal_current_field(
+        self,
+        turn_input: TurnUnderstandingInput,
+        resolved_slots: Dict[str, str],
+    ) -> str | None:
+        message = str(turn_input.user_message or "").strip()
+        if not message or resolved_slots:
+            return None
+        if not self._looks_like_refusal(message):
+            return None
+        if self._detect_faq_intent(message):
+            return None
+        previous_field = self._detect_which_field_is_asked(turn_input.last_response)
+        if previous_field not in {"sex", "age", "education", "occupation", "location", "marital_status"}:
+            return None
+        if getattr(turn_input, "in_contact_flow", False):
+            return None
+        return previous_field
 
     def _derive_complaint_reason(
         self,
@@ -1127,6 +1157,7 @@ class TurnUnderstandingService:
         return bool(
             re.search(
                 r"^\s*(?:是的|对|对的|嗯|嗯嗯|没错|是|好的|好)"
+                r"(?:[呀呢啊哦哈啦嘛]*)?"
                 r"(?:\s*[，,、 ]\s*(?:单身|未婚|离异|已婚|分居))?\s*$",
                 str(text or ""),
             )
@@ -1734,6 +1765,10 @@ class TurnUnderstandingService:
             payload["field_ack"] = self._build_lightweight_field_ack(message, profile)
         elif context_ack_type == "opening_profile_ack":
             payload["field_ack"] = self._build_opening_profile_ack(message)
+        elif context_ack_type == "field_soft_refusal_retry":
+            previous_field = self._detect_which_field_is_asked(turn_input.last_response)
+            if previous_field:
+                payload["field"] = previous_field
         return payload
 
     def _looks_like_opening_service_confirmation(

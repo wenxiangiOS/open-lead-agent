@@ -38,9 +38,9 @@ def test_collapse_duplicate_ack_segments_removes_generic_followup_ack_after_spec
 
 
 def test_sanitize_robotic_tone_removes_sex_confirmation_prefix():
-    cleaned = ChatService._sanitize_robotic_tone("好，你是男生啦。 方便说下你今年多大吗？")
+    cleaned = ChatService._sanitize_robotic_tone("好，你是男生啦。 方便说下你是哪一年出生的吗？")
     assert "男生啦" not in cleaned
-    assert "多大" in cleaned
+    assert "出生" in cleaned or "哪一年" in cleaned
 
 
 def test_sanitize_robotic_tone_keeps_unknown_you_are_phrase_intact():
@@ -96,9 +96,9 @@ def test_sanitize_robotic_tone_removes_repetitive_location_ack_prefix():
 
 
 def test_sanitize_robotic_tone_removes_repetitive_profile_ack_prefixes():
-    cleaned = ChatService._sanitize_robotic_tone("本科是吧。 好呀，你今年大概多大呀？")
+    cleaned = ChatService._sanitize_robotic_tone("本科是吧。 好呀，你是几几年的呀？")
     assert "本科是吧" not in cleaned
-    assert "多大" in cleaned
+    assert "几年" in cleaned or "哪一年" in cleaned
 
     cleaned = ChatService._sanitize_robotic_tone("做美容是吧。 你大概是什么学历呀？")
     assert "做美容是吧" not in cleaned
@@ -110,9 +110,9 @@ def test_sanitize_robotic_tone_removes_new_ack_skeletons_before_followup():
     assert "IT这行我接住了" not in cleaned
     assert "学历" in cleaned
 
-    cleaned = ChatService._sanitize_robotic_tone("学历这块是本科。 那你现在大概多大呀？")
+    cleaned = ChatService._sanitize_robotic_tone("学历这块是本科。 那你是几几年的呀？")
     assert "学历这块是本科" not in cleaned
-    assert "多大" in cleaned
+    assert "几年" in cleaned or "哪一年" in cleaned
 
     cleaned = ChatService._sanitize_robotic_tone("现在主要做IT这块，是吧。 你月收入大概在哪个区间呀？")
     assert "现在主要做IT这块，是吧" not in cleaned
@@ -133,9 +133,9 @@ def test_clean_response_removes_dangling_particles_and_truncated_tail():
 def test_clean_response_compresses_low_information_explanatory_tail_after_question():
     chat_service = _build_chat_service()
 
-    cleaned = chat_service._clean_response("你今年大概多大呀？ 这样我心里会更有数一点。")
+    cleaned = chat_service._clean_response("你是几几年的呀？ 这样我心里会更有数一点。")
 
-    assert cleaned == "你今年大概多大呀？"
+    assert cleaned == "你是几几年的呀？"
 
 
 def test_clean_response_keeps_single_clear_question_without_explanatory_tail():

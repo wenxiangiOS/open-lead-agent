@@ -370,6 +370,8 @@
         let hasStarted = false;
         let showDebugInfo = true;  // 默认显示已收集信息
         let replyPollTimer = null;
+        let replyEventSource = null;
+        let replyStreamFallbackTimer = null;
         let lastReplyId = 0;
         let localMsgSeq = 0;
         let waitingReply = false;
@@ -547,7 +549,7 @@
                     addMessage('ai', '你好～我是小缘，有什么可以帮你的吗？');
                 });
 
-            startReplyPolling();
+            connectReplyStream();
         }
 
         async function pollReplies() {
@@ -584,10 +586,99 @@
             }
         }
 
+        function stopReplyPolling() {
+            if (replyPollTimer) {
+                clearInterval(replyPollTimer);
+                replyPollTimer = null;
+            }
+        }
+
         function startReplyPolling() {
-            if (replyPollTimer) return;
-            replyPollTimer = setInterval(pollReplies, 250);
+            if (replyPollTimer || !waitingReply) return;
+            replyPollTimer = setInterval(pollReplies, 2000);
             pollReplies();
+        }
+
+        function clearReplyStreamFallback() {
+            if (replyStreamFallbackTimer) {
+                clearTimeout(replyStreamFallbackTimer);
+                replyStreamFallbackTimer = null;
+            }
+        }
+
+        function scheduleReplyPollingFallback() {
+            if (replyEventSource || replyStreamFallbackTimer || !waitingReply) return;
+            replyStreamFallbackTimer = setTimeout(() => {
+                replyStreamFallbackTimer = null;
+                startReplyPolling();
+            }, 1500);
+        }
+
+        async function appendReplies(replies) {
+            if (!Array.isArray(replies) || replies.length === 0) {
+                if (waitingReply) {
+                    showTyping();
+                }
+                return;
+            }
+
+            for (const item of replies) {
+                let text = item.message || '';
+                if (showDebugInfo) {
+                    const debugText = await fetchDebugInfo(accountId);
+                    if (debugText) {
+                        text += debugText;
+                    }
+                }
+                addMessage('ai', text);
+                if (item.id && item.id > lastReplyId) {
+                    lastReplyId = item.id;
+                }
+            }
+
+            waitingReply = false;
+            hideTyping();
+            setSendingState(false);
+            stopReplyPolling();
+        }
+
+        function closeReplyStream() {
+            if (replyEventSource) {
+                replyEventSource.close();
+                replyEventSource = null;
+            }
+            clearReplyStreamFallback();
+        }
+
+        function connectReplyStream() {
+            if (!hasStarted || !window.EventSource) return;
+
+            closeReplyStream();
+
+            const streamUrl = `${API_BASE}/api/xiaohongshu/messages/replies/stream?accountId=${encodeURIComponent(accountId)}&after=${lastReplyId}&limit=20`;
+            replyEventSource = new EventSource(streamUrl);
+
+            replyEventSource.addEventListener('replies', async (event) => {
+                clearReplyStreamFallback();
+                try {
+                    const data = JSON.parse(event.data || '{}');
+                    if (data.nextAfter && data.nextAfter > lastReplyId) {
+                        lastReplyId = data.nextAfter;
+                    }
+                    await appendReplies(data.replies);
+                } catch (error) {
+                    console.log('解析回执推送失败:', error);
+                }
+            });
+
+            replyEventSource.addEventListener('ping', () => {
+                clearReplyStreamFallback();
+            });
+
+            replyEventSource.onerror = () => {
+                closeReplyStream();
+                scheduleReplyPollingFallback();
+            };
         }
 
         // 发送消息（当前测试页限制为单条串行发送，收到回复前不允许继续发送）
@@ -607,6 +698,13 @@
             waitingReply = true;
             showTyping();
             setSendingState(true);
+            clearReplyStreamFallback();
+            if (!replyEventSource) {
+                connectReplyStream();
+            }
+            if (!replyEventSource) {
+                startReplyPolling();
+            }
 
             // 发送到服务器
             try {
@@ -648,6 +746,7 @@
                 waitingReply = false;
                 hideTyping();
                 setSendingState(false);
+                stopReplyPolling();
                 addMessage('ai', '抱歉，网络出错啦，请检查连接后重试～');
             }
         }
