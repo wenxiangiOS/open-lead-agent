@@ -34,6 +34,25 @@ def test_build_interleaving_followup_combines_main_and_income_question():
     assert "深圳" in response
 
 
+def test_build_interleaving_seed_for_model_rewrite_uses_neutral_seed_style():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_interleave_seed")
+    profile.location = "深圳"
+    profile.collection_progress["location"] = True
+
+    response = chat_service._build_interleaving_seed_for_model_rewrite(  # noqa: SLF001
+        profile,
+        "我在深圳",
+        main_target="occupation",
+        preferred_side_target="monthly_income",
+        allow_medium_target=True,
+    )
+
+    assert "主要做哪方面工作" in response or "做哪方面工作" in response
+    assert "月收入" in response or "收入" in response
+    assert "不方便说也没关系" not in response
+
+
 def test_build_interleaving_followup_prefers_bridge_mode_over_generic_income_fusion():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_interleave_bridge_income")
@@ -68,9 +87,9 @@ def test_build_interleaving_followup_does_not_repeat_location_when_prompt_alread
     assert "现在在深圳主要做哪方面工作" in response or "在深圳主要做哪方面工作" in response
 
 
-def test_build_interleaving_followup_combines_main_and_partner_requirement():
+def test_build_interleaving_followup_combines_education_and_marital_status():
     chat_service = _build_chat_service()
-    profile = UserProfile(account_id="u_interleave_partner")
+    profile = UserProfile(account_id="u_interleave_marital")
     profile.sex = "男"
     profile.age = 36
     profile.location = "深圳"
@@ -81,12 +100,36 @@ def test_build_interleaving_followup_combines_main_and_partner_requirement():
         profile,
         "深圳",
         main_target="education",
-        preferred_side_target="partner_requirement",
+        preferred_side_target="marital_status",
         allow_medium_target=True,
     )
 
     assert "学历" in response
-    assert "找对象" in response or "看重" in response or "在意" in response
+    assert any(token in response for token in ("婚况", "感情状态", "单身", "分居"))
+
+
+def test_build_interleaving_followup_combines_marital_status_and_partner_requirement():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_interleave_partner")
+    profile.sex = "女"
+    profile.age = 38
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "IT"
+    profile.collection_progress.update(
+        {"sex": True, "age": True, "location": True, "education": True, "occupation": True}
+    )
+
+    response = chat_service._build_interleaving_followup(
+        profile,
+        "离异",
+        main_target="marital_status",
+        preferred_side_target="partner_requirement",
+        allow_medium_target=True,
+    )
+
+    assert any(token in response for token in ("婚况", "感情状态", "单身", "离异"))
+    assert any(token in response for token in ("另一半", "看重", "在意", "哪一点"))
 
 
 def test_build_interleaving_followup_does_not_use_collected_age_as_host_for_partner_requirement():
@@ -125,7 +168,6 @@ def test_ensure_short_answer_ack_transition_prefixes_ack_before_question():
 
     assert response.startswith(("深圳呀", "在深圳", "深圳我", "你现在在深圳", "现在主要在深圳"))
     assert "学历" in response
-
 
 def test_ensure_short_answer_ack_transition_does_not_double_ack_when_model_already_confirmed_field():
     chat_service = _build_chat_service()
@@ -171,7 +213,7 @@ def test_append_safe_short_answer_followup_continues_to_next_core_field_after_se
     )
 
     assert "男生" in response
-    assert "多大" in response or "年龄" in response
+    assert "多大" in response or "年龄" in response or "几几年" in response or "哪一年" in response
 
 
 def test_append_safe_short_answer_followup_skips_special_scenarios():

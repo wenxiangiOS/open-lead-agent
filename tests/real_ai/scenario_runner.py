@@ -65,12 +65,12 @@ class ScenarioCase:
     """单个多轮场景。"""
 
     scenario_id: str
-    source_file: str
     category: str
     tags: List[str]
     description: str
     messages: List[str]
     assertions: List[ScenarioAssertion]
+    source_file: str = ""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any], source_file: str = "") -> "ScenarioCase":
@@ -125,10 +125,8 @@ class ScenarioResult:
     """单个场景执行结果。"""
 
     scenario_id: str
-    source_file: str
     category: str
     tags: List[str]
-    description: str
     passed: bool
     checks_total: int
     checks_passed: int
@@ -136,6 +134,8 @@ class ScenarioResult:
     turns: List[TurnRecord]
     final_profile: Dict[str, Any]
     duration_seconds: float
+    source_file: str = ""
+    description: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {

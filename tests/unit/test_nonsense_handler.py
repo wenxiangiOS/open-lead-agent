@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from src.models.user_profile import UserProfile
-from src.services.conversation.input_fallback_service import InputFallbackService
+from src.modules.conversation.domain.input_fallback_service import InputFallbackService
 
 
 class TestNonsenseHandler:

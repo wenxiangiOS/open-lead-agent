@@ -160,7 +160,7 @@ class TestChatRequest:
 
         assert request.question == "Hello"
         assert request.accountId == "user123"
-        assert request.sex == "女"  # Default value
+        assert request.sex is None
         assert request.dialogId is None
         assert request.timestamp is None
 
@@ -200,4 +200,4 @@ class TestChatRequest:
 
         # Default sex when not provided
         request = ChatRequest(question="Hello", accountId="user123")
-        assert request.sex == "女"
+        assert request.sex is None

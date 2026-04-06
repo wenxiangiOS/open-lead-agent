@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 
 from src.models.user_profile import UserProfile
 from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingResult
+from src.modules.conversation_understanding.domain.followup_planning_layer import FollowupPlanningLayer
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,15 @@ class PolicyDecision:
 
 class ProfileCollectionPolicy:
     """统一资料收集策略"""
+
+    def __init__(self) -> None:
+        self.followup_planning_layer = FollowupPlanningLayer(policy=self)
+
+    SIDE_TARGET_HOST_ORDERS: Dict[str, tuple[str, ...]] = {
+        "monthly_income": ("occupation", "education", "location", "age"),
+        "marital_status": ("education", "age", "occupation", "location", "sex"),
+        "partner_requirement": ("marital_status", "location", "age", "education", "occupation", "sex"),
+    }
 
     CORE_FIELDS = ["sex", "age", "education", "occupation", "location", "contact"]
     QUASI_CORE_FIELDS = ["marital_status"]
@@ -250,33 +260,31 @@ class ProfileCollectionPolicy:
             include_medium_fields=effective_allow_medium_target,
         )
         main_target: Optional[str] = None
+        side_target: Optional[str] = None
         forced_cover_target: Optional[str] = None
         if next_mode == "collect_core":
-            main_target = self.get_main_target(
-                profile,
+            followup_plan = self.followup_planning_layer.choose_followup_targets(
+                profile=profile,
                 can_enter_contact=False,
                 allow_contact_target=False,
                 user_message=user_message,
                 message_count=message_count,
+                allow_medium_target=effective_allow_medium_target,
             )
+            main_target = followup_plan.main_target
+            side_target = followup_plan.side_target
         elif next_mode == "collect_medium":
             forced_cover_target = self.get_forced_cover_target(profile)
             main_target = forced_cover_target
         elif next_mode == "contact_flow" and allow_contact_push:
             main_target = "contact"
 
-        side_target = None
         if next_mode == "collect_core":
-            side_target = self.get_side_target(
-                profile,
-                main_target,
-                user_message,
-                message_count=message_count,
-                allow_medium_target=effective_allow_medium_target,
-            )
             if understanding_result and understanding_result.primary_turn_type == "profile_answer":
                 if understanding_result.subtype == "multi_slot_compound" and side_target in understanding_result.resolved_slots:
                     side_target = None
+        else:
+            side_target = None
 
         resolved_primary_move = primary_move
         if complaint_reason:
@@ -386,24 +394,13 @@ class ProfileCollectionPolicy:
     ) -> Optional[str]:
         """获取当前主目标字段"""
         can_enter_contact = self.can_enter_contact(profile) if can_enter_contact is None else can_enter_contact
-
-        contextual_core_target = self._get_contextual_core_target(
-            profile,
+        return self.followup_planning_layer.choose_main_target(
+            profile=profile,
+            can_enter_contact=can_enter_contact,
+            allow_contact_target=allow_contact_target,
             user_message=user_message,
             message_count=message_count,
         )
-        if contextual_core_target and self.can_actively_ask(profile, contextual_core_target):
-            return contextual_core_target
-
-        for field in self._get_priority_order(profile):
-            if field == "contact":
-                if not allow_contact_target or not can_enter_contact:
-                    continue
-            if field not in {"contact"} and self.is_field_covered(profile, field):
-                continue
-            if self.can_actively_ask(profile, field):
-                return field
-        return None
 
     def get_side_target(
         self,
@@ -417,51 +414,13 @@ class ProfileCollectionPolicy:
 
         核心字段始终是主线；婚况、择偶要求、月薪只能自然穿插，不能抢主线。
         """
-        if not allow_medium_target:
-            return None
-        if main_target == "contact":
-            return None
-        remaining_core_fields = [field for field in self.get_uncovered_core_fields(profile) if field != main_target]
-        if remaining_core_fields and not self._allow_early_side_target(
-            profile,
+        return self.followup_planning_layer.choose_side_target(
+            profile=profile,
             main_target=main_target,
             user_message=user_message,
             message_count=message_count,
-        ):
-            return None
-        if message_count and message_count <= 4:
-            if not self._message_contains_profile_context(user_message):
-                return None
-
-        if self.can_use_as_side_target(profile, "monthly_income"):
-            if main_target == "occupation" and (
-                message_count == 0
-                or message_count >= 2
-                or self._message_contains_profile_context(user_message)
-            ):
-                return "monthly_income"
-            if any(keyword in user_message for keyword in self.INCOME_TRIGGER_KEYWORDS):
-                return "monthly_income"
-
-        if self.can_actively_ask(profile, "partner_requirement"):
-            if main_target == "marital_status":
-                return "partner_requirement"
-            if main_target in {"age", "education", "occupation", "location"} and (
-                message_count >= 5 or self.is_profile_sufficient_for_contact(profile)
-            ):
-                return "partner_requirement"
-            if any(keyword in user_message for keyword in self.PARTNER_REQUIREMENT_TRIGGER_KEYWORDS):
-                return "partner_requirement"
-
-        if self.can_actively_ask(profile, "marital_status"):
-            if main_target in {"age", "location", "education", "sex"} and (
-                message_count >= 5 or self.is_profile_sufficient_for_contact(profile)
-            ):
-                return "marital_status"
-            if any(keyword in user_message for keyword in self.MARITAL_STATUS_TRIGGER_KEYWORDS):
-                return "marital_status"
-
-        return None
+            allow_medium_target=allow_medium_target,
+        )
 
     def _allow_early_side_target(
         self,
@@ -479,27 +438,153 @@ class ProfileCollectionPolicy:
         if not self._message_contains_profile_context(user_message):
             return False
 
-        if (
-            main_target == "occupation"
-            and self.can_use_as_side_target(profile, "monthly_income")
-        ):
-            return True
-
-        if (
-            main_target in {"education", "occupation"}
-            and self.can_actively_ask(profile, "partner_requirement")
-            and message_count >= 2
-        ):
-            return True
-
-        if (
-            main_target in {"location", "education"}
-            and self.can_actively_ask(profile, "marital_status")
-            and message_count >= 2
-        ):
-            return True
+        cue_order = self._extract_message_field_cue_order(user_message)
+        for field in ("monthly_income", "marital_status", "partner_requirement"):
+            score = self._score_side_target_candidate(
+                profile,
+                field=field,
+                main_target=main_target,
+                user_message=user_message,
+                message_count=message_count,
+                cue_order=cue_order,
+                early_phase=True,
+            )
+            if score > 0:
+                return True
 
         return False
+
+    def _score_side_target_candidate(
+        self,
+        profile: UserProfile,
+        *,
+        field: str,
+        main_target: Optional[str],
+        user_message: str,
+        message_count: int,
+        cue_order: List[str],
+        early_phase: bool = False,
+    ) -> int:
+        if early_phase and not self._is_early_side_target_pair_allowed(
+            field=field,
+            main_target=main_target,
+            profile=profile,
+            cue_order=cue_order,
+        ):
+            return -1
+
+        if field == "monthly_income":
+            if not self.can_use_as_side_target(profile, field):
+                return -1
+        elif not self.can_actively_ask(profile, field):
+            return -1
+
+        if field == "partner_requirement" and main_target == "contact":
+            return -1
+
+        message = str(user_message or "")
+        latest_cue = cue_order[-1] if cue_order else ""
+        profile_sufficient = self.is_profile_sufficient_for_contact(profile)
+        trigger_map = {
+            "monthly_income": self.INCOME_TRIGGER_KEYWORDS,
+            "marital_status": self.MARITAL_STATUS_TRIGGER_KEYWORDS,
+            "partner_requirement": self.PARTNER_REQUIREMENT_TRIGGER_KEYWORDS,
+        }
+        score = 0
+
+        if any(keyword in message for keyword in trigger_map.get(field, [])):
+            score += 100
+
+        if field == "monthly_income" and main_target == "occupation" and (
+            message_count == 0 or message_count >= 2 or self._message_contains_profile_context(message)
+        ):
+            score += 90
+        if field == "partner_requirement" and main_target == "marital_status":
+            score += 90
+
+        host_order = self.SIDE_TARGET_HOST_ORDERS.get(field, ())
+        if main_target in host_order:
+            score += max(0, 70 - host_order.index(main_target) * 10)
+
+        if latest_cue in host_order:
+            score += max(0, 30 - host_order.index(latest_cue) * 5)
+
+        host_context_bonus = self._get_side_target_host_context_bonus(profile, field, main_target=main_target)
+        score += host_context_bonus
+
+        if field == "marital_status":
+            if main_target in {"education", "age"} and (
+                latest_cue in {"education", "age", "occupation"} or profile_sufficient
+            ):
+                score += 35
+            elif main_target in {"age", "location", "education", "sex"} and (
+                message_count >= 5 or profile_sufficient
+            ):
+                score += 18
+
+        if field == "partner_requirement" and main_target in {"age", "education", "occupation", "location"} and (
+            message_count >= 5 or profile_sufficient
+        ):
+            score += 24
+
+        if field == "monthly_income" and main_target in {"education", "location", "age"}:
+            if self.is_collected(profile, "occupation") or profile.collection_progress.get("occupation"):
+                score += 28
+            elif "occupation" in cue_order:
+                score += 18
+
+        if early_phase:
+            if message_count > 4 or not self._message_contains_profile_context(message):
+                return -1
+            if score < 50:
+                return -1
+            return score
+
+        return score
+
+    def _is_early_side_target_pair_allowed(
+        self,
+        *,
+        field: str,
+        main_target: Optional[str],
+        profile: UserProfile,
+        cue_order: List[str],
+    ) -> bool:
+        """opening 阶段只放开少数高相关拼接，避免泛化到不相邻字段。"""
+        if field == "monthly_income":
+            if main_target == "occupation":
+                return True
+            if main_target in {"education", "location"} and (
+                self.is_collected(profile, "occupation")
+                or profile.collection_progress.get("occupation")
+                or "occupation" in cue_order
+            ):
+                return True
+            return False
+
+        if field == "marital_status":
+            return main_target == "education"
+
+        if field == "partner_requirement":
+            return main_target == "marital_status"
+
+        return False
+
+    def _get_side_target_host_context_bonus(
+        self,
+        profile: UserProfile,
+        field: str,
+        *,
+        main_target: Optional[str],
+    ) -> int:
+        bonus = 0
+        for index, host in enumerate(self.SIDE_TARGET_HOST_ORDERS.get(field, ())):
+            if host == main_target:
+                continue
+            if self.is_collected(profile, host) or profile.collection_progress.get(host):
+                bonus = max(bonus, max(0, 24 - index * 4))
+                break
+        return bonus
 
     def get_missing_fields(
         self,
@@ -575,6 +660,8 @@ class ProfileCollectionPolicy:
             return "occupation"
 
         if cues.get("location") and cues.get("occupation"):
+            if self.can_actively_ask(profile, "occupation"):
+                return "occupation"
             for field in ("education", "age", "sex"):
                 if self.can_actively_ask(profile, field):
                     return field
@@ -587,7 +674,9 @@ class ProfileCollectionPolicy:
                     return field
 
         if latest_cue == "occupation":
-            for field in ("education",):
+            if self.can_actively_ask(profile, "occupation"):
+                return "occupation"
+            for field in ("education", "age"):
                 if self.can_actively_ask(profile, field):
                     return field
 
@@ -599,7 +688,7 @@ class ProfileCollectionPolicy:
                     return field
 
         if latest_cue == "education":
-            for field in ("marital_status",):
+            for field in ("occupation", "location", "age"):
                 if self.can_actively_ask(profile, field):
                     return field
 
@@ -632,7 +721,6 @@ class ProfileCollectionPolicy:
             return []
 
         compact = re.sub(r"[，,、。！？!?~～\s]+", "", message)
-        location_cities = ("深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港")
         education_tokens = ("博士", "硕士", "研究生", "本科", "大专", "中专", "高中")
         occupation_tokens = ("it", "ui", "hr", "qa", "产品", "运营", "设计", "开发", "程序员", "销售", "老师", "医生", "公务员")
         found: List[tuple[int, str]] = []
@@ -645,11 +733,9 @@ class ProfileCollectionPolicy:
         if age_match:
             found.append((age_match.start(), "age"))
 
-        for city in location_cities:
-            idx = compact.find(city)
-            if idx != -1:
-                found.append((idx, "location"))
-                break
+        location_span = ProfileCollectionPolicy._find_location_cue_span(message, compact)
+        if location_span is not None:
+            found.append((location_span, "location"))
 
         for token in education_tokens:
             idx = compact.find(token)
@@ -674,9 +760,79 @@ class ProfileCollectionPolicy:
                 ordered_fields.append(field)
         return ordered_fields
 
+    @staticmethod
+    def _find_location_cue_span(message: str, compact: str | None = None) -> int | None:
+        content = str(message or "").strip().lower()
+        normalized = compact if compact is not None else re.sub(r"[，,、。！？!?~～\s]+", "", content)
+        if not content or not normalized:
+            return None
+
+        common_cities = (
+            "深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港",
+        )
+        city_match = re.search(
+            rf"(?:我(?:是|在|住|来自)?|现在在|来自)?(?P<loc>{'|'.join(common_cities)})(?:这边|这座|这座城市|的|人)?",
+            content,
+        )
+        if city_match:
+            return city_match.start("loc")
+        if re.search(r"(喜欢|想找|找对象|找另一半|另一半|对象).{0,8}(?:在|来自|住在)", content):
+            return None
+        if ProfileCollectionPolicy._extract_location_like_text(content):
+            phrase_match = re.search(
+                r"(?:我在|我目前在|我现在在|我长期在|我一直在|我住在|我来自|我人在|目前在|现在在|长期在|一直在|住在|来自|在)",
+                content,
+            )
+            if phrase_match:
+                return phrase_match.start()
+            return 0
+        return None
+
+    @staticmethod
+    def _extract_location_like_text(message: str) -> str | None:
+        content = str(message or "").strip()
+        if not content:
+            return None
+
+        common_terms = (
+            "台湾",
+            "澳门",
+            "香港",
+            "国外",
+            "国内",
+            "老家",
+            "家里",
+            "县城",
+            "小县城",
+            "小城市",
+            "老城区",
+        )
+        phrase_patterns = [
+            r"(?:我在|我目前在|我现在在|我长期在|我一直在|我住在|我来自|我人在|目前在|现在在|长期在|一直在|住在|来自|在)\s*(?:一个)?(?P<loc>[\u4e00-\u9fa5]{2,12}(?:市|省|县|区|州|特别行政区|地区|小县城|小城市|县城)?|台湾|澳门|香港|国外|国内|老家|家里)(?:这边|这里|那边)?(?:呢|呀|哦|哈|啊|啦)?",
+            r"^(?P<loc>台湾|澳门|香港|国外|国内|老家|家里|县城|小县城|小城市)(?:呢|呀|哦|哈|啊|啦)?$",
+        ]
+        for pattern in phrase_patterns:
+            match = re.search(pattern, content)
+            if not match:
+                continue
+            candidate = str(match.group("loc") or "").strip("，,、。！？!?~～ ")
+            candidate = re.sub(r"(这边|这里|那边|呢|呀|哦|哈|啊|啦)$", "", candidate)
+            candidate = candidate.lstrip("一个")
+            if not candidate:
+                continue
+            if candidate in common_terms:
+                return candidate
+            if re.search(r"(本科|大专|硕士|博士|研究生|单身|离异|未婚|已婚|做|工作|收入|月薪)", candidate):
+                continue
+            if re.fullmatch(r"[\u4e00-\u9fa5]{2,12}(?:市|省|县|区|州|特别行政区|地区)?", candidate):
+                return candidate
+        return None
+
     def is_core_field_covered(self, profile: UserProfile, field: str) -> bool:
         if profile.skipped_fields.get(field, False) or profile.is_active_ask_closed(field):
             return True
+        if self._has_pending_resume_for_field(profile, field):
+            return False
         if (
             field == "age"
             and str(getattr(profile, "pending_birth_year_bucket", "") or "").strip()
@@ -688,7 +844,19 @@ class ProfileCollectionPolicy:
     def is_medium_field_covered(self, profile: UserProfile, field: str) -> bool:
         if profile.skipped_fields.get(field, False) or profile.is_active_ask_closed(field):
             return True
+        if self._has_pending_resume_for_field(profile, field):
+            return False
         return self.is_collected(profile, field) or profile.get_ask_count(field) >= 1
+
+    @staticmethod
+    def _has_pending_resume_for_field(profile: UserProfile, field: str) -> bool:
+        if not field:
+            return False
+        if str(getattr(profile, "resume_profile_target", "") or "").strip() == field:
+            return True
+        if str(getattr(profile, "pending_retry_field", "") or "").strip() == field:
+            return True
+        return False
 
     def is_field_covered(self, profile: UserProfile, field: str) -> bool:
         if field in self.CORE_CONTACT_FIELDS:
@@ -758,12 +926,7 @@ class ProfileCollectionPolicy:
 
     def get_medium_transition_host(self, profile: UserProfile, medium_field: str) -> Optional[str]:
         """为剩余中等字段寻找更自然的融合宿主。"""
-        host_orders = {
-            "monthly_income": ("occupation", "education"),
-            "partner_requirement": ("age", "location", "education", "occupation", "sex"),
-            "marital_status": ("sex", "age", "location", "education"),
-        }
-        for host in host_orders.get(medium_field, ()):
+        for host in self.SIDE_TARGET_HOST_ORDERS.get(medium_field, ()):
             if getattr(profile, host, None) or profile.collection_progress.get(host):
                 return host
         return None
@@ -822,6 +985,39 @@ class ProfileCollectionPolicy:
 
     def has_ongoing_contact_flow(self, profile: UserProfile) -> bool:
         """判断当前是否处于联系方式阶段或联系方式处理中。"""
+        if (
+            bool(getattr(profile, "contact_complete", False))
+            or (
+                bool(getattr(profile, "phone_collected", False) and getattr(profile, "phone", None))
+                and bool(getattr(profile, "wechat_collected", False) and getattr(profile, "wechat", None))
+            )
+            or (
+                bool(getattr(profile, "phone_collected", False) and getattr(profile, "phone", None))
+                and bool(getattr(profile, "rejected_wechat", False))
+            )
+            or (
+                bool(getattr(profile, "wechat_collected", False) and getattr(profile, "wechat", None))
+                and bool(getattr(profile, "rejected_phone", False))
+            )
+        ):
+            if not any(
+                [
+                    bool(str(getattr(profile, "pending_contact_field", "") or "").strip()),
+                    bool(str(getattr(profile, "pending_contact_candidate", "") or "").strip()),
+                    bool(str(getattr(profile, "pending_contact_hint", "") or "").strip()),
+                    bool(
+                        getattr(profile, "phone_ask_count", 0) > 0
+                        and not getattr(profile, "phone_collected", False)
+                        and not getattr(profile, "rejected_phone", False)
+                    ),
+                    bool(
+                        getattr(profile, "wechat_ask_count", 0) > 0
+                        and not getattr(profile, "wechat_collected", False)
+                        and not getattr(profile, "rejected_wechat", False)
+                    ),
+                ]
+            ):
+                return False
         return any(
             [
                 bool(profile.phone_ask_count > 0),

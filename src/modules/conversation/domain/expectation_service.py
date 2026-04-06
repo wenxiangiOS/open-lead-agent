@@ -44,6 +44,27 @@ class ExpectationService:
             return amount * 1000
         return amount
 
+    def parse_age_value(self, value: Optional[object]) -> Optional[int]:
+        """将年龄字段稳健解析为整数，兼容 '28' / 28 / '98年' 这类混合值。"""
+        if value in (None, ""):
+            return None
+
+        if isinstance(value, int):
+            return value
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        match = re.search(r"(\d{1,3})", text)
+        if not match:
+            return None
+
+        try:
+            return int(match.group(1))
+        except (TypeError, ValueError):
+            return None
+
     def is_bachelor_or_above(self, education: Optional[str]) -> bool:
         """判断学历是否本科及以上。"""
         if not education:
@@ -55,7 +76,7 @@ class ExpectationService:
 
     def qualifies_fast_match(self, user_profile: UserProfile) -> bool:
         """判断是否满足快速匹配时长条件。"""
-        age = user_profile.age
+        age = self.parse_age_value(user_profile.age)
         if age is None or age < 27:
             return False
 
@@ -98,6 +119,18 @@ class ExpectationService:
         """联系方式完成后的业务收尾话术。"""
         timeline = self.get_closing_timeline_text(user_profile)
         return (
-            f"好的，那你等好消息啦，祝你早日脱单。{timeline}哒，"
-            "牵线同事联系前会提前约时间，不打扰你。"
+            f"好的，那你等好消息啦，祝你早日脱单🥰 {timeline}哒~ "
+            "牵线同事联系前会提前约时间，不打扰你～"
+        )
+
+    def build_contact_completion_generation_instruction(self, user_profile: UserProfile) -> str:
+        """为第一次 AI 生成提供联系方式完成收尾指令。"""
+        timeline = self.get_closing_timeline_text(user_profile)
+        return (
+            "用户刚刚已经留下了有效联系方式，这一轮不要再追问任何资料，也不要再索要电话或微信，"
+            "直接自然收尾。整体语气要像“好的，那你等好消息啦，祝你早日脱单🥰”这种轻松口语。"
+            f"必须自然带出“{timeline}”这个时效信息，时间范围不能改。"
+            "还要自然表达“牵线同事联系前会提前约时间，不打扰你”这层意思。"
+            "不要说“我存好了”“我记下了”“后面有消息我再联系你”“有符合要求的人我再联系你”"
+            "“发资料给你”这类直接暴露收集动作或过度承诺的话。"
         )

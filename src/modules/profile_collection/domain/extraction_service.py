@@ -49,6 +49,26 @@ class ExtractionService:
         "occupation",
         "marital_status",
     }
+    _OCCUPATION_ALIASES = {
+        "it": "IT",
+        "ui": "UI",
+        "hr": "HR",
+        "qa": "QA",
+        "产品": "产品",
+        "运营": "运营",
+        "设计": "设计",
+        "开发": "开发",
+        "程序员": "程序员",
+        "销售": "销售",
+        "老师": "老师",
+        "医生": "医生",
+        "公务员": "公务员",
+        "美容": "美容",
+        "美容师": "美容师",
+        "美业": "美业",
+        "医美": "医美",
+    }
+    _OCCUPATION_FALLBACK_CHARS = {"恶", "呃", "额", "嗯", "啊", "哈", "哎"}
     """
     信息提取服务
 
@@ -125,9 +145,9 @@ class ExtractionService:
         content = str(text or "").strip()
         if not content:
             return None
-        if re.search(r"(你这边是|你是|我理解你是)\s*男(?:生|的)?", content):
+        if re.search(r"(你这边是|你是|我理解你是|你应该是|应该是)\s*男(?:生|的|孩子)?", content):
             return "男"
-        if re.search(r"(你这边是|你是|我理解你是)\s*女(?:生|的)?", content):
+        if re.search(r"(你这边是|你是|我理解你是|你应该是|应该是)\s*女(?:生|的|孩子)?", content):
             return "女"
         return None
 
@@ -162,6 +182,22 @@ class ExtractionService:
             user_service: 用户服务
         """
         self.user_service = user_service
+
+    @staticmethod
+    def _message_looks_like_contact_attempt(user_message: str) -> bool:
+        text = str(user_message or "").strip()
+        if not text:
+            return False
+        compact = re.sub(r"\s+", "", text)
+        if re.fullmatch(r"(?:\+?86)?[\d-]{7,17}", compact):
+            return True
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{5,19}", compact):
+            return True
+        return bool(re.search(r"(电话|手机|手机号|号码|微信|vx|wx|weixin)", text, re.IGNORECASE))
+
+    @staticmethod
+    def _message_has_explicit_age_semantics(user_message: str) -> bool:
+        return bool(re.search(r"(岁|年龄|今年|出生|哪年|90后|95后|85后)", str(user_message or "")))
 
     def extract_json_from_response(self, response: str) -> Dict[str, Any]:
         """
@@ -289,6 +325,29 @@ class ExtractionService:
 
         return value_str
 
+    @classmethod
+    def _normalize_occupation_value(cls, value: Any) -> Any:
+        value_str = cls._normalize_extracted_value(value)
+        if value_str is None:
+            return None
+        text = re.sub(r"[，,、。！？!?~～\s]+", "", str(value_str))
+        text = re.sub(r"(吧|呀|呢|哈|哦|啊)+$", "", text)
+        text = re.sub(r"^(做|做的|做的是|我是|从事)\s*", "", text)
+        normalized = text.lower()
+        if normalized in cls._OCCUPATION_ALIASES:
+            return cls._OCCUPATION_ALIASES[normalized]
+        if text and text[0] in cls._OCCUPATION_FALLBACK_CHARS and len(text) >= 2:
+            trimmed = text[1:]
+            trimmed_normalized = trimmed.lower()
+            if trimmed_normalized in cls._OCCUPATION_ALIASES:
+                return cls._OCCUPATION_ALIASES[trimmed_normalized]
+            for stem in ("美容师", "美业", "医美", "美容", "程序员", "销售", "老师", "医生", "公务员", "产品", "运营", "设计", "开发"):
+                if stem in trimmed:
+                    residue = trimmed.replace(stem, "")
+                    if not residue or set(residue) <= cls._OCCUPATION_FALLBACK_CHARS:
+                        return stem
+        return cls._OCCUPATION_ALIASES.get(normalized, text)
+
     @staticmethod
     def _is_effectively_same_value(current_value: Any, new_value: Any) -> bool:
         """宽松等价比较，避免仅因格式差异触发重写。"""
@@ -387,6 +446,11 @@ class ExtractionService:
             return value
 
         value_str = str(value).strip()
+        compact_value = re.sub(r"\s+", "", value_str)
+        if re.fullmatch(r"(?i)(?:微信|微信号)?(?:vx|wx|weixin)?[a-z][a-z0-9_-]{5,19}", compact_value):
+            return None
+        if re.search(r"(?i)(?:微信|微信号|vx|wx|weixin)[a-z0-9_-]{4,19}", compact_value):
+            return None
 
         # 1. 尝试匹配 "XX岁" 格式
         match = re.search(r'(\d{1,4})\s*岁', value_str)
@@ -538,6 +602,7 @@ class ExtractionService:
                     normalized_with_pos.append((len(compact_message), preference_value))
 
         normalized = [value for _, value in sorted(normalized_with_pos, key=lambda item: item[0])]
+        normalized = [value for value in normalized if not ExtractionService._is_gender_preference_like_partner_requirement(value)]
         return "，".join(normalized)
 
     @staticmethod
@@ -551,6 +616,16 @@ class ExtractionService:
         return value
 
     @staticmethod
+    def _is_gender_preference_like_partner_requirement(value: Any) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        return bool(
+            re.fullmatch(r"(男生|女生|男性|女性|男孩子|女孩子)", text)
+            or re.search(r"(找(?:个|一个)?男朋友|找(?:个|一个)?女朋友|找(?:个|一个)?男生|找(?:个|一个)?女生|喜欢男生|喜欢女生)", text)
+        )
+
+    @staticmethod
     def _should_skip_partner_requirement_part(
         part: str,
         user_message: str,
@@ -560,6 +635,8 @@ class ExtractionService:
         if not clean_part:
             return True
         clean_part = ExtractionService._normalize_partner_requirement_part(clean_part)
+        if ExtractionService._is_gender_preference_like_partner_requirement(clean_part):
+            return True
 
         education_value = str((extracted_data or {}).get("education") or "").strip()
         looks_like_education = bool(
@@ -667,6 +744,11 @@ class ExtractionService:
                 # 字段名映射：中文字段名 -> 英文字段名
                 mapped_field = self.FIELD_MAPPING.get(clean_field_name, clean_field_name)
                 value = normalized_value
+                if mapped_field == "occupation":
+                    value = self._normalize_occupation_value(value)
+                    if value is None:
+                        logger.info("[提取保护] occupation 归一化后为空，跳过职业更新")
+                        continue
 
                 # 兼容 AI 把联系方式统一提取为 contact 的场景：
                 # 必须路由到 phone / wechat，保证 phone_collected/wechat_collected 状态一致。
@@ -713,6 +795,16 @@ class ExtractionService:
                     # 名字不能全是数字
                     if value.isdigit():
                         logger.info(f"[名字验证] 不能全是数字: {value}")
+                        continue
+
+                if mapped_field == "age":
+                    # 联系方式上下文或明显联系方式尝试里，不允许年龄字段抢数字串。
+                    # 这层是落库前最终保险丝，避免 1879987654 -> age=18。
+                    if (
+                        self._message_looks_like_contact_attempt(user_message)
+                        and not self._message_has_explicit_age_semantics(user_message)
+                    ):
+                        logger.info("[提取保护] 联系方式语境命中，跳过 age 写入: %s", value)
                         continue
 
                 # 年龄限制检查：用户必须年满24岁
@@ -850,9 +942,19 @@ class ExtractionService:
                         r"(?:^|[，,、 ]|是|就是)\s*(男生|女生|男的|女的|男|女)\s*(?:呀|呢|哈|哦|啊)?(?:$|[，,。！？!? ])",
                         user_message or "",
                     )
+                    affirmative_prefixed_sex = re.search(
+                        r"^\s*(?:是的|对|对的|嗯|嗯嗯|好的|好|没错)"
+                        r"(?:[呀呢啊哦哈啦嘛]*)?\s*(男生|女生|男的|女的|男|女)"
+                        r"(?:\s*[，,、 ]\s*(?:\d{2}年|\d{2}后|\d{2}岁|19\d{2}年|20\d{2}年).*)?$",
+                        user_message or "",
+                    )
                     if confirmation_context_sex and contextual_embedded_sex:
                         explicit_self_sex = True
                         raw = contextual_embedded_sex.group(1)
+                        value = "男" if "男" in raw else "女"
+                    if confirmation_context_sex and affirmative_prefixed_sex:
+                        explicit_self_sex = True
+                        raw = affirmative_prefixed_sex.group(1)
                         value = "男" if "男" in raw else "女"
                     if confirmation_context_sex and self._is_affirmative_confirmation_answer(user_message):
                         explicit_self_sex = True
@@ -955,6 +1057,24 @@ class ExtractionService:
                         new_value = f"{current_value},{value}"
                         logger.debug(f"[择偶要求] 累积: +{value}")
                         value = new_value
+
+                    normalized_requirement = self._extract_partner_requirement_from_user_message(str(value or ""))
+                    if not normalized_requirement and self._is_gender_preference_like_partner_requirement(value):
+                        inferred_partner_gender = "男" if "男" in str(value) else "女" if "女" in str(value) else None
+                        if inferred_partner_gender and not getattr(user_profile, "partner_gender_preference", None):
+                            gender_updated = await self.user_service.update_user_profile_field(
+                                account_id,
+                                "partner_gender_preference",
+                                inferred_partner_gender,
+                            )
+                            if gender_updated:
+                                collected_fields.append(
+                                    {"field": "partner_gender_preference", "value": inferred_partner_gender}
+                                )
+                                collected_field_names.append("partner_gender_preference")
+                                user_profile.partner_gender_preference = inferred_partner_gender
+                        logger.info("[提取保护] partner_requirement 命中纯性别偏好，改写入 partner_gender_preference")
+                        continue
 
                 if (
                     mapped_field in self._STABLE_PROFILE_FIELDS
@@ -1063,6 +1183,7 @@ class ExtractionService:
             'contact': '联系方式',
             'phone': '电话',
             'wechat': '微信',
+            'partner_gender_preference': '择偶性别偏好',
             'partner_requirement': '择偶要求'
         }
 
@@ -1097,7 +1218,10 @@ class ExtractionService:
 
         # 构建基础摘要
         if parts:
-            # 添加择偶要求（如果有）- 在联系方式之前
+            # 添加择偶性别偏好/择偶要求（如果有）- 在联系方式之前
+            if user_profile.partner_gender_preference:
+                gender_label = "男生" if user_profile.partner_gender_preference == "男" else "女生" if user_profile.partner_gender_preference == "女" else str(user_profile.partner_gender_preference)
+                parts.append(f"偏好性别:{gender_label}")
             if user_profile.partner_requirement:
                 parts.append(f"要求:{user_profile.partner_requirement}")
 

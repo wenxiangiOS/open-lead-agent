@@ -118,8 +118,8 @@ class DialogueExpressionService:
     )
 
     CONTACT_PROMPTS = (
-        "先留个手机号也行，后面如果有合适的进展，我这边也好继续联系上你。",
-        "你要是方便的话，先留个手机号也行，后面有合适的我再跟你接着聊。",
+        "先留个手机号也行，后面如果有合适的进展，我这边也好方便联系到你。",
+        "你要是方便的话，先留个手机号也行，后面有合适的我再跟你接着聊，也更方便联系你。",
         "电话先留一个也行，真有合适的方向，我这边联系你会顺一点。",
     )
 
@@ -190,6 +190,14 @@ class DialogueExpressionService:
             bridged_preference = self._build_bridged_partner_requirement_prompt(profile)
             if bridged_preference:
                 return bridged_preference
+            gender_label = self._render_partner_gender_preference(profile)
+            if gender_label:
+                variants = (
+                    f"偏{gender_label}这点我先记下了。除了这个之外，你找对象时还会更看重哪一点呀？比如性格、年龄、城市这些。",
+                    f"好，{gender_label}这个方向我知道了。那你还会更在意对方哪方面呀？像性格、相处方式、现实条件这些都可以说说。",
+                    f"找{gender_label}这类我先记着。那除了这个，你对另一半还比较看重什么？",
+                )
+                return self._pick_variant_avoiding_recent_openings("core:partner_requirement:gender_pref", variants, profile)
             return "你对另一半大概有什么要求呀？比如年龄、城市、性格这些，你会更看重哪方面？"
         if field == "marital_status":
             bridged_marital = self._build_bridged_marital_status_prompt(profile)
@@ -415,6 +423,14 @@ class DialogueExpressionService:
         preference = str(preference_hint or "").strip()
         source = "hint" if preference else ""
         if not preference and profile:
+            gender_preference = str(getattr(profile, "partner_gender_preference", "") or "").strip()
+            if gender_preference == "男":
+                preference = "找男生"
+                source = "profile_gender"
+            elif gender_preference == "女":
+                preference = "找女生"
+                source = "profile_gender"
+        if not preference and profile:
             preference = str(getattr(profile, "partner_requirement", "") or "").strip()
             if preference:
                 source = "profile"
@@ -541,7 +557,7 @@ class DialogueExpressionService:
     @staticmethod
     def _opening_signature(text: str) -> str:
         normalized = re.sub(r"[\s，,。！？!?~～、:：;；'\"（）()]+", "", str(text or ""))
-        return normalized[:8]
+        return normalized[:4]
 
     def _pick_variant_avoiding_recent_openings(
         self,
@@ -569,7 +585,10 @@ class DialogueExpressionService:
         message = str(user_message or "").strip()
         if not message:
             return False
-        if not re.search(r"(找对象|想找对象|帮我找个对象|相亲|脱单|找另一半|找个男朋友|找个女朋友|认真聊聊)", message):
+        if not re.search(
+            r"((?:想)?找(?:个)?(?:对象|另一半|男朋友|女朋友)|(?:帮(?:我|忙)?|给我)?(?:找|介绍|介绍下|牵线|安排)(?:个)?(?:对象|另一半|男朋友|女朋友)|介绍(?:个)?(?:对象|另一半|男朋友|女朋友)|相亲|脱单|认真聊聊)",
+            message,
+        ):
             return False
         if re.search(r"(男生|男的|女生|女的|90后|\d{2}岁|深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|本科|硕士|博士|it|运营|程序员|单身|离异)", message.lower()):
             return False
@@ -641,12 +660,31 @@ class DialogueExpressionService:
         marital_status = str(getattr(profile, "marital_status", "") or "").strip()
         if not marital_status:
             return None
+        gender_label = self._render_partner_gender_preference(profile)
+        if gender_label:
+            variants = (
+                f"好，那偏{gender_label}这点我先记下。除了这个之外，你会更看重对方哪一点呀？",
+                f"行，{gender_label}这个方向我知道了。那你找对象时还比较在意哪方面？",
+                f"那我接着问一句，找{gender_label}这类之外，你对另一半还会更看重什么？",
+            )
+            return self._pick_variant_avoiding_recent_openings("bridge:partner_requirement:gender_pref", variants, profile)
         variants = (
             f"那你找对象的时候，会更看重对方哪一点呀？",
             f"说到这儿，你会更在意对方哪方面呀？",
             f"那你对另一半大概有什么要求呀？你会更看重哪一点？",
         )
         return self._pick_variant_avoiding_recent_openings("bridge:partner_requirement", variants, profile)
+
+    @staticmethod
+    def _render_partner_gender_preference(profile: Optional[UserProfile]) -> str:
+        if not profile:
+            return ""
+        value = str(getattr(profile, "partner_gender_preference", "") or "").strip()
+        if value in {"男", "male"}:
+            return "男生"
+        if value in {"女", "female"}:
+            return "女生"
+        return ""
 
     def _build_contextual_occupation_prompt(self, user_message: str, *, profile: Optional[UserProfile] = None) -> Optional[str]:
         message = str(user_message or "").strip()

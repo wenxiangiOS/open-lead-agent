@@ -44,6 +44,7 @@ class UserProfile(BaseModel):
     phone: Optional[str] = Field(None, description="电话号码（单独存储）")
     wechat: Optional[str] = Field(None, description="微信号")
     partner_requirement: Optional[str] = Field(None, description="择偶要求（中等字段）")
+    partner_gender_preference: Optional[str] = Field(None, description="择偶性别偏好（男/女）")
 
     # Phase 2: 择偶要求子槽细分（更精细的去重）
     partner_pref_location: Optional[str] = Field(None, description="择偶地区偏好")
@@ -70,6 +71,7 @@ class UserProfile(BaseModel):
             "occupation": False,
             "contact": False,
             "partner_requirement": False,
+            "partner_gender_preference": False,
             # Phase 2: 择偶要求子槽
             "partner_pref_location": False,
             "partner_pref_age": False,
@@ -359,6 +361,14 @@ class UserProfile(BaseModel):
                         validated = existing  # 所有内容都已存在，不更新
                 else:
                     validated = value
+            elif field_name == 'partner_gender_preference':
+                normalized = str(value or '').strip()
+                if normalized in {'男生', '男', 'male'}:
+                    validated = '男'
+                elif normalized in {'女生', '女', 'female'}:
+                    validated = '女'
+                else:
+                    validated = value
             else:
                 validated = value
 
@@ -470,7 +480,7 @@ class UserProfile(BaseModel):
         # 检查所有关键字段是否都为空
         key_fields = ['sex', 'last_name', 'age', 'height', 'weight',
                       'location', 'education', 'marital_status',
-                      'monthly_income', 'occupation', 'contact', 'partner_requirement']
+                      'monthly_income', 'occupation', 'contact', 'partner_requirement', 'partner_gender_preference']
         return all(getattr(self, field) is None for field in key_fields)
 
     def get_missing_fields(self) -> list:
@@ -856,6 +866,7 @@ class UserProfile(BaseModel):
             "phone": self.phone,
             "wechat": self.wechat,
             "partner_requirement": self.partner_requirement,
+            "partner_gender_preference": self.partner_gender_preference,
             "extraction_evidence": self.extraction_evidence,
             "collection_progress": self.collection_progress,
             "progress_percentage": round(self.get_progress() * 100, 2),
@@ -886,6 +897,23 @@ class UserProfile(BaseModel):
             "last_user_concern_type": self.last_user_concern_type,
             "field_miss_streak": self.field_miss_streak,
             "last_effective_progress": self.last_effective_progress,
+            "last_asked_field": self.last_asked_field,
+            "last_asked_side_field": self.last_asked_side_field,
+            "last_asked_turn_index": self.last_asked_turn_index,
+            "pending_retry_field": self.pending_retry_field,
+            "needs_bridge_back": self.needs_bridge_back,
+            "last_side_topic_type": self.last_side_topic_type,
+            "complaint_cooldown_until": self.complaint_cooldown_until,
+            "recent_semantic_slots": self.recent_semantic_slots,
+            "recent_response_openings": self.recent_response_openings,
+            "repair_mode": self.repair_mode,
+            "repair_reason": self.repair_reason,
+            "ask_cooldown_turns": self.ask_cooldown_turns,
+            "blocked_ask_intents": self.blocked_ask_intents,
+            "non_cooperation_turns": self.non_cooperation_turns,
+            "off_topic_turns": self.off_topic_turns,
+            "open_profile_attempts": self.open_profile_attempts,
+            "last_engagement_mode": self.last_engagement_mode,
             # 兼容旧字段
             "rejected_wechat": self.rejected_wechat,
             "rejected_phone": self.rejected_phone,

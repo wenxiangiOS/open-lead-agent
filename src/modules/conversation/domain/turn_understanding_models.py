@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Literal, Optional
 
 
@@ -35,6 +35,13 @@ class BlockedSlot:
 
 
 @dataclass
+class PreGenerationResolutionMeta:
+    source: str = ""
+    resolved_fields: List[str] = field(default_factory=list)
+    transition_reason: str = ""
+
+
+@dataclass
 class TurnUnderstandingInput:
     user_message: str
     last_response: str
@@ -61,8 +68,76 @@ class TurnUnderstandingResult:
     resume_hint: Optional[str] = None
     context_ack_type: Optional[str] = None
     context_ack_payload: Dict[str, str] = field(default_factory=dict)
+    context_ack_occupation: Optional[str] = None
+    context_ack_location: Optional[str] = None
+    context_ack_preference: Optional[str] = None
+    context_ack_field_ack: Optional[str] = None
+    soft_retry_field: Optional[str] = None
+    pre_generation_resolution: Optional[PreGenerationResolutionMeta] = None
     confidence: float = 0.0
     notes: List[str] = field(default_factory=list)
+
+    @staticmethod
+    def build_pre_generation_compat_payload(
+        *,
+        source: str = "",
+        resolved_fields: Optional[List[str]] = None,
+        transition_reason: str = "",
+    ) -> Dict[str, str]:
+        payload: Dict[str, str] = {}
+        if source:
+            payload["pre_generation_resolution_source"] = source
+        if resolved_fields:
+            payload["pre_generation_resolved_fields"] = ",".join(resolved_fields)
+        if transition_reason:
+            payload["pre_generation_transition_reason"] = transition_reason
+        return payload
+
+    def get_pre_generation_compat_payload(self) -> Dict[str, str]:
+        meta = self.pre_generation_resolution
+        if meta is None:
+            return {}
+        transition_reason = meta.transition_reason or str(
+            self.context_ack_payload.get("pre_generation_transition_reason") or ""
+        )
+        return self.build_pre_generation_compat_payload(
+            source=meta.source,
+            resolved_fields=list(meta.resolved_fields or []),
+            transition_reason=transition_reason,
+        )
+
+    def set_pre_generation_transition_reason(self, reason: str) -> None:
+        meta = self.pre_generation_resolution or PreGenerationResolutionMeta()
+        meta.transition_reason = reason
+        self.pre_generation_resolution = meta
+        self.context_ack_payload.update(
+            self.build_pre_generation_compat_payload(
+                source=meta.source,
+                resolved_fields=list(meta.resolved_fields or []),
+                transition_reason=meta.transition_reason,
+            )
+        )
+
+    def set_pre_generation_resolution(
+        self,
+        *,
+        source: str,
+        resolved_fields: List[str],
+        default_transition_reason: str,
+    ) -> None:
+        meta = self.pre_generation_resolution or PreGenerationResolutionMeta()
+        meta.source = source
+        meta.resolved_fields = list(resolved_fields)
+        if not meta.transition_reason:
+            meta.transition_reason = default_transition_reason
+        self.pre_generation_resolution = meta
+        self.context_ack_payload.update(
+            self.build_pre_generation_compat_payload(
+                source=meta.source,
+                resolved_fields=list(meta.resolved_fields or []),
+                transition_reason=meta.transition_reason,
+            )
+        )
 
     def to_dict(self) -> dict:
         def _serialize_slot_map(slot_map: Dict[str, object]) -> dict:
@@ -86,6 +161,12 @@ class TurnUnderstandingResult:
             "resume_hint": self.resume_hint,
             "context_ack_type": self.context_ack_type,
             "context_ack_payload": dict(self.context_ack_payload),
+            "context_ack_occupation": self.context_ack_occupation,
+            "context_ack_location": self.context_ack_location,
+            "context_ack_preference": self.context_ack_preference,
+            "context_ack_field_ack": self.context_ack_field_ack,
+            "soft_retry_field": self.soft_retry_field,
+            "pre_generation_resolution": asdict(self.pre_generation_resolution) if self.pre_generation_resolution else None,
             "confidence": self.confidence,
             "notes": list(self.notes),
         }

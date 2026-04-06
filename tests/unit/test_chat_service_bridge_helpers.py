@@ -1,5 +1,6 @@
 from src.models.user_profile import UserProfile
 from src.services.core.chat_service import ChatService
+from src.services.core.chat_service_bridge_text_service import ChatServiceBridgeTextService
 
 
 class _FakeAIService:
@@ -12,8 +13,7 @@ def _build_chat_service() -> ChatService:
 
 
 def test_bridge_prefix_generated_for_faq_type():
-    chat_service = _build_chat_service()
-    prefix = chat_service._build_bridge_back_prefix("faq")
+    prefix = ChatServiceBridgeTextService.build_bridge_back_prefix("faq")
 
     assert prefix
     assert prefix.endswith("。") or prefix.endswith(" ")
@@ -21,36 +21,31 @@ def test_bridge_prefix_generated_for_faq_type():
 
 
 def test_bridge_prefix_generated_for_boundary_type():
-    chat_service = _build_chat_service()
-    prefix = chat_service._build_bridge_back_prefix("boundary")
+    prefix = ChatServiceBridgeTextService.build_bridge_back_prefix("boundary")
 
     assert prefix
     assert any(keyword in prefix for keyword in ["先", "这个", "放一边", "回到"])
 
 
 def test_bridge_prefix_generated_for_complaint_type():
-    chat_service = _build_chat_service()
-    prefix = chat_service._build_bridge_back_prefix("complaint")
+    prefix = ChatServiceBridgeTextService.build_bridge_back_prefix("complaint")
 
     assert prefix
     assert any(keyword in prefix for keyword in ["节奏", "先", "换个"])
 
 
 def test_bridge_prefix_empty_for_none():
-    chat_service = _build_chat_service()
-    prefix = chat_service._build_bridge_back_prefix(None)
+    prefix = ChatServiceBridgeTextService.build_bridge_back_prefix(None)
     assert prefix == ""
 
 
 def test_bridge_prefix_empty_for_empty_string():
-    chat_service = _build_chat_service()
-    prefix = chat_service._build_bridge_back_prefix("")
+    prefix = ChatServiceBridgeTextService.build_bridge_back_prefix("")
     assert prefix == ""
 
 
 def test_bridge_prefix_fallback_for_unknown_type():
-    chat_service = _build_chat_service()
-    prefix = chat_service._build_bridge_back_prefix("unknown_type")
+    prefix = ChatServiceBridgeTextService.build_bridge_back_prefix("unknown_type")
     assert prefix
 
 

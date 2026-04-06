@@ -16,6 +16,7 @@ from pathlib import Path
 import random
 import yaml
 from src.models.user_profile import UserProfile
+from src.modules.conversation.domain.expectation_service import ExpectationService
 from src.modules.profile_collection.domain.profile_collection_policy import ProfileCollectionPolicy
 from src.services.collection.contact_collection_service import ContactCollectionService
 
@@ -193,6 +194,25 @@ class ConversationEndingService:
         scenario_config = endings.get(scenario_name, {})
         return scenario_config.get('extraInstructions', '')
 
+    def compose_ai_extra_instructions(self, scenario_name: str, profile: UserProfile) -> str:
+        """为 AI 收尾场景组合动态附加指令。"""
+        base = str(self.get_ai_extra_instructions(scenario_name) or "").strip()
+        if scenario_name != "normal_complete":
+            return base
+
+        has_any_contact = bool(
+            (getattr(profile, "phone_collected", False) and getattr(profile, "phone", None))
+            or (getattr(profile, "wechat_collected", False) and getattr(profile, "wechat", None))
+        )
+        if not has_any_contact:
+            return base
+
+        expectation_service = ExpectationService()
+        contact_instruction = expectation_service.build_contact_completion_generation_instruction(profile)
+        if not base:
+            return contact_instruction
+        return f"{base} {contact_instruction}".strip()
+
     def should_use_ai_ending(self, scenario_name: str) -> bool:
         """按配置判断该收尾场景是否应走 AI 生成。"""
         endings = self.config.get('endings', {})
@@ -282,7 +302,7 @@ class ConversationEndingService:
             'scenario': scenario,
             'use_ai': use_ai,
             'description': self.get_scenario_description(scenario),
-            'extra_instructions': self.get_ai_extra_instructions(scenario),
+            'extra_instructions': self.compose_ai_extra_instructions(scenario, profile),
         }
         if not use_ai:
             result['response'] = self.get_ending_response(scenario)
@@ -300,7 +320,7 @@ class ConversationEndingService:
             'scenario': scenario_name,
             'use_ai': use_ai,
             'description': self.get_scenario_description(scenario_name),
-            'extra_instructions': self.get_ai_extra_instructions(scenario_name),
+            'extra_instructions': self.compose_ai_extra_instructions(scenario_name, profile),
         }
         if not use_ai:
             result['response'] = self.get_ending_response(scenario_name)

@@ -246,6 +246,7 @@ def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_b
         "monthly_income": "月薪",
         "occupation": "职业",
         "contact": "联系方式",
+        "partner_gender_preference": "择偶性别偏好",
         "partner_requirement": "择偶要求",
     }
 
@@ -294,6 +295,7 @@ def _format_debug_info(profile: Dict[str, Any]) -> str:
         "monthly_income": "月薪",
         "occupation": "职业",
         "contact": "联系方式",
+        "partner_gender_preference": "择偶性别偏好",
         "partner_requirement": "择偶要求",
     }
 

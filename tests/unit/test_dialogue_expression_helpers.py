@@ -24,8 +24,8 @@ def test_render_field_question_does_not_bridge_age_when_age_already_collected():
     rendered = expr.render_field_question("age", profile=profile, user_message="本科")
 
     assert "本科" not in rendered
-    assert "29岁" in rendered
-    assert "单身" in rendered or "状态" in rendered
+    assert "29岁" not in rendered
+    assert "婚况" in rendered or "感情状态" in rendered
 
 
 def test_render_field_question_uses_mid_conversation_sex_prompt_without_opening_phrase():

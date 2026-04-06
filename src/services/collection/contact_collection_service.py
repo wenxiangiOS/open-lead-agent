@@ -152,12 +152,14 @@ class ContactCollectionService:
 """
 
     PROMPT_PERSUADE_PHONE = """
-【当前任务：电话拒绝后继续沟通】
+【当前任务：争取电话号码】
 用户第一次拒绝电话。
 先承接顾虑，再轻轻给一次电话选项。
 最多两句，避免长解释。
 禁止重复强调“不会骚扰 / 不会打扰 / 不会发广告 / 绝对不会”。
+禁止说“发资料 / 发照片 / 推具体人选 / 安排见面 / 发你资料”这类承诺。
 不要营销感，不要连续说服。
+这轮只能继续围绕电话，禁止改问微信，禁止把电话拒绝直接转成要微信。
 """
 
     PROMPT_ASK_PHONE_AFTER_WECHAT_REJECTED = """
@@ -176,12 +178,14 @@ class ContactCollectionService:
 【当前任务：询问微信】
 首次询问微信号。
 自然简短说明用途并询问微信，不要提电话。
+禁止说“发资料 / 发照片 / 推具体人选 / 安排见面 / 发你资料”这类承诺。
 """
 
     PROMPT_ASK_WECHAT_AFTER_PHONE_REJECTED = """
 【当前任务：电话拒绝后询问微信】
-用户拒绝电话，当前改问微信。
+用户已经达到电话流程切换条件，当前改问微信。
 自然承接后简短询问微信，不要结束语气。
+禁止说“发资料 / 发照片 / 推具体人选 / 安排见面 / 发你资料”这类承诺。
 """
 
     PROMPT_ASK_WECHAT_ON_USER_PREFERENCE = """
@@ -189,6 +193,7 @@ class ContactCollectionService:
 用户明确说微信更方便。
 直接顺着用户提议，请其提供微信号。
 不要转成长解释或继续坚持其他联系方式。
+禁止说“发资料 / 发照片 / 推具体人选 / 安排见面 / 发你资料”这类承诺。
 """
 
     PROMPT_PERSUADE_WECHAT = """
@@ -197,7 +202,9 @@ class ContactCollectionService:
 先承接顾虑，再轻轻给一次微信选项。
 最多两句，避免长解释。
 禁止重复强调“不会骚扰 / 不会打扰 / 不会发广告 / 绝对不会”。
+禁止说“发资料 / 发照片 / 推具体人选 / 安排见面 / 发你资料”这类承诺。
 不要模板化，不要连续说服。
+这轮只能继续围绕微信，禁止改回电话。
 """
 
     PROMPT_HK_ASK_WECHAT = """
@@ -398,7 +405,7 @@ class ContactCollectionService:
         is_hk = self.is_hongkong_user(profile)
 
         if action == NextAction.END_CONVERSATION:
-            instruction = ""
+            instruction = self.PROMPT_END_CONVERSATION
             logger.info("[联系方式指令] 双方都被拒绝，进入显式收尾提示")
 
         elif action == NextAction.ASK_PHONE:
@@ -560,16 +567,25 @@ class ContactCollectionService:
         - 用户主动提供某联系方式，导致上一轮预问的另一联系方式应视为未兑现
         """
         if contact_type == 'phone':
-            profile.phone_ask_count = 0
-            profile.phone_effective_ask_count = 0
+            profile.phone_ask_count = max(0, int(profile.phone_ask_count or 0) - 1)
+            current_effective = int(getattr(profile, "phone_effective_ask_count", profile.phone_ask_count) or profile.phone_ask_count or 0)
+            profile.phone_effective_ask_count = max(0, current_effective - 1)
             if str(getattr(profile, "last_contact_request_type", "") or "").strip() == "phone":
                 profile.last_contact_request_type = None
             return
 
-        profile.wechat_ask_count = 0
-        profile.wechat_effective_ask_count = 0
+        profile.wechat_ask_count = max(0, int(profile.wechat_ask_count or 0) - 1)
+        current_effective = int(getattr(profile, "wechat_effective_ask_count", profile.wechat_ask_count) or profile.wechat_ask_count or 0)
+        profile.wechat_effective_ask_count = max(0, current_effective - 1)
         if str(getattr(profile, "last_contact_request_type", "") or "").strip() == "wechat":
             profile.last_contact_request_type = None
+
+    def clear_contact_context_state(self, profile: UserProfile) -> None:
+        """联系方式主流程结束后，清理残留的联系方式上下文。"""
+        profile.last_contact_request_type = None
+        profile.pending_contact_candidate = None
+        profile.pending_contact_field = None
+        profile.pending_contact_hint = None
 
     def record_invalid_input(self, profile: UserProfile, contact_type: str) -> int:
         """记录联系方式无效输入；达到上限后关闭主动追问。"""
@@ -645,6 +661,13 @@ class ContactCollectionService:
         last_requested_type = str(getattr(profile, "last_contact_request_type", "") or "").strip()
         current_action = self.get_next_action(profile, "")
         action_value = getattr(current_action, "value", str(current_action))
+        has_active_contact_request_context = bool(
+            last_requested_type in {"phone", "wechat"}
+            or is_about_phone
+            or is_about_wechat
+            or int(getattr(profile, "phone_ask_count", 0) or 0) > 0
+            or int(getattr(profile, "wechat_ask_count", 0) or 0) > 0
+        )
 
         if phone_refusal:
             logger.info("[拒绝检测] 检测到显式电话拒绝")
@@ -681,16 +704,16 @@ class ContactCollectionService:
             elif last_requested_type == 'wechat':
                 logger.debug("[拒绝检测] 使用最近一次真实展示的微信请求类型优先归因")
                 result = self._handle_refusal(profile, 'wechat', False)
-            elif action_value in {NextAction.ASK_PHONE.value, NextAction.PERSUADE_PHONE.value}:
+            elif has_active_contact_request_context and action_value in {NextAction.ASK_PHONE.value, NextAction.PERSUADE_PHONE.value}:
                 logger.debug("[拒绝检测] 当前动作是电话流程，按电话拒绝处理")
                 result = self._handle_refusal(profile, 'phone', False)
-            elif action_value in {NextAction.ASK_WECHAT.value, NextAction.PERSUADE_WECHAT.value}:
+            elif has_active_contact_request_context and action_value in {NextAction.ASK_WECHAT.value, NextAction.PERSUADE_WECHAT.value}:
                 logger.debug("[拒绝检测] 当前动作是微信流程，按微信拒绝处理")
                 result = self._handle_refusal(profile, 'wechat', False)
-            elif is_about_wechat:
+            elif has_active_contact_request_context and is_about_wechat:
                 logger.debug("[拒绝检测] 当前动作未知，按上一轮微信上下文兜底")
                 result = self._handle_refusal(profile, 'wechat', False)
-            elif is_about_phone:
+            elif has_active_contact_request_context and is_about_phone:
                 logger.debug("[拒绝检测] 当前动作未知，按上一轮电话上下文兜底")
                 result = self._handle_refusal(profile, 'phone', False)
             else:
@@ -786,10 +809,12 @@ class ContactCollectionService:
             if is_explicit and new_count == 0:
                 new_count = 1
                 profile.phone_ask_count = 1
+                profile.phone_effective_ask_count = max(1, int(getattr(profile, "phone_effective_ask_count", 0) or 0))
             max_asks = self.get_max_asks(profile, 'phone')
+            effective_count = int(getattr(profile, "phone_effective_ask_count", new_count) or new_count or 0)
 
             # 判断是否达到上限
-            if new_count >= max_asks:
+            if effective_count >= max_asks:
                 profile.rejected_phone = True
                 return RefusalResult(
                     contact_type='phone',
@@ -809,10 +834,12 @@ class ContactCollectionService:
             if is_explicit and new_count == 0:
                 new_count = 1
                 profile.wechat_ask_count = 1
+                profile.wechat_effective_ask_count = max(1, int(getattr(profile, "wechat_effective_ask_count", 0) or 0))
             max_asks = self.get_max_asks(profile, 'wechat')
+            effective_count = int(getattr(profile, "wechat_effective_ask_count", new_count) or new_count or 0)
 
             # 判断是否达到上限
-            if new_count >= max_asks:
+            if effective_count >= max_asks:
                 profile.rejected_wechat = True
                 return RefusalResult(
                     contact_type='wechat',

@@ -1,6 +1,15 @@
 import pytest
 
+from src.models.user_profile import UserProfile
 from src.services.core.chat_service import ChatService
+from src.services.core.chat_service_ack_render_service import ChatServiceAckRenderService
+from src.services.core.chat_service_contact_text_service import ChatServiceContactTextService
+from src.services.core.chat_service_contact_validation_text_service import (
+    ChatServiceContactValidationTextService,
+)
+from src.services.core.chat_service_response_cleanup_service import (
+    ChatServiceResponseCleanupService,
+)
 
 
 class _FakeAIService:
@@ -19,6 +28,89 @@ def test_collapse_duplicate_ack_segments_removes_double_confirmation():
 
     assert "你今年多大呀？" in response
     assert response.count("男生") <= 1
+
+
+def test_response_already_acks_field_detects_existing_field_ack():
+    assert ChatService._response_already_acks_field("深圳这边我知道了。", "location", "深圳") is True
+    assert ChatService._response_already_acks_field("你现在做什么工作呀？", "occupation", "IT") is False
+
+
+def test_response_already_absorbs_location_context_detects_contextual_absorption():
+    assert ChatService._response_already_absorbs_location_context("你现在在深圳主要做哪方面工作呀？", "深圳") is True
+    assert ChatService._response_already_absorbs_location_context("深圳我知道了。你做什么工作呀？", "深圳") is False
+
+
+def test_response_already_acknowledges_short_answer_detects_ack_and_alias():
+    assert ChatService._response_already_acknowledges_short_answer("好的，你是男生啦。", "男的") is True
+    assert ChatService._response_already_acknowledges_short_answer("那你现在做什么工作呀？", "男的") is False
+
+
+def test_ensure_short_answer_ack_transition_uses_safe_cleanup_without_legacy_age_rewrite():
+    chat_service = _build_chat_service()
+
+    response = chat_service._ensure_short_answer_ack_transition(
+        "挺好的，你是哪年的呀？",
+        user_message="90后",
+    )
+
+    assert "哪一年出生" not in response
+    assert "你是哪年的呀？" in response
+
+
+def test_contact_text_helpers_detect_request_markers_and_dual_ack():
+    assert ChatServiceContactTextService.response_mentions_phone_request("你要是方便的话，也可以留个常用手机号。") is True
+    assert ChatServiceContactTextService.response_mentions_wechat_request("方便的话，留个常用微信也行。") is True
+    assert "电话和微信" in ChatServiceContactTextService.build_dual_contact_ack()
+
+
+def test_contact_followup_response_keeps_collected_contact_context():
+    response = ChatServiceContactTextService.build_contact_followup_response("ask_wechat", "phone")
+    assert "电话" in response and "微信" in response
+
+
+def test_contact_collection_ack_matches_contact_type():
+    assert "微信" in ChatServiceContactTextService.build_contact_collection_ack("wechat")
+    assert "电话" in ChatServiceContactTextService.build_contact_collection_ack("phone")
+
+
+def test_ack_render_helpers_format_preference_occupation_marital_and_age():
+    assert ChatServiceAckRenderService.render_preference_for_ack("想找温柔的女生") == "温柔女生"
+    assert ChatServiceAckRenderService.render_occupation_for_ack("做设计的") == "做设计"
+    assert ChatServiceAckRenderService.render_marital_status_for_ack("未婚") == "未婚"
+    assert ChatServiceAckRenderService.render_age_value("28") == "28岁"
+
+
+def test_contact_validation_text_helpers_cover_retry_and_close_response():
+    retry = ChatServiceContactValidationTextService.build_contact_validation_retry_fallback(
+        field="phone",
+        attempt=1,
+        detail="too_short",
+    )
+    close = ChatServiceContactValidationTextService.build_contact_invalid_input_close_response("wechat")
+    assert "手机号" in retry or "号码" in retry
+    assert "微信" in close
+
+
+def test_response_cleanup_helpers_strip_broken_edges_and_soften_age_question():
+    assert ChatServiceResponseCleanupService.strip_broken_edge_fragments("了。 你是哪年的呀？") == "你是哪年的呀？"
+    softened = ChatServiceResponseCleanupService.soften_awkward_age_question("你是哪年的呀？")
+    assert "哪一年" in softened or "哪年" in softened
+
+
+def test_response_cleanup_helpers_compress_and_normalize_confirmation():
+    compressed = ChatServiceResponseCleanupService.compress_multi_action_response(
+        "你是几几年的呀？ 这样我心里会更有数一点。"
+    )
+    normalized = ChatServiceResponseCleanupService.normalize_redundant_confirmation_phrasing(
+        "我确认一下，那我确认一下，你是男生吗？"
+    )
+    assert compressed.endswith("？")
+    assert "那我确认一下" not in normalized
+
+
+def test_response_cleanup_helpers_detect_truncated_and_delivery_viability():
+    assert ChatServiceResponseCleanupService.looks_like_truncated_response("没事哈，我们平时") is True
+    assert ChatServiceResponseCleanupService.is_delivery_viable("你现在主要在哪个城市生活？") is True
 
 
 def test_collapse_duplicate_ack_segments_prefers_compound_ack_question_segment():
@@ -89,6 +181,16 @@ def test_sanitize_robotic_tone_removes_meta_tone_adjustment_copy():
     assert "联系电话吗" in response or "联系你会更方便" in response
 
 
+def test_sanitize_robotic_tone_removes_contact_material_delivery_promises():
+    response = ChatService._sanitize_robotic_tone(
+        "害我懂的，我平时真不会乱发消息打扰你，就是之后有适配的对象发资料用微信也顺手，你看给个微信行不？"
+    )
+
+    assert "发资料" not in response
+    assert "资料用微信" not in response
+    assert "微信" in response
+
+
 def test_sanitize_robotic_tone_removes_repetitive_location_ack_prefix():
     cleaned = ChatService._sanitize_robotic_tone("在深圳这边是吧。 你平时也是在深圳工作吗，主要做什么呀？")
     assert "在深圳这边是吧" not in cleaned
@@ -118,41 +220,78 @@ def test_sanitize_robotic_tone_removes_new_ack_skeletons_before_followup():
     assert "现在主要做IT这块，是吧" not in cleaned
     assert "月收入" in cleaned
 
+
+def test_downgrade_premature_profile_summary_rewrites_summary_prefix_during_income_followup():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_income_summary")
+    profile.sex = "女"
+    profile.age = 35
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "IT"
+    profile.marital_status = "单身"
+    profile.collection_progress.update(
+        {
+            "sex": True,
+            "age": True,
+            "location": True,
+            "education": True,
+            "occupation": True,
+            "marital_status": True,
+        }
+    )
+
+    cleaned = chat_service._downgrade_premature_profile_summary(
+        "好哦，你的基本情况我大概有数啦，你每个月收入大概在什么区间呀？",
+        profile,
+        collection_result={
+            "all_fields": [
+                {"field": "education", "value": "本科"},
+                {"field": "marital_status", "value": "单身"},
+            ]
+        },
+        ask_field="monthly_income",
+    )
+
+    assert "基本情况我大概有数" not in cleaned
+    assert "每个月收入" in cleaned
+    assert cleaned.startswith(("单身呀。", "本科呀。", "好，这两个点我先接住。"))
+
     cleaned = ChatService._sanitize_robotic_tone("学历这块是本科。 另外我也确认下，你现在是单身吗？")
     assert "学历这块是本科" not in cleaned
     assert "单身吗" in cleaned
 
 
-def test_clean_response_removes_dangling_particles_and_truncated_tail():
+def test_legacy_clean_response_removes_dangling_particles_and_truncated_tail():
     chat_service = _build_chat_service()
-    assert chat_service._clean_response("啦。 你今年多大呀？") == "你今年多大呀？"
-    assert chat_service._clean_response("了。 你是哪年的呀？") == "你是哪年的呀？"
-    assert chat_service._clean_response("你这边更偏向温柔，对吧。 哈哈，原来") == "你这边更偏向温柔，对吧。"
+    assert chat_service._legacy_clean_response("啦。 你今年多大呀？") == "你今年多大呀？"
+    cleaned_age = chat_service._legacy_clean_response("了。 你是哪年的呀？")
+    assert "哪一年" in cleaned_age or "哪年" in cleaned_age
+    assert "？" in cleaned_age or "?" in cleaned_age
+    assert chat_service._legacy_clean_response("你这边更偏向温柔，对吧。 哈哈，原来") == "你这边更偏向温柔，对吧。"
 
 
-def test_clean_response_compresses_low_information_explanatory_tail_after_question():
+def test_legacy_clean_response_compresses_low_information_explanatory_tail_after_question():
     chat_service = _build_chat_service()
 
-    cleaned = chat_service._clean_response("你是几几年的呀？ 这样我心里会更有数一点。")
+    cleaned = chat_service._legacy_clean_response("你是几几年的呀？ 这样我心里会更有数一点。")
 
     assert cleaned == "你是几几年的呀？"
 
 
-def test_clean_response_keeps_single_clear_question_without_explanatory_tail():
+def test_legacy_clean_response_keeps_single_clear_question_without_explanatory_tail():
     chat_service = _build_chat_service()
 
-    cleaned = chat_service._clean_response("你现在主要做哪方面工作呀？")
+    cleaned = chat_service._legacy_clean_response("你现在主要做哪方面工作呀？")
 
     assert cleaned == "你现在主要做哪方面工作呀？"
 
 
 def test_is_delivery_viable_rejects_empty_and_truncated_responses():
-    chat_service = _build_chat_service()
-
-    assert chat_service._is_delivery_viable("") is False
-    assert chat_service._is_delivery_viable("没事哈，我懂你担心隐私问题～要是手机号不方便的话，留个常用微信也行，我们平时") is False
-    assert chat_service._is_delivery_viable("你这边更偏向温柔，对吧。 哈哈，原来") is False
-    assert chat_service._is_delivery_viable("你现在主要在哪个城市生活？") is True
+    assert ChatServiceResponseCleanupService.is_delivery_viable("") is False
+    assert ChatServiceResponseCleanupService.is_delivery_viable("没事哈，我懂你担心隐私问题～要是手机号不方便的话，留个常用微信也行，我们平时") is False
+    assert ChatServiceResponseCleanupService.is_delivery_viable("你这边更偏向温柔，对吧。 哈哈，原来") is False
+    assert ChatServiceResponseCleanupService.is_delivery_viable("你现在主要在哪个城市生活？") is True
 
 
 def test_format_fast_path_ack_skips_sex_confirmation():

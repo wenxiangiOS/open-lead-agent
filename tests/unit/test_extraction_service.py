@@ -44,6 +44,12 @@ def test_normalize_extracted_value_filters_valuenull_variant():
     assert ExtractionService._normalize_extracted_value("教师") == "教师"
 
 
+def test_normalize_occupation_value_strips_particle_and_noisy_prefix():
+    assert ExtractionService._normalize_occupation_value("做美容吧") == "美容"
+    assert ExtractionService._normalize_occupation_value("恶美容吧") == "美容"
+    assert ExtractionService._normalize_occupation_value("it") == "IT"
+
+
 def test_extract_age_label_keeps_post_90s_bucket():
     assert ExtractionService._extract_age_label("90后") == "90后"
     assert ExtractionService._extract_age_label("我是95后") == "95后"
@@ -63,6 +69,11 @@ def test_parse_age_handles_post_90s_bucket():
 def test_parse_age_handles_birth_year_with_suffix():
     service = ExtractionService(_FakeUserService())
     assert service._parse_age("1998年") == 28
+
+
+def test_parse_age_ignores_wechat_like_identifier():
+    service = ExtractionService(_FakeUserService())
+    assert service._parse_age("wx235345345") is None
 
 
 def test_extract_partner_requirement_from_user_message_preserves_negation():
@@ -87,6 +98,20 @@ def test_extract_partner_requirement_from_user_message_keeps_height_and_looks_pr
     )
 
     assert extracted == "温柔，身高不低于160，漂亮点"
+
+
+def test_extract_partner_requirement_from_user_message_excludes_pure_gender_preference():
+    assert ExtractionService._extract_partner_requirement_from_user_message("想找男生") is None
+    assert ExtractionService._extract_partner_requirement_from_user_message("找个男朋友") is None
+    assert ExtractionService._extract_partner_requirement_from_user_message("喜欢女生") is None
+
+
+def test_extract_partner_requirement_from_user_message_keeps_trait_when_gender_preference_is_present():
+    extracted = ExtractionService._extract_partner_requirement_from_user_message(
+        "找个男朋友，成熟稳重一点"
+    )
+
+    assert extracted == "成熟稳重"
 
 
 @pytest.mark.anyio
@@ -122,6 +147,24 @@ async def test_process_extracted_data_allows_affirmative_sex_confirmation_with_l
 
     refreshed = await user_service.get_user_profile("user_affirmative_confirm_sex")
     assert refreshed.sex == "男"
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_allows_soft_guess_gender_confirmation_with_embedded_answer():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_soft_guess_confirm_sex")
+
+    await service.process_extracted_data(
+        "user_soft_guess_confirm_sex",
+        profile,
+        {"sex": "女"},
+        user_message="是的呢女生，89年的",
+        last_response="想找合适的男生对吧，我先记下来啦~你应该是女孩子吧？对啦你具体是80几年出生的呀？",
+    )
+
+    refreshed = await user_service.get_user_profile("user_soft_guess_confirm_sex")
+    assert refreshed.sex == "女"
 
 
 @pytest.mark.anyio
@@ -180,6 +223,42 @@ async def test_process_extracted_data_clears_stale_age_label_when_user_provides_
 
 
 @pytest.mark.anyio
+async def test_process_extracted_data_skips_age_write_for_contact_like_numeric_message():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_contact_like_age_guard")
+
+    result = await service.process_extracted_data(
+        "user_contact_like_age_guard",
+        profile,
+        {"age": "18"},
+        user_message="1879987654",
+    )
+
+    refreshed = await user_service.get_user_profile("user_contact_like_age_guard")
+    assert result["collected"] is False
+    assert refreshed.age is None
+    assert refreshed.age_under_limit is False
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_allows_real_age_when_age_semantics_are_explicit():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_real_age_guard")
+
+    result = await service.process_extracted_data(
+        "user_real_age_guard",
+        profile,
+        {"age": "18"},
+        user_message="我今年18岁",
+    )
+
+    assert result["collected"] is True
+    assert result["under_limit"] is True
+
+
+@pytest.mark.anyio
 async def test_process_extracted_data_does_not_pollute_occupation_with_partner_requirement():
     user_service = _FakeUserService()
     service = ExtractionService(user_service)
@@ -221,6 +300,27 @@ async def test_process_extracted_data_keeps_explicit_occupation_when_same_turn_a
     refreshed = await user_service.get_user_profile("user_occ_and_pref")
     assert refreshed.occupation == "IT"
     assert refreshed.partner_requirement == "温柔"
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_normalizes_noisy_occupation_value_before_save():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_occ_noise")
+
+    await service.process_extracted_data(
+        "user_occ_noise",
+        profile,
+        {
+            "occupation": "恶美容吧",
+            "monthly_income": "7万左右",
+        },
+        user_message="做美容吧，7万左右",
+    )
+
+    refreshed = await user_service.get_user_profile("user_occ_noise")
+    assert refreshed.occupation == "美容"
+    assert refreshed.monthly_income == "7万左右"
 
 
 @pytest.mark.anyio

@@ -297,7 +297,8 @@ class TestProfileCollectionPolicyIntegration:
                 education="本科",
                 occupation="程序员",
                 marital_status="单身",
-                partner_requirement="温柔点的女生",
+                partner_requirement="温柔点",
+                partner_gender_preference="女",
             )
         )
         profile.field_ask_count["monthly_income"] = 1

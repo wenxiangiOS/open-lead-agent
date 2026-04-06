@@ -129,6 +129,23 @@ class TestContactCollectionService:
         profile.phone_collected = True
         assert self.service.get_next_action(profile) == NextAction.ASK_WECHAT
 
+    def test_detect_refusal_does_not_pollute_contact_state_when_only_next_action_is_contact(self):
+        """问学历时的通用拒绝不应仅因潜在 next_action=ask_phone 被算成电话拒绝。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.sex = "女"
+        profile.age = 28
+        profile.education = None
+        profile.occupation = "IT"
+        profile.location = "深圳"
+        profile.monthly_income = "5万"
+        profile.marital_status = "单身"
+
+        result = self.service.detect_refusal("不方便说", profile, "你是什么学历呀？")
+
+        assert result is None
+        assert profile.phone_ask_count == 0
+        assert profile.rejected_phone is False
+
     def test_get_next_action_non_hk_phone_collected_wechat_asked(self):
         """下一步动作 - 非香港用户电话已收集，微信已问过"""
         profile = UserProfile(account_id="test", location="北京")
@@ -223,8 +240,8 @@ class TestContactCollectionService:
         profile.rejected_wechat = True
         instruction, action = self.service.build_instruction(profile)
         assert action == NextAction.END_CONVERSATION
-        # 收尾逻辑统一由 prompts.py 处理，这里返回空指令
-        assert instruction == ""
+        assert "结束对话" in instruction
+        assert "不再索要联系方式" in instruction
 
     def test_build_instruction_ask_phone(self):
         """构建指令 - 询问电话"""
@@ -429,6 +446,19 @@ class TestContactCollectionService:
         assert profile.phone_ask_count == 0
         assert profile.phone_effective_ask_count == 0
         assert self.service.get_next_action(profile) == NextAction.PERSUADE_WECHAT
+
+    def test_clear_pending_request_state_only_rolls_back_latest_phone_attempt(self):
+        """FAQ/切换打断时，只回滚最近一次未兑现的电话追问，不抹掉历史有效询问。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 2
+        profile.phone_effective_ask_count = 2
+        profile.last_contact_request_type = "phone"
+
+        self.service.clear_pending_request_state(profile, "phone")
+
+        assert profile.phone_ask_count == 1
+        assert profile.phone_effective_ask_count == 1
+        assert profile.last_contact_request_type is None
 
     def test_is_contact_complete_false_after_wechat_collected_with_only_one_phone_effective_ask(self):
         """先收微信后第一次拒电话时，电话流程未完成，不应误判联系方式已完成。"""

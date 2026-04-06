@@ -225,12 +225,6 @@ class AskTrackingService:
                 user_profile.mark_recent_asked_field(field, max_history=max_history)
                 recorded_primary = True
 
-            # 中等字段问过一次后转为被动提取，避免像表单机一样反复追问。
-            if field in self.MEDIUM_FIELDS:
-                user_profile.close_active_ask(field)
-                logger.debug(f"[智能追问] 中等字段 {field} 已关闭主动追问，后续仅被动提取")
-                continue
-
             if current_count >= 2 and not skip_guard_enabled:
                 user_profile.skipped_fields[field] = True
                 logger.debug(f"[智能追问] 字段 {field} 已问2次未回答，自动标记为跳过")

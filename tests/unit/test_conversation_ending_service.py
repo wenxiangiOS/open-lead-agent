@@ -6,7 +6,7 @@ ConversationEndingService 单元测试
 
 import pytest
 from pathlib import Path
-from src.services.conversation.conversation_ending_service import ConversationEndingService
+from src.modules.conversation.domain.conversation_ending_service import ConversationEndingService
 from src.models.user_profile import UserProfile
 
 
@@ -50,7 +50,7 @@ class TestConversationEndingService:
     def test_check_ending_spam_keywords(self):
         """检测骚扰/广告场景 - 关键词"""
         profile = UserProfile(account_id="test")
-        result = self.service.check_ending_reason("加我微信聊聊", profile)
+        result = self.service.check_ending_reason("加我v聊聊", profile)
         assert result == "spam_user"
 
     def test_check_ending_proxy_keywords(self):
@@ -182,6 +182,27 @@ class TestConversationEndingService:
                 "contact": True,
             }
         )
+
+        result = self.service.check_manual_scenario('normal_complete', profile)
+        assert result is False
+
+    def test_check_manual_scenario_normal_complete_requires_profile_fields_collected_or_ask_exhausted(self):
+        """拿到双联系方式后，核心/中等字段未收完且未问尽，仍不能 normal_complete。"""
+        profile = UserProfile(account_id="test")
+        profile.phone = "13812345678"
+        profile.phone_collected = True
+        profile.wechat = "wx12345678"
+        profile.wechat_collected = True
+        profile.collection_progress["contact"] = True
+        profile.sex = "男"
+        profile.collection_progress["sex"] = True
+        profile.field_ask_count["age"] = 1
+        profile.field_ask_count["education"] = 1
+        profile.field_ask_count["occupation"] = 1
+        profile.field_ask_count["location"] = 1
+        profile.field_ask_count["marital_status"] = 0
+        profile.field_ask_count["partner_requirement"] = 0
+        profile.field_ask_count["monthly_income"] = 0
 
         result = self.service.check_manual_scenario('normal_complete', profile)
         assert result is False

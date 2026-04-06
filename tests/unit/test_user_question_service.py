@@ -103,3 +103,33 @@ def test_detect_quick_faq_intent_timeline_natural_phrase_without_question_cue():
     intent = service.detect_quick_faq_intent("你们多久会联系我呀")
 
     assert intent == "timeline"
+
+
+def test_detect_quick_faq_intent_info_collection_why_direct_phrase():
+    service = UserQuestionService()
+    intent = service.detect_quick_faq_intent("为什么要记下我的信息")
+
+    assert intent == "info_collection_why"
+
+
+def test_detect_quick_faq_intent_info_collection_why_semantic_combination():
+    service = UserQuestionService()
+    intent = service.detect_quick_faq_intent("你们了解我这些情况干嘛")
+
+    assert intent == "info_collection_why"
+
+
+def test_detect_quick_faq_intent_info_collection_why_for_overly_detailed_questioning():
+    service = UserQuestionService()
+    intent = service.detect_quick_faq_intent("为啥要问这么清晰呢")
+
+    assert intent == "info_collection_why"
+
+
+def test_get_quick_faq_response_info_collection_why_keeps_explanatory_tone():
+    service = UserQuestionService()
+    response = service.get_quick_faq_response("收集这些信息干嘛")
+
+    assert response is not None
+    assert any(marker in response for marker in ["资料", "情况", "沟通", "理解"])
+    assert "登记" not in response or "乱登记" in response

@@ -2,7 +2,7 @@
 
 from src.models.user_profile import UserProfile
 from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingResult
-from src.services.collection.profile_collection_policy import ProfileCollectionPolicy
+from src.modules.profile_collection.domain.profile_collection_policy import ProfileCollectionPolicy
 
 
 class TestProfileCollectionPolicy:
@@ -173,7 +173,7 @@ class TestProfileCollectionPolicy:
         if decision.main_target == "occupation":
             assert decision.side_target in {"monthly_income", "marital_status", "partner_requirement"}
 
-    def test_education_does_not_side_ask_partner_requirement_even_when_allowed(self):
+    def test_education_prefers_marital_status_side_target_even_when_partner_requirement_allowed(self):
         profile = UserProfile(account_id="u_education_no_partner_side")
         profile.sex = "男"
         profile.age = 36
@@ -190,7 +190,44 @@ class TestProfileCollectionPolicy:
         )
 
         assert decision.main_target == "education"
-        assert decision.side_target == "partner_requirement"
+        assert decision.side_target == "marital_status"
+
+    def test_monthly_income_can_attach_to_other_core_field_after_occupation_collected(self):
+        profile = UserProfile(account_id="u_income_dynamic_host")
+        profile.sex = "女"
+        profile.age = 35
+        profile.location = "深圳"
+        profile.occupation = "IT"
+        for field in ["sex", "age", "location", "occupation"]:
+            profile.collection_progress[field] = True
+
+        side_target = self.policy.get_side_target(
+            profile,
+            main_target="education",
+            user_message="深圳，做IT",
+            message_count=3,
+        )
+
+        assert side_target in {"monthly_income", "marital_status"}
+
+    def test_monthly_income_falls_back_to_other_core_host_when_partner_requirement_unavailable(self):
+        profile = UserProfile(account_id="u_income_location_host")
+        profile.sex = "女"
+        profile.age = 33
+        profile.education = "本科"
+        profile.occupation = "运营"
+        for field in ["sex", "age", "education", "occupation"]:
+            profile.collection_progress[field] = True
+        profile.field_ask_count["partner_requirement"] = 1
+
+        side_target = self.policy.get_side_target(
+            profile,
+            main_target="location",
+            user_message="目前在深圳",
+            message_count=4,
+        )
+
+        assert side_target == "monthly_income"
 
     def test_latest_location_cue_on_followup_prefers_occupation_over_global_order(self):
         profile = UserProfile(account_id="u_latest_location")
@@ -271,9 +308,11 @@ class TestProfileCollectionPolicy:
         profile.occupation = "IT"
         profile.marital_status = "单身"
         profile.monthly_income = "7万"
-        profile.partner_requirement = "找男朋友"
+        profile.partner_requirement = "成熟稳重"
+        profile.partner_gender_preference = "男"
         for field in ("sex", "age", "location", "education", "occupation", "marital_status", "monthly_income", "partner_requirement"):
             profile.collection_progress[field] = True
+        profile.collection_progress["partner_gender_preference"] = True
         profile.phone_ask_count = 1
 
         understanding = TurnUnderstandingResult(

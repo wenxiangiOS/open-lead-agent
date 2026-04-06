@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.models.user_profile import UserProfile
-from src.services.collection.ask_tracking_service import AskTrackingService
+from src.modules.profile_collection.domain.ask_tracking_service import AskTrackingService
 
 
 @pytest.mark.anyio

@@ -21,7 +21,7 @@ from src.services.prompts import (
 )
 from src.services.data.user_service import UserService
 from src.services.collection.contact_collection_service import ContactCollectionService
-from src.services.collection.profile_collection_policy import ProfileCollectionPolicy
+from src.modules.profile_collection.domain.profile_collection_policy import ProfileCollectionPolicy
 from src.config.settings import get_all_field_names
 
 logger = logging.getLogger(__name__)
@@ -314,7 +314,7 @@ class DialogueManager:
 - 先完整回答用户当前的问题
 - 不要追问资料
 - 不要索要电话或微信
-- 回答后最多轻轻确认一句“如果你还有顾虑也可以继续问我”
+- 回答后不要固定重复同一句收尾，只有在自然顺口时才轻轻补一句继续交流的话
 - 只有用户疑虑放下后，下一轮再回到资料收集
 """
             logger.info("[答疑优先] 已压制联系方式和字段追问提示")

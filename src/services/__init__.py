@@ -15,7 +15,6 @@ __all__ = [
     "ValidationService",
     "DialogueManager",
     "RefusalService",
-    "FieldSkipService",
 ]
 
 
@@ -44,7 +43,4 @@ def __getattr__(name: str):
     if name == "RefusalService":
         from src.services.refusal_service import RefusalService
         return RefusalService
-    if name == "FieldSkipService":
-        from src.services.field_skip_service import FieldSkipService
-        return FieldSkipService
     raise AttributeError(name)

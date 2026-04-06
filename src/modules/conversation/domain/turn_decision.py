@@ -30,6 +30,26 @@ class TurnDecision:
     context_ack_required: bool = False
     context_ack_type: str | None = None
     context_ack_payload: dict[str, Any] = field(default_factory=dict)
+    context_ack_occupation: str | None = None
+    context_ack_location: str | None = None
+    context_ack_preference: str | None = None
+    context_ack_field_ack: str | None = None
+    soft_retry_field: str | None = None
+
+    def get_context_ack_occupation(self) -> str:
+        return str(self.context_ack_occupation or self.context_ack_payload.get("occupation") or "").strip()
+
+    def get_context_ack_location(self) -> str:
+        return str(self.context_ack_location or self.context_ack_payload.get("location") or "").strip()
+
+    def get_context_ack_preference(self) -> str:
+        return str(self.context_ack_preference or self.context_ack_payload.get("preference") or "").strip()
+
+    def get_context_ack_field_ack(self) -> str:
+        return str(self.context_ack_field_ack or self.context_ack_payload.get("field_ack") or "").strip()
+
+    def get_soft_retry_field(self) -> str:
+        return str(self.soft_retry_field or self.context_ack_payload.get("field") or "").strip()
 
     def to_log_dict(self) -> dict[str, Any]:
         return {
@@ -54,4 +74,9 @@ class TurnDecision:
             "context_ack_required": self.context_ack_required,
             "context_ack_type": self.context_ack_type,
             "context_ack_payload": self.context_ack_payload,
+            "context_ack_occupation": self.context_ack_occupation,
+            "context_ack_location": self.context_ack_location,
+            "context_ack_preference": self.context_ack_preference,
+            "context_ack_field_ack": self.context_ack_field_ack,
+            "soft_retry_field": self.soft_retry_field,
         }

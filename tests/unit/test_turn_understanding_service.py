@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from types import SimpleNamespace
 
+from src.models.user_profile import UserProfile
 from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingInput
 from src.modules.conversation.domain.turn_understanding_service import TurnUnderstandingService
 
@@ -10,7 +11,13 @@ from src.modules.conversation.domain.turn_understanding_service import TurnUnder
 class _StubChatService:
     def __init__(self):
         self.user_question_service = SimpleNamespace(
-            detect_quick_faq_intent=lambda message: "fee" if "收费" in str(message or "") else None
+            detect_quick_faq_intent=lambda message: (
+                "fee"
+                if "收费" in str(message or "")
+                else "info_collection_why"
+                if "记下我的信息" in str(message or "")
+                else None
+            )
         )
         self.expectation_service = SimpleNamespace(
             is_matching_timeline_question=lambda message: "多久" in str(message or "")
@@ -31,9 +38,11 @@ class _StubChatService:
             extracted["location"] = "广州"
         if "深圳" in text:
             extracted["location"] = "深圳"
-        if "本科" in text:
-            extracted["education"] = "本科"
-            extracted.setdefault("partner_requirement", "本科")
+        for edu in ("博士", "硕士", "研究生", "本科", "大专", "中专", "高中"):
+            if edu in text:
+                extracted["education"] = edu
+                extracted.setdefault("partner_requirement", edu)
+                break
         if "IT" in text or "it" in text:
             extracted["occupation"] = "IT"
         age_match = re.search(r"(\d{2})", text)
@@ -129,15 +138,23 @@ class _StubChatService:
         return str(user_message or "").strip() in {"好", "知道了"} and "收费" in str(last_response or "")
 
 
-def _make_input(message: str, *, last_response: str = "", message_count: int = 0, in_contact_flow: bool = False):
+def _make_input(
+    message: str,
+    *,
+    last_response: str = "",
+    message_count: int = 0,
+    in_contact_flow: bool = False,
+    user_profile=None,
+    pending_confirmation_field=None,
+):
     return TurnUnderstandingInput(
         user_message=message,
         last_response=last_response,
         message_count=message_count,
-        user_profile=SimpleNamespace(),
+        user_profile=user_profile or SimpleNamespace(),
         conversation_context={"recent_responses": [last_response] if last_response else []},
         in_contact_flow=in_contact_flow,
-        pending_confirmation_field=None,
+        pending_confirmation_field=pending_confirmation_field,
     )
 
 
@@ -166,6 +183,20 @@ def test_contact_preference_switch_is_contact_answer():
     assert result.subtype == "contact_preference_switch"
 
 
+def test_contact_context_reply_maps_wechat_to_phone_when_user_says_same_number():
+    service = TurnUnderstandingService(_StubChatService())
+    profile = UserProfile(account_id="u_same_as_phone")
+    profile.phone = "17688987659"
+    profile.phone_collected = True
+    profile.pending_contact_field = "wechat"
+    profile.last_contact_request_type = "wechat"
+
+    result = service.analyze(_make_input("就是电话", in_contact_flow=True, user_profile=profile))
+
+    assert result.primary_turn_type == "contact_answer"
+    assert result.resolved_slots["wechat"] == "17688987659"
+
+
 def test_education_like_preference_is_blocked():
     service = TurnUnderstandingService(_StubChatService())
     result = service.analyze(_make_input("本科"))
@@ -188,6 +219,14 @@ def test_turn_understanding_extracts_age_from_natural_self_report():
     assert result.resolved_slots["age"] == "36"
 
 
+def test_turn_understanding_opening_matchmaking_with_explicit_age_keeps_actual_age():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(_make_input("我想找对象，我今年26岁", message_count=1))
+    assert result.primary_turn_type == "opening"
+    assert result.subtype == "matchmaking_intent"
+    assert result.resolved_slots["age"] == "26"
+
+
 def test_turn_understanding_extracts_married_status_from_natural_phrase():
     service = TurnUnderstandingService(_StubChatService())
     result = service.analyze(_make_input("我已经结婚了"))
@@ -199,7 +238,8 @@ def test_turn_understanding_classifies_opening_service_confirmation():
     service = TurnUnderstandingService(_StubChatService())
     result = service.analyze(_make_input("你们帮帮忙介绍对象吗？"))
     assert result.primary_turn_type == "opening"
-    assert result.subtype == "service_confirmation_opening"
+    assert result.subtype == "matchmaking_intent"
+    assert "service_confirmation_like" in result.secondary_signals
 
 
 def test_turn_understanding_classifies_low_pressure_opening_after_probe():
@@ -225,6 +265,76 @@ def test_turn_understanding_marks_post_answer_reentry_signal():
         )
     )
     assert result.post_answer_reentry is True
+
+
+def test_turn_understanding_marks_post_answer_reentry_for_info_collection_explanation():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input(
+            "好的",
+            last_response="这个我先说清楚，主要是怕后面把你的情况和择偶需求理解偏了，不会拿去乱登记乱用的。",
+            message_count=4,
+        )
+    )
+    assert result.post_answer_reentry is True
+
+
+def test_turn_understanding_marks_post_answer_reentry_for_precise_matching_explanation():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input(
+            "好的",
+            last_response="我知道你会在意问得太细的问题，主要是为了后续给你匹配对象的时候更精准，不会给你推不符合你要求的男生哦。",
+            message_count=4,
+        )
+    )
+    assert result.post_answer_reentry is True
+
+
+def test_turn_understanding_detects_contextual_info_collection_concern():
+    service = TurnUnderstandingService(_StubChatService())
+    profile = UserProfile(account_id="u_ctx_concern")
+    profile.last_asked_field = "monthly_income"
+
+    result = service.analyze(
+        _make_input(
+            "这些信息干嘛",
+            last_response="你方便说下每个月收入大概在什么区间吗？",
+            message_count=4,
+            user_profile=profile,
+        )
+    )
+
+    assert result.primary_turn_type == "faq_concern"
+    assert result.subtype == "info_collection_why"
+
+
+def test_turn_understanding_exposes_looks_like_greeting_helper():
+    service = TurnUnderstandingService(_StubChatService())
+    assert service._looks_like_greeting("你好呀") is True  # noqa: SLF001
+
+
+def test_turn_understanding_result_to_dict_includes_soft_retry_field():
+    from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingResult
+
+    result = TurnUnderstandingResult(
+        primary_turn_type="invalid_input",
+        subtype="soft_refusal_current_field",
+        context_ack_type="field_soft_refusal_retry",
+        soft_retry_field="occupation",
+    )
+
+    payload = result.to_dict()
+
+    assert payload["soft_retry_field"] == "occupation"
+
+
+def test_turn_understanding_exposes_opening_field_ack_separately_from_payload():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(_make_input("你好，我在深圳"))
+
+    assert result.context_ack_type == "opening_profile_ack"
+    assert result.context_ack_field_ack == "你现在主要在深圳。"
 
 
 def test_turn_understanding_detects_asked_field_prefers_last_question_over_ack_text():
@@ -270,14 +380,14 @@ def test_turn_understanding_detects_asked_field_prefers_sex_over_partner_require
 def test_turn_understanding_builds_opening_profile_ack():
     service = TurnUnderstandingService(_StubChatService())
     assert service._build_opening_profile_ack("我在深圳") == "你现在主要在深圳。"  # noqa: SLF001
-    assert service._build_opening_profile_ack("本科") == "学历是本科。"  # noqa: SLF001
+    assert service._build_opening_profile_ack("本科") == "本科是吧。"  # noqa: SLF001
 
 
 def test_turn_understanding_builds_lightweight_field_ack_for_location():
     service = TurnUnderstandingService(_StubChatService())
     response = service._build_lightweight_field_ack("深圳", None)  # noqa: SLF001
     assert "深圳" in response
-    assert any(token in response for token in ["知道了", "是吧", "这边", "有数了", "现在主要在"])
+    assert any(token in response for token in ["知道了", "是吧", "这边", "有数了", "现在主要在", "你现在在"])
 
 
 def test_turn_understanding_extracts_compound_sex_and_location_reply():
@@ -316,6 +426,39 @@ def test_turn_understanding_extracts_occupation_and_preference_from_compound_rep
     assert extracted["partner_requirement"] == "温柔"
 
 
+def test_turn_understanding_normalizes_beauty_occupation_with_trailing_particle():
+    service = TurnUnderstandingService(_StubChatService())
+
+    extracted = service._extract_deterministic_profile_fields("做美容吧，7万左右")  # noqa: SLF001
+
+    assert extracted["occupation"] == "美容"
+    assert extracted["monthly_income"] == "7万左右"
+
+
+def test_turn_understanding_normalizes_noisy_beauty_occupation_prefix():
+    service = TurnUnderstandingService(_StubChatService())
+
+    extracted = service._extract_deterministic_profile_fields("做恶美容吧，7万左右")  # noqa: SLF001
+
+    assert extracted["occupation"] == "美容"
+    assert extracted["monthly_income"] == "7万左右"
+
+
+def test_turn_understanding_extracts_generic_location_short_reply():
+    service = TurnUnderstandingService(_StubChatService())
+
+    extracted = service._extract_deterministic_profile_fields("在南京呢")  # noqa: SLF001
+
+    assert extracted["location"] == "南京"
+
+
+def test_turn_understanding_extracts_non_whitelist_location_terms():
+    service = TurnUnderstandingService(_StubChatService())
+
+    assert service._extract_deterministic_profile_fields("在台湾呢")["location"] == "台湾"  # noqa: SLF001
+    assert service._extract_deterministic_profile_fields("在老家呢")["location"] == "老家"  # noqa: SLF001
+
+
 def test_turn_understanding_does_not_treat_income_token_after_education_as_occupation():
     service = TurnUnderstandingService(_StubChatService())
 
@@ -347,6 +490,109 @@ def test_turn_understanding_preserves_wx_prefixed_wechat_id_candidate():
     candidate = service._extract_contact_candidate("wx23234242")  # noqa: SLF001
     assert candidate["type"] == "wechat"
     assert candidate["value"] == "wx23234242"
+
+
+def test_turn_understanding_does_not_extract_age_from_wechat_id_message():
+    service = TurnUnderstandingService(_StubChatService())
+
+    extracted = service._extract_deterministic_profile_fields("wx235345345")  # noqa: SLF001
+
+    assert "age" not in extracted
+    assert "age_label" not in extracted
+
+
+def test_turn_understanding_extracts_sex_and_occupation_from_confirmation_context_compound_reply():
+    service = TurnUnderstandingService(_StubChatService())
+
+    result = service.analyze(
+        _make_input(
+            "是女生，做it吧",
+            last_response="想找男生的话我顺嘴确认下，你是女生对吧？在深圳发展的话，你目前是做什么工作的呀？",
+            message_count=1,
+        )
+    )
+
+    assert result.primary_turn_type == "profile_answer"
+    assert result.subtype == "multi_slot_compound"
+    assert result.resolved_slots["sex"] == "女"
+    assert result.resolved_slots["occupation"] == "IT"
+
+
+def test_turn_understanding_extracts_embedded_occupation_after_location_phrase():
+    service = TurnUnderstandingService(_StubChatService())
+
+    result = service.analyze(
+        _make_input(
+            "是女生呢，目前在深圳做it",
+            last_response="你是女生对吧？在深圳发展的话，你目前是做什么工作的呀？",
+            message_count=1,
+        )
+    )
+
+    assert result.resolved_slots["sex"] == "女"
+    assert result.resolved_slots["location"] == "深圳"
+    assert result.resolved_slots["occupation"] == "IT"
+
+
+def test_turn_understanding_contact_flow_numeric_candidate_does_not_pollute_age():
+    service = TurnUnderstandingService(_StubChatService())
+
+    result = service.analyze(
+        _make_input(
+            "1879987654",
+            last_response="在深圳做IT能有这个收入挺不错的呀，你方便给下你的电话号码不？",
+            message_count=5,
+            in_contact_flow=True,
+        )
+    )
+
+    assert result.primary_turn_type == "contact_answer"
+    assert "age" not in result.resolved_slots
+    assert "age_label" not in result.resolved_slots
+
+
+def test_turn_understanding_blocks_marital_status_like_occupation_in_compound_reply():
+    service = TurnUnderstandingService(_StubChatService())
+
+    result = service.analyze(_make_input("本科，单身呢"))
+
+    assert result.resolved_slots["education"] == "本科"
+    assert result.resolved_slots["marital_status"] == "单身"
+    assert "occupation" not in result.resolved_slots
+    assert result.blocked_slots["occupation"].reason == "looks_like_marital_status_not_occupation"
+
+
+def test_turn_understanding_explicit_correction_overrides_contact_context():
+    service = TurnUnderstandingService(_StubChatService())
+
+    result = service.analyze(
+        _make_input(
+            "不是本科，是大专",
+            last_response="在深圳做IT能有这个收入挺不错的呀，你方便给下你的电话号码不？",
+            message_count=5,
+            in_contact_flow=True,
+            user_profile=SimpleNamespace(education="本科"),
+        )
+    )
+
+    assert result.primary_turn_type == "correction"
+    assert result.resolved_slots["education"] == "大专"
+
+
+def test_turn_understanding_blocks_partner_gender_preference_in_sex_confirmation_context():
+    service = TurnUnderstandingService(_StubChatService())
+
+    result = service.analyze(
+        _make_input(
+            "是女生",
+            last_response="你是女生对吧？",
+            message_count=2,
+            pending_confirmation_field="sex",
+        )
+    )
+
+    assert result.resolved_slots["sex"] == "女"
+    assert "partner_gender_preference" not in result.resolved_slots
 
 
 def test_turn_understanding_extracts_simple_monthly_income_variants():
@@ -382,12 +628,12 @@ def test_turn_understanding_extracts_simple_partner_requirement_from_polluted_sh
 def test_turn_understanding_guard_prioritizes_sex_answer_in_sex_question_context():
     service = TurnUnderstandingService(_StubChatService())
     guarded = service._apply_extraction_guards(  # noqa: SLF001
-        {"partner_requirement": "找男性"},
+        {"partner_gender_preference": "男"},
         "你们男的",
         last_response="你是男生还是女生呀？",
     )
     assert guarded.get("sex") == "男"
-    assert "partner_requirement" not in guarded
+    assert "partner_gender_preference" not in guarded
 
 
 def test_turn_understanding_guard_allows_composite_sex_short_answer_in_context():
@@ -418,6 +664,179 @@ def test_turn_understanding_guard_allows_affirmative_confirmation_to_confirm_sex
         last_response="我再确认下，你这边是男生对吧？",
     )
     assert guarded["sex"] == "男"
+
+
+def test_turn_understanding_guard_treats_soft_gender_guess_as_sex_confirmation_context():
+    service = TurnUnderstandingService(_StubChatService())
+    guarded = service._apply_extraction_guards(  # noqa: SLF001
+        {"age": "37", "age_label": "89年", "partner_gender_preference": "女"},
+        "是的呢女生，89年的",
+        last_response="想找合适的男生对吧，我先记下来啦~你应该是女孩子吧？对啦你具体是80几年出生的呀？",
+    )
+    assert guarded["sex"] == "女"
+    assert guarded["age_label"] == "89年"
+    assert "partner_gender_preference" not in guarded
+
+
+def test_turn_understanding_extract_partner_gender_preference_ignores_self_sex_statement():
+    service = TurnUnderstandingService(_StubChatService())
+    assert service._extract_partner_gender_preference("是的呢女生，89年的") is None  # noqa: SLF001
+    assert service._extract_partner_gender_preference("前面不是说了是女生吗？") is None  # noqa: SLF001
+    assert service._extract_partner_gender_preference("找男朋友，我80后呢") == "男"  # noqa: SLF001
+
+
+def test_turn_understanding_guard_resolves_birth_year_short_answer_in_context():
+    service = TurnUnderstandingService(_StubChatService())
+    guarded = service._apply_extraction_guards(  # noqa: SLF001
+        {},
+        "98的",
+        last_response="90后跨度还挺大的呢，具体是九几年出生的呀？",
+    )
+    assert guarded["age_label"] == "98年"
+    assert guarded["age"].isdigit()
+
+
+def test_turn_understanding_guard_resolves_birth_year_and_marital_status_compound_answer_in_context():
+    service = TurnUnderstandingService(_StubChatService())
+    guarded = service._apply_extraction_guards(  # noqa: SLF001
+        {"marital_status": "离异"},
+        "98的，离异",
+        last_response="哈哈我知道是90后，具体是90几年出生的呀？",
+    )
+    assert guarded["age_label"] == "98年"
+    assert guarded["marital_status"] == "离异"
+
+
+def test_turn_understanding_guard_skips_birth_year_extraction_when_user_refuses_specific_year():
+    service = TurnUnderstandingService(_StubChatService())
+    guarded = service._apply_extraction_guards(  # noqa: SLF001
+        {"age": "90", "age_label": "90年"},
+        "不方便说",
+        last_response="好哒，那你是几几年的呀？",
+    )
+    assert "age" not in guarded
+    assert "age_label" not in guarded
+
+
+def test_turn_understanding_analyze_treats_birth_year_refusal_as_soft_refusal_not_age_answer():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input(
+            "不方便说",
+            last_response="好哒，那你是几几年的呀？",
+            message_count=2,
+        )
+    )
+    assert result.primary_turn_type == "invalid_input"
+    assert result.subtype == "soft_refusal_current_field"
+    assert "age" not in result.resolved_slots
+    assert "age_label" not in result.resolved_slots
+    assert result.soft_retry_field == "age"
+
+
+def test_turn_understanding_analyze_treats_dual_field_refusal_as_core_soft_refusal_without_pollution():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input(
+            "不方便说",
+            last_response="你最高学历是什么呀，现在是单身状态不？",
+            message_count=5,
+        )
+    )
+    assert result.primary_turn_type == "invalid_input"
+    assert result.subtype == "soft_refusal_current_field"
+    assert result.soft_retry_field == "education"
+    assert "education" not in result.resolved_slots
+    assert "marital_status" not in result.resolved_slots
+
+
+def test_turn_understanding_prefers_last_asked_field_for_core_soft_refusal():
+    service = TurnUnderstandingService(_StubChatService())
+    profile = SimpleNamespace(last_asked_field="education")
+    result = service.analyze(
+        TurnUnderstandingInput(
+            user_message="不方便说",
+            last_response="做IT还挺厉害的，这个收入很不错呀，你是什么学历呀？",
+            message_count=6,
+            user_profile=profile,
+            conversation_context={},
+            in_contact_flow=False,
+            pending_confirmation_field=None,
+        )
+    )
+    assert result.primary_turn_type == "invalid_input"
+    assert result.subtype == "soft_refusal_current_field"
+    assert result.soft_retry_field == "education"
+
+
+def test_turn_understanding_uses_recent_response_fallback_for_location_soft_refusal():
+    service = TurnUnderstandingService(_StubChatService())
+    profile = SimpleNamespace(last_asked_field=None)
+    result = service.analyze(
+        TurnUnderstandingInput(
+            user_message="不方便说",
+            last_response="",
+            message_count=7,
+            user_profile=profile,
+            conversation_context={"recent_responses": ["好的，那你现在常住在哪座城市呀？"]},
+            in_contact_flow=False,
+            pending_confirmation_field=None,
+        )
+    )
+    assert result.primary_turn_type == "invalid_input"
+    assert result.subtype == "soft_refusal_current_field"
+    assert result.soft_retry_field == "location"
+
+
+def test_turn_understanding_uses_recent_response_fallback_for_monthly_income_soft_refusal():
+    service = TurnUnderstandingService(_StubChatService())
+    profile = SimpleNamespace(last_asked_field=None)
+    result = service.analyze(
+        TurnUnderstandingInput(
+            user_message="不方便说",
+            last_response="",
+            message_count=7,
+            user_profile=profile,
+            conversation_context={"recent_responses": ["你现在月收入大概在什么区间呢？"]},
+            in_contact_flow=False,
+            pending_confirmation_field=None,
+        )
+    )
+    assert result.primary_turn_type == "invalid_input"
+    assert result.subtype == "soft_refusal_current_field"
+    assert result.soft_retry_field == "monthly_income"
+
+
+def test_turn_understanding_uses_recent_response_fallback_for_partner_requirement_soft_refusal():
+    service = TurnUnderstandingService(_StubChatService())
+    profile = SimpleNamespace(last_asked_field=None)
+    result = service.analyze(
+        TurnUnderstandingInput(
+            user_message="不方便说",
+            last_response="",
+            message_count=7,
+            user_profile=profile,
+            conversation_context={"recent_responses": ["那你找对象的时候更看重对方哪一点呀？"]},
+            in_contact_flow=False,
+            pending_confirmation_field=None,
+        )
+    )
+    assert result.primary_turn_type == "invalid_input"
+    assert result.subtype == "soft_refusal_current_field"
+    assert result.soft_retry_field == "partner_requirement"
+
+
+def test_user_profile_serialization_preserves_last_asked_and_pending_retry_state():
+    profile = UserProfile(account_id="u_persist_last_asked")
+    profile.set_last_asked_field("education", 6, side_field="marital_status")
+    profile.set_pending_retry_field("education")
+
+    restored = UserProfile.from_dict(profile.to_dict())
+
+    assert restored.last_asked_field == "education"
+    assert restored.last_asked_side_field == "marital_status"
+    assert restored.last_asked_turn_index == 6
+    assert restored.pending_retry_field == "education"
 
 
 def test_turn_understanding_guard_binds_affirmative_prefix_to_confirmed_sex_with_marital_answer():

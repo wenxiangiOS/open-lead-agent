@@ -306,7 +306,7 @@ class InputFallbackService:
         call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
         return random.choice([
             f"感觉{call_name}现在可能不太想聊这个。等你想聊的时候我们再继续。",
-            f"{call_name}你现在要是不想展开也没关系，我们先停一下。",
+            f"{call_name}你现在要是不想展开也没关系，我们先停一下，想聊了再继续。",
             f"我感觉{call_name}现在可能不太方便，那我们晚点再聊也行。",
         ])
 
@@ -314,9 +314,9 @@ class InputFallbackService:
         sex = user_profile.sex if user_profile else None
         call_name = "小哥哥" if sex == "男" else "小姐姐" if sex == "女" else "亲"
         return random.choice([
-            f"好，{call_name}，那我们今天就先聊到这儿。",
-            f"感觉{call_name}今天不太想继续，那我就先收住了。",
-            f"行，{call_name}，那我们先这样，之后想继续再聊。",
+            f"好，{call_name}，那我们今天就先聊到这儿，之后想继续随时找我。",
+            f"感觉{call_name}今天不太想继续，那我就先收住了，不打扰你。",
+            f"行，{call_name}，那我们先这样，之后想继续随时找我再聊也行。",
         ])
 
     def get_confirm_word_response(self, user_profile: UserProfile, confirm_count: int) -> Optional[str]:

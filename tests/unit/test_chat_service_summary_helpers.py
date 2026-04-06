@@ -1,5 +1,6 @@
 from src.models.user_profile import UserProfile
 from src.services.core.chat_service import ChatService
+from src.services.core.chat_service_summary_helper_service import ChatServiceSummaryHelperService
 
 
 class _FakeAIService:
@@ -57,13 +58,12 @@ def test_should_not_emit_summary_too_frequently():
 
 
 def test_build_summary_line_includes_key_fields():
-    chat_service = _build_chat_service()
     profile = UserProfile(account_id="test_summary_build")
     profile.location = "深圳"
     profile.age = "28"
     profile.partner_requirement = "同城"
 
-    summary = chat_service._build_profile_summary_line(profile)
+    summary = ChatServiceSummaryHelperService.build_profile_summary_line(profile)
     assert summary
     assert "深圳" in summary
     assert "28" in summary or "岁" in summary
@@ -71,21 +71,19 @@ def test_build_summary_line_includes_key_fields():
 
 
 def test_build_summary_line_returns_empty_for_empty_profile():
-    chat_service = _build_chat_service()
     profile = UserProfile(account_id="test_summary_empty")
 
-    summary = chat_service._build_profile_summary_line(profile)
+    summary = ChatServiceSummaryHelperService.build_profile_summary_line(profile)
     assert summary == ""
 
 
 def test_summary_format_is_natural():
-    chat_service = _build_chat_service()
     profile = UserProfile(account_id="test_summary_format")
     profile.location = "深圳"
     profile.age = "90后"
     profile.partner_requirement = "同城，90后"
 
-    summary = chat_service._build_profile_summary_line(profile)
+    summary = ChatServiceSummaryHelperService.build_profile_summary_line(profile)
     assert summary.startswith("你")
     assert summary.endswith("。")
     assert "是吧" not in summary

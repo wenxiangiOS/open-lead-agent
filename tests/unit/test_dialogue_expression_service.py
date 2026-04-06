@@ -39,7 +39,7 @@ def test_render_field_question_for_contact_is_short_and_natural():
     response = service.render_field_question("contact", profile=profile, stage="completing")
 
     assert "手机号" in response
-    assert any(token in response for token in ["继续联系上你", "联系你会顺一点", "再跟你接着聊"])
+    assert any(token in response for token in ["继续联系上你", "联系你会顺一点", "再跟你接着聊", "方便联系到你"])
     assert "资料差不多" not in response
     assert "及时联系" not in response
 
@@ -165,7 +165,8 @@ def test_render_field_question_for_sex_uses_soft_confirmation_when_preference_st
 def test_render_field_question_for_sex_uses_soft_confirmation_when_preference_explicitly_targets_city_female():
     service = DialogueExpressionService()
     profile = UserProfile(account_id="u_expr_sex_city_female")
-    profile.partner_requirement = "深圳的女生"
+    profile.partner_requirement = "深圳，同城优先"
+    profile.partner_gender_preference = "女"
 
     response = service.render_field_question("sex", profile=profile, stage="trust", user_message="做it，单身")
 
@@ -240,9 +241,9 @@ def test_render_field_question_for_marital_status_only_confirms_single_status():
 
     response = service.render_field_question("marital_status")
 
-    assert "单身状态" in response
-    assert "未婚" not in response
-    assert "离异" not in response
+    assert "婚况" in response or "感情状态" in response
+    assert "单身状态" not in response
+    assert "单身吗" not in response
 
 
 def test_render_field_question_for_marital_status_bridge_avoids_awkward_status_inquire_copy():
@@ -254,7 +255,8 @@ def test_render_field_question_for_marital_status_bridge_avoids_awkward_status_i
 
     assert "单身状态在了解吗" not in response
     assert "我先记下了" not in response
-    assert "单身吗" in response
+    assert "婚况" in response or "感情状态" in response
+    assert "单身吗" not in response
 
 
 def test_render_field_question_for_partner_requirement_bridge_avoids_status_broadcast_copy():
@@ -267,6 +269,31 @@ def test_render_field_question_for_partner_requirement_bridge_avoids_status_broa
     assert any(token in response for token in ("看重", "要求", "在意"))
     assert "状态是吧" not in response
     assert "这个状态" not in response
+
+
+def test_render_field_question_for_partner_requirement_with_gender_preference_asks_for_additional_traits():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_partner_requirement_gender_pref")
+    profile.partner_gender_preference = "男"
+
+    response = service.render_field_question("partner_requirement", profile=profile, stage="trust")
+
+    assert "男生" in response
+    assert any(token in response for token in ("除了这个之外", "除此之外"))
+    assert any(token in response for token in ("看重", "在意", "哪一点"))
+
+
+def test_render_field_question_for_partner_requirement_bridge_with_gender_preference_asks_for_additional_traits():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_bridge_partner_requirement_gender_pref")
+    profile.marital_status = "单身"
+    profile.partner_gender_preference = "女"
+
+    response = service.render_field_question("partner_requirement", profile=profile, stage="trust")
+
+    assert "女生" in response
+    assert any(token in response for token in ("除了这个之外", "之外"))
+    assert any(token in response for token in ("看重", "在意"))
 
 
 def test_main_prompt_allows_low_frequency_reason_for_sensitive_fields():

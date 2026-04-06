@@ -13,6 +13,10 @@ from src.modules.conversation.domain.turn_understanding_models import (
     TurnUnderstandingInput,
     TurnUnderstandingResult,
 )
+from src.modules.conversation.domain.collection_concern_detector import CollectionConcernDetector
+from src.modules.conversation_understanding.domain.contextual_slot_governance_layer import (
+    ContextualSlotGovernanceLayer,
+)
 
 if TYPE_CHECKING:
     from src.services.core.chat_service import ChatService
@@ -281,7 +285,21 @@ FAQ_ANSWER_MARKERS = (
     "保护你的隐私",
     "给你说清楚",
     "我先跟你说清楚",
+    "我先说清楚",
     "你可以放心",
+    "理解偏了",
+    "乱登记",
+    "乱用",
+    "这些资料主要是为了",
+    "不会拿去",
+    "不是拿去",
+    "我知道你会在意",
+    "问得太细",
+    "了解得这么清楚",
+    "匹配对象的时候更精准",
+    "匹配更符合你预期",
+    "不符合你要求的男生",
+    "严格保密",
 )
 ACKNOWLEDGEMENT_MESSAGES = {
     "好",
@@ -317,6 +335,26 @@ CONTACT_PREFERENCE_KEYWORDS = (
 
 
 class TurnUnderstandingService:
+    _OCCUPATION_ALIASES = {
+        "it": "IT",
+        "ui": "UI",
+        "hr": "HR",
+        "qa": "QA",
+        "产品": "产品",
+        "运营": "运营",
+        "设计": "设计",
+        "开发": "开发",
+        "程序员": "程序员",
+        "销售": "销售",
+        "老师": "老师",
+        "医生": "医生",
+        "公务员": "公务员",
+        "美容": "美容",
+        "美容师": "美容师",
+        "美业": "美业",
+        "医美": "医美",
+    }
+    _OCCUPATION_FALLBACK_CHARS = {"恶", "呃", "额", "嗯", "啊", "哈", "哎"}
     """统一单轮理解：分类、信号、槽位解析。
 
     只负责识别这轮发生了什么，不负责最终文案，也不负责
@@ -334,8 +372,21 @@ class TurnUnderstandingService:
 
     def __init__(self, chat_service: "ChatService") -> None:
         self.chat_service = chat_service
+        self.collection_concern_detector = CollectionConcernDetector()
+        self.slot_governance_layer = ContextualSlotGovernanceLayer(self)
 
     def analyze(self, turn_input: TurnUnderstandingInput) -> TurnUnderstandingResult:
+        return self._analyze(turn_input, apply_slot_governance=True)
+
+    def analyze_without_slot_governance(self, turn_input: TurnUnderstandingInput) -> TurnUnderstandingResult:
+        return self._analyze(turn_input, apply_slot_governance=False)
+
+    def _analyze(
+        self,
+        turn_input: TurnUnderstandingInput,
+        *,
+        apply_slot_governance: bool,
+    ) -> TurnUnderstandingResult:
         message = str(turn_input.user_message or "").strip()
         if not message:
             return TurnUnderstandingResult(
@@ -345,7 +396,10 @@ class TurnUnderstandingService:
                 notes=["empty_message"],
             )
 
-        slot_candidates, resolved_slots, blocked_slots = self._resolve_slots(turn_input)
+        slot_candidates, resolved_slots, blocked_slots = self._resolve_slots(
+            turn_input,
+            apply_slot_governance=apply_slot_governance,
+        )
         primary_turn_type, subtype, confidence = self._classify_turn_type(
             turn_input,
             resolved_slots=resolved_slots,
@@ -375,6 +429,21 @@ class TurnUnderstandingService:
             turn_input,
             context_ack_type=context_ack_type,
         )
+        context_ack_occupation = None
+        context_ack_location = None
+        context_ack_preference = None
+        if context_ack_type == "work_busy":
+            context_ack_occupation = str(context_ack_payload.get("occupation") or "").strip() or None
+        elif context_ack_type == "location_reuse":
+            context_ack_location = str(context_ack_payload.get("location") or "").strip() or None
+        elif context_ack_type == "preference_reuse":
+            context_ack_preference = str(context_ack_payload.get("preference") or "").strip() or None
+        context_ack_field_ack = None
+        if context_ack_type in {"profile_partial_with_boundary", "opening_profile_ack"}:
+            context_ack_field_ack = str(context_ack_payload.get("field_ack") or "").strip() or None
+        soft_retry_field = None
+        if context_ack_type == "field_soft_refusal_retry":
+            soft_retry_field = str(context_ack_payload.get("field") or "").strip() or None
         risk_flags = []
         if primary_turn_type == "risk_guard":
             risk_flags.append(subtype or "risk")
@@ -394,6 +463,11 @@ class TurnUnderstandingService:
             resume_hint=resume_hint,
             context_ack_type=context_ack_type,
             context_ack_payload=context_ack_payload,
+            context_ack_occupation=context_ack_occupation,
+            context_ack_location=context_ack_location,
+            context_ack_preference=context_ack_preference,
+            context_ack_field_ack=context_ack_field_ack,
+            soft_retry_field=soft_retry_field,
             confidence=confidence,
         )
         logger.info("[turn_understanding] %s", result.to_dict())
@@ -402,6 +476,8 @@ class TurnUnderstandingService:
     def _resolve_slots(
         self,
         turn_input: TurnUnderstandingInput,
+        *,
+        apply_slot_governance: bool = True,
     ) -> tuple[Dict[str, SlotCandidate], Dict[str, str], Dict[str, BlockedSlot]]:
         message = str(turn_input.user_message or "").strip()
         last_response = str(turn_input.last_response or "").strip()
@@ -411,6 +487,14 @@ class TurnUnderstandingService:
 
         raw_fields = self._extract_profile_fields(message, last_response=last_response)
         raw_fields.update(self._extract_extra_contextual_fields(message))
+        if apply_slot_governance:
+            raw_fields, pre_blocked = self.slot_governance_layer.govern_raw_fields(
+                turn_input=turn_input,
+                raw_fields=raw_fields,
+                message=message,
+                last_response=last_response,
+            )
+            blocked.update(pre_blocked)
 
         compact_message = re.sub(r"\s+", "", message)
         if "sex" not in raw_fields and re.search(r"(^|[，,、])(?:男生|男的|男)(?=$|[，,、])", compact_message):
@@ -438,6 +522,8 @@ class TurnUnderstandingService:
             raw_fields[slot_name] = str(contact_candidate["value"]).strip()
 
         profile_phone = str(getattr(turn_input.user_profile, "phone", "") or "").strip()
+        pending_contact_field = str(getattr(turn_input.user_profile, "pending_contact_field", "") or "").strip()
+        last_contact_request_type = str(getattr(turn_input.user_profile, "last_contact_request_type", "") or "").strip()
         if (
             profile_phone
             and getattr(turn_input.user_profile, "phone_collected", False)
@@ -447,13 +533,22 @@ class TurnUnderstandingService:
         ):
             raw_fields["wechat"] = profile_phone
 
+        if (
+            profile_phone
+            and getattr(turn_input.user_profile, "phone_collected", False)
+            and not getattr(turn_input.user_profile, "wechat_collected", False)
+            and "wechat" not in raw_fields
+            and (pending_contact_field == "wechat" or last_contact_request_type == "wechat")
+            and re.search(r"(就是电话|就是号码|号码就行|跟电话一样|和电话一样|同一个号|同号|电话就可以加微信)", message)
+        ):
+            raw_fields["wechat"] = profile_phone
+
         if "wechat" not in raw_fields and re.search(r"(微信|微信号|加微信)", message):
             embedded_phone = self._extract_bare_contact_candidate(message)
             if embedded_phone and embedded_phone.get("type") == "phone":
                 raw_fields["wechat"] = str(embedded_phone["value"]).strip()
 
         pending_contact_candidate = str(getattr(turn_input.user_profile, "pending_contact_candidate", "") or "").strip()
-        pending_contact_field = str(getattr(turn_input.user_profile, "pending_contact_field", "") or "").strip()
         pending_contact_hint = str(getattr(turn_input.user_profile, "pending_contact_hint", "") or "").strip()
         if (
             pending_contact_candidate
@@ -546,6 +641,7 @@ class TurnUnderstandingService:
         message = str(turn_input.user_message or "").strip()
         profile = turn_input.user_profile
         message_count = int(turn_input.message_count or 0)
+        opening_signals = self._extract_opening_signals(turn_input, resolved_slots)
 
         if self._is_risk_guard(message):
             return "risk_guard", "risk_pattern", 0.99
@@ -565,6 +661,14 @@ class TurnUnderstandingService:
         if faq_intent:
             return "faq_concern", faq_intent, 0.94
 
+        contextual_faq_intent = self._detect_contextual_profile_collection_concern(turn_input)
+        if contextual_faq_intent:
+            return "faq_concern", contextual_faq_intent, 0.9
+
+        soft_refusal_field = self._detect_soft_refusal_current_field(turn_input, resolved_slots)
+        if soft_refusal_field:
+            return "invalid_input", "soft_refusal_current_field", 0.88
+
         if self._is_complaint_message(message):
             return "refusal_boundary_complaint", "complaint", 0.93
         if self._is_boundary_pause(message, profile):
@@ -573,33 +677,33 @@ class TurnUnderstandingService:
         if self._looks_like_refusal(message):
             return "refusal_boundary_complaint", "refusal", 0.89
 
-        if turn_input.in_contact_flow or any(field in resolved_slots for field in {"phone", "wechat"}):
+        if any(field in resolved_slots for field in {"phone", "wechat"}):
+            return "contact_answer", contact_subtype, 0.93
+
+        if turn_input.in_contact_flow and not resolved_slots:
             return "contact_answer", contact_subtype, 0.93
 
         if self._looks_like_confirmation(message, turn_input):
             return "confirmation", "weak_confirmation", 0.85
 
-        soft_refusal_field = self._detect_soft_refusal_current_field(turn_input, resolved_slots)
-        if soft_refusal_field:
-            return "invalid_input", "soft_refusal_current_field", 0.88
+        if opening_signals.get("matchmaking_intent"):
+            confidence = 0.92 if opening_signals.get("greeting") else 0.9
+            return "opening", "matchmaking_intent", confidence
 
-        if self._looks_like_opening_clarify(turn_input, resolved_slots):
-            return "opening", "opening_clarify", 0.9
-
-        if self._looks_like_opening_service_confirmation(turn_input, resolved_slots):
+        if opening_signals.get("service_confirmation"):
             return "opening", "service_confirmation_opening", 0.91
 
-        if self._looks_like_low_pressure_opening(turn_input, resolved_slots):
+        if opening_signals.get("low_pressure"):
             return "opening", "low_pressure_opening", 0.89
 
         if self._looks_like_mid_service_confirmation(turn_input, resolved_slots):
             return "faq_concern", "service_confirmation_mid", 0.9
 
-        if message_count <= 1 and self._is_stable_opening_greeting(message):
-            return "opening", "greeting", 0.88
+        if opening_signals.get("clarify"):
+            return "opening", "opening_clarify", 0.9
 
-        if message_count <= 1 and self._is_explicit_matchmaking_intent_message(message):
-            return "opening", "matchmaking_intent", 0.9
+        if opening_signals.get("greeting"):
+            return "opening", "greeting", 0.88
 
         if resolved_slots:
             return "profile_answer", self._profile_subtype(message, message_count, resolved_slots), 0.91
@@ -621,13 +725,23 @@ class TurnUnderstandingService:
     ) -> list[str]:
         message = str(turn_input.user_message or "").strip()
         signals: list[str] = []
+        opening_signals = self._extract_opening_signals(turn_input, resolved_slots)
         if primary_turn_type == "profile_answer":
             if turn_input.message_count == 0 or self._is_explicit_matchmaking_intent_message(message):
                 signals.append("proactive_profile_provide")
             if len(resolved_slots) >= 2:
                 signals.append("multi_slot_compound")
+            if opening_signals.get("greeting"):
+                signals.append("opening_greeting")
         if primary_turn_type == "contact_answer" and any(field in resolved_slots for field in {"phone", "wechat"}):
             signals.append("proactive_contact_provide")
+        if primary_turn_type == "opening":
+            if opening_signals.get("greeting") and "opening_greeting" not in signals:
+                signals.append("opening_greeting")
+            if opening_signals.get("matchmaking_intent"):
+                signals.append("opening_matchmaking_intent")
+            if opening_signals.get("service_confirmation"):
+                signals.append("service_confirmation_like")
         if primary_turn_type == "confirmation" and len(message) <= 2:
             signals.append("weak_confirmation")
         if primary_turn_type == "invalid_input" and len(message) <= 4:
@@ -702,12 +816,48 @@ class TurnUnderstandingService:
             return None
         if self._detect_faq_intent(message):
             return None
-        previous_field = self._detect_which_field_is_asked(turn_input.last_response)
-        if previous_field not in {"sex", "age", "education", "occupation", "location", "marital_status"}:
+        previous_field = self._resolve_previous_asked_field(turn_input)
+        if previous_field not in {
+            "sex",
+            "age",
+            "education",
+            "occupation",
+            "location",
+            "marital_status",
+            "monthly_income",
+            "partner_requirement",
+        }:
             return None
         if getattr(turn_input, "in_contact_flow", False):
             return None
         return previous_field
+
+    def _resolve_previous_asked_field(self, turn_input: TurnUnderstandingInput) -> str:
+        previous_field = str(getattr(turn_input.user_profile, "last_asked_field", "") or "").strip()
+        if previous_field:
+            return previous_field
+
+        expected_field_getter = getattr(turn_input.user_profile, "get_expected_field_for_short_answer", None)
+        if callable(expected_field_getter):
+            try:
+                previous_field = str(expected_field_getter(int(turn_input.message_count or 0)) or "").strip()
+            except Exception:  # noqa: BLE001
+                previous_field = ""
+            if previous_field:
+                return previous_field
+
+        response_candidates = [str(turn_input.last_response or "").strip()]
+        recent_responses = turn_input.conversation_context.get("recent_responses") or []
+        response_candidates.extend(
+            str(candidate or "").strip()
+            for candidate in reversed(recent_responses)
+            if str(candidate or "").strip()
+        )
+        for candidate in response_candidates:
+            previous_field = self._detect_which_field_is_asked(candidate)
+            if previous_field:
+                return previous_field
+        return ""
 
     def _derive_complaint_reason(
         self,
@@ -719,12 +869,14 @@ class TurnUnderstandingService:
         if primary_turn_type != "refusal_boundary_complaint" or subtype != "complaint":
             return None
         message = str(turn_input.user_message or "").strip()
-        if not message or self._has_faq_priority_signal(message):
+        if not message:
             return None
         if self._matches_any_pattern(message, REPEAT_ASK_COMPLAINT_PATTERNS):
             return "repeat_ask"
         if self._matches_any_pattern(message, COMPLAINT_PATTERNS):
             return "over_questioning"
+        if self._has_faq_priority_signal(message):
+            return None
         return None
 
     def _detect_faq_intent(self, message: str) -> str | None:
@@ -741,6 +893,22 @@ class TurnUnderstandingService:
         if expectation_service is not None and expectation_service.is_matching_timeline_question(text):  # noqa: SLF001
             return "timeline"
         return None
+
+    def _detect_contextual_profile_collection_concern(self, turn_input: TurnUnderstandingInput) -> str | None:
+        """统一交给独立 detector，用上下文裁决资料收集顾虑。"""
+        message = str(turn_input.user_message or "").strip()
+        if not message:
+            return None
+        if self._detect_faq_intent(message):
+            return None
+        match = self.collection_concern_detector.detect(
+            message=message,
+            last_asked_field=self._resolve_previous_asked_field(turn_input),
+            last_response=str(turn_input.last_response or ""),
+            recent_responses=tuple(turn_input.conversation_context.get("recent_responses") or ()),
+            in_contact_flow=bool(getattr(turn_input, "in_contact_flow", False)),
+        )
+        return match.intent if match else None
 
     def _has_faq_priority_signal(self, message: str) -> bool:
         return bool(self._detect_faq_intent(message))
@@ -810,9 +978,15 @@ class TurnUnderstandingService:
         return None
 
     def _is_complaint_message(self, message: str) -> bool:
-        if not message or self._has_faq_priority_signal(message):
+        if not message:
             return False
-        return self._matches_any_pattern(message, COMPLAINT_PATTERNS)
+        if self._matches_any_pattern(message, REPEAT_ASK_COMPLAINT_PATTERNS):
+            return True
+        if self._matches_any_pattern(message, COMPLAINT_PATTERNS):
+            return True
+        if self._has_faq_priority_signal(message):
+            return False
+        return False
 
     @staticmethod
     def _matches_any_pattern(message: str, patterns) -> bool:
@@ -846,9 +1020,9 @@ class TurnUnderstandingService:
             r"(不超过\d{2}岁)",
             r"(成熟稳重)",
             r"(三观合拍)",
-            r"(喜欢[^\s，,。]{1,10}(?:男生|女生|男的|女的|男|女))",
-            r"(想找[^\s，,。]{1,10}(?:男生|女生|男的|女的|男|女))",
-            r"(找[^\s，,。]{1,10}(?:男生|女生|男的|女的|男|女))",
+            r"(喜欢[^\s，,。]{0,10}(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的|男|女))",
+            r"(想找[^\s，,。]{0,10}(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的|男|女))",
+            r"(找[^\s，,。]{0,10}(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的|男|女))",
         ]
         values = []
         for pattern in patterns:
@@ -865,9 +1039,42 @@ class TurnUnderstandingService:
             value = re.sub(r"^(聊得来)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(合适)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(人好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+            value = self._normalize_partner_requirement_value(value)
             normalized.append(value)
         normalized = list(dict.fromkeys(normalized))
+        if len(normalized) == 1 and normalized[0] in {"男生", "女生"}:
+            return None
         return "，".join(normalized) if normalized else None
+
+    @staticmethod
+    def _normalize_partner_requirement_value(value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return text
+        if re.search(r"(男朋友|男生|男孩子|男的|找个男|想找男|喜欢男)", text):
+            return "男生"
+        if re.search(r"(女朋友|女生|女孩子|女的|找个女|想找女|喜欢女)", text):
+            return "女生"
+        return text
+
+    @staticmethod
+    def _extract_partner_gender_preference(message: str) -> str | None:
+        text = str(message or "").strip()
+        if not text:
+            return None
+        if re.search(r"(?:我是|本人|我)\s*(?:男生|女生|男的|女的|男|女)", text):
+            return None
+        if re.search(
+            r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好|想要|希望|就想找|更想找).{0,8}(?:男朋友|男生|男孩子|男的|男性|男)",
+            text,
+        ) or re.search(r"(?:男朋友)", text):
+            return "男"
+        if re.search(
+            r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好|想要|希望|就想找|更想找).{0,8}(?:女朋友|女生|女孩子|女的|女性|女)",
+            text,
+        ) or re.search(r"(?:女朋友)", text):
+            return "女"
+        return None
 
     def _extract_profile_fields(self, message: str, *, last_response: str) -> Dict[str, str]:
         raw_fields = self._extract_deterministic_profile_fields(message)
@@ -948,15 +1155,10 @@ class TurnUnderstandingService:
             extracted["age"] = str(current_year - 1985)
             extracted["age_label"] = "85后"
 
-        location_candidates = {"深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港"}
-        if message in location_candidates:
-            extracted["location"] = message
-        else:
-            compact_message = re.sub(r"[，,、。！？!?~～\s]+", "", message)
-            for city in location_candidates:
-                if len(compact_message) <= 8 and re.fullmatch(rf"(?:我是|我在|我来自|我住在|我)?{city}(?:人|的|这边)?", compact_message):
-                    extracted["location"] = city
-                    break
+        compact_message = re.sub(r"[，,、。！？!?~～\s]+", "", message)
+        location_text = self._extract_location_like_text(message, compact_message=compact_message)
+        if location_text:
+            extracted["location"] = location_text
 
         for edu in ["博士", "硕士", "研究生", "本科", "大专", "中专", "高中"]:
             if message == edu:
@@ -969,60 +1171,56 @@ class TurnUnderstandingService:
                 break
 
         occupation_match = re.search(
-            r"(?:^|[，,、\s])(?:做|做的是|我是)\s*([A-Za-z]{1,12}|[\u4e00-\u9fa5]{2,8})\s*(?:的|呢|呀)?(?=$|[，,、。！？!?])",
+            r"(?:做|做的是|我是)\s*([A-Za-z]{1,12}|[\u4e00-\u9fa5]{2,8})\s*(?:的|呢|呀|吧|哈|哦|啊)?(?=$|[，,、。！？!?])",
             message,
         )
         if occupation_match:
-            candidate = occupation_match.group(1).strip()
-            occupation_aliases = {
-                "it": "IT",
-                "ui": "UI",
-                "hr": "HR",
-                "qa": "QA",
-                "产品": "产品",
-                "运营": "运营",
-                "设计": "设计",
-                "开发": "开发",
-                "程序员": "程序员",
-                "销售": "销售",
-                "老师": "老师",
-                "医生": "医生",
-                "公务员": "公务员",
-            }
-            normalized_candidate = candidate.lower()
-            if candidate not in {"男", "女", "单身", "未婚", "离异", "已婚"}:
-                extracted["occupation"] = occupation_aliases.get(normalized_candidate, candidate)
+            candidate = self._normalize_occupation_candidate(occupation_match.group(1))
+            if candidate and candidate not in {"男", "女", "单身", "未婚", "离异", "已婚"}:
+                extracted["occupation"] = candidate
 
         if not extracted.get("occupation"):
-            occupation_aliases = {
-                "it": "IT",
-                "ui": "UI",
-                "hr": "HR",
-                "qa": "QA",
-                "产品": "产品",
-                "运营": "运营",
-                "设计": "设计",
-                "开发": "开发",
-                "程序员": "程序员",
-                "销售": "销售",
-                "老师": "老师",
-                "医生": "医生",
-                "公务员": "公务员",
-            }
-            normalized = message.strip().lower()
-            if normalized in occupation_aliases:
-                extracted["occupation"] = occupation_aliases[normalized]
+            normalized = self._normalize_occupation_candidate(message)
+            if normalized in self._OCCUPATION_ALIASES.values():
+                extracted["occupation"] = normalized
 
         if not extracted.get("partner_requirement"):
             pref = self._extract_simple_partner_requirement(message)
             if pref:
                 extracted["partner_requirement"] = pref
+        if not extracted.get("partner_gender_preference"):
+            partner_gender = self._extract_partner_gender_preference(message)
+            if partner_gender:
+                extracted["partner_gender_preference"] = partner_gender
         if not extracted.get("monthly_income"):
             income = self._extract_simple_monthly_income(message)
             if income:
                 extracted["monthly_income"] = income
 
         return extracted
+
+    @classmethod
+    def _normalize_occupation_candidate(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = re.sub(r"[，,、。！？!?~～\s]+", "", text)
+        text = re.sub(r"(吧|呀|呢|哈|哦|啊)+$", "", text)
+        text = re.sub(r"^(做|做的|做的是|我是|从事)\s*", "", text)
+        normalized = text.lower()
+        if normalized in cls._OCCUPATION_ALIASES:
+            return cls._OCCUPATION_ALIASES[normalized]
+        if text and text[0] in cls._OCCUPATION_FALLBACK_CHARS and len(text) >= 2:
+            trimmed = text[1:]
+            trimmed_normalized = trimmed.lower()
+            if trimmed_normalized in cls._OCCUPATION_ALIASES:
+                return cls._OCCUPATION_ALIASES[trimmed_normalized]
+            for stem in ("美容师", "美业", "医美", "美容", "程序员", "销售", "老师", "医生", "公务员", "产品", "运营", "设计", "开发"):
+                if stem in trimmed:
+                    residue = trimmed.replace(stem, "")
+                    if not residue or set(residue) <= cls._OCCUPATION_FALLBACK_CHARS:
+                        return stem
+        return cls._OCCUPATION_ALIASES.get(normalized, text)
 
     @staticmethod
     def _normalize_bucket_age_fields(extracted: Dict[str, str]) -> Dict[str, str]:
@@ -1047,6 +1245,10 @@ class TurnUnderstandingService:
 
         extracted: Dict[str, str] = {}
         compact_message = re.sub(r"[，,、。！？!?~～\s]+", "", user_message)
+        contact_like_message = bool(
+            self._extract_contact_candidate(user_message)
+            or self._extract_bare_contact_candidate(user_message)
+        )
 
         if "我是女生" in user_message or "本人女" in user_message:
             extracted["sex"] = "女"
@@ -1061,43 +1263,35 @@ class TurnUnderstandingService:
             if sex_match:
                 extracted["sex"] = "男" if "男" in sex_match.group(1) else "女"
 
-        age_match = re.search(r"(\d{2})后", user_message)
-        if age_match:
-            suffix = int(age_match.group(1))
-            birth_year = 2000 + suffix if suffix <= datetime.now().year % 100 else 1900 + suffix
-            extracted["age"] = str(datetime.now().year - birth_year)
-            extracted["age_label"] = f"{age_match.group(1)}后"
-        else:
-            birth_year_full = re.search(r"(19\d{2}|20\d{2})年(?:出生)?", user_message)
-            birth_year_short = re.search(r"(?<!\d)(\d{2})年(?:的)?(?:出生)?", user_message)
-            if birth_year_full:
-                birth_year = int(birth_year_full.group(1))
-                extracted["age"] = str(datetime.now().year - birth_year)
-                extracted["age_label"] = f"{birth_year}年"
-            elif birth_year_short:
-                suffix = int(birth_year_short.group(1))
+        if not contact_like_message:
+            age_match = re.search(r"(\d{2})后", user_message)
+            if age_match:
+                suffix = int(age_match.group(1))
                 birth_year = 2000 + suffix if suffix <= datetime.now().year % 100 else 1900 + suffix
                 extracted["age"] = str(datetime.now().year - birth_year)
-                extracted["age_label"] = f"{birth_year_short.group(1)}年"
+                extracted["age_label"] = f"{age_match.group(1)}后"
             else:
-                explicit_age = re.search(r"(\d{2})岁", user_message)
-                if explicit_age:
-                    extracted["age"] = explicit_age.group(1)
+                birth_year_full = re.search(r"(19\d{2}|20\d{2})年(?:出生)?", user_message)
+                birth_year_short = re.search(r"(?<!\d)(\d{2})年(?:的)?(?:出生)?", user_message)
+                if birth_year_full:
+                    birth_year = int(birth_year_full.group(1))
+                    extracted["age"] = str(datetime.now().year - birth_year)
+                    extracted["age_label"] = f"{birth_year}年"
+                elif birth_year_short:
+                    suffix = int(birth_year_short.group(1))
+                    birth_year = 2000 + suffix if suffix <= datetime.now().year % 100 else 1900 + suffix
+                    extracted["age"] = str(datetime.now().year - birth_year)
+                    extracted["age_label"] = f"{birth_year_short.group(1)}年"
+                else:
+                    explicit_age = re.search(r"(?:我今年|今年|我现在|现在)?\s*(\d{2})岁?", user_message)
+                    if explicit_age:
+                        extracted["age"] = explicit_age.group(1)
 
-        city_candidates = {"深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港"}
-        preference_context = bool(re.search(r"(喜欢|想找|找).*(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)", user_message))
+        preference_context = bool(re.search(r"(喜欢|想找|找).*(?:在|来自|住在|深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|台湾|澳门)", user_message))
         if not preference_context:
-            for city in city_candidates:
-                if re.search(rf"(?:在|来自|住在)\s*{city}", user_message) or re.search(rf"(?:^|[，,、\s]){city}(?:$|[，,、\s])", user_message):
-                    extracted["location"] = city
-                    break
-                if len(compact_message) <= 8 and re.fullmatch(rf"(?:我是|我在|我来自|我住在|我)?{city}(?:人|的|这边)?", compact_message):
-                    extracted["location"] = city
-                    break
-            if not extracted.get("location"):
-                location_match = re.search(r"(?:在|来自|住在)\s*([\u4e00-\u9fa5]{2,8}(?:市|省|县|区|州|特别行政区))", user_message)
-                if location_match:
-                    extracted["location"] = location_match.group(1)
+            location_text = self._extract_location_like_text(user_message, compact_message=compact_message)
+            if location_text:
+                extracted["location"] = location_text
 
         for edu in ["博士", "硕士", "研究生", "本科", "大专", "中专", "高中"]:
             if edu in user_message:
@@ -1142,13 +1336,86 @@ class TurnUnderstandingService:
         )
 
     @staticmethod
+    def _extract_location_like_text(message: str, *, compact_message: str | None = None) -> str | None:
+        content = str(message or "").strip()
+        if not content:
+            return None
+        compact = compact_message if compact_message is not None else re.sub(r"[，,、。！？!?~～\s]+", "", content)
+        if not compact:
+            return None
+        if re.search(r"(喜欢|想找|找对象|找另一半|另一半|对象).{0,8}(?:在|来自|住在)", content):
+            return None
+
+        common_terms = (
+            "台湾",
+            "澳门",
+            "香港",
+            "国外",
+            "国内",
+            "老家",
+            "家里",
+            "县城",
+            "小县城",
+            "小城市",
+            "老城区",
+        )
+        common_cities = (
+            "深圳",
+            "广州",
+            "杭州",
+            "上海",
+            "北京",
+            "成都",
+            "武汉",
+            "苏州",
+            "南京",
+            "天津",
+            "重庆",
+            "西安",
+            "长沙",
+            "郑州",
+            "青岛",
+            "厦门",
+            "宁波",
+            "无锡",
+            "东莞",
+            "佛山",
+        )
+        city_match = re.fullmatch(
+            r"(?:我)?(?P<loc>" + "|".join(common_cities) + r")(?:的|人|呢|呀|哦|哈|啊|啦)?",
+            compact,
+        )
+        if city_match:
+            return str(city_match.group("loc") or "").strip()
+        phrase_patterns = [
+            r"(?:我在|我目前在|我现在在|我长期在|我一直在|我住在|我来自|我人在|目前在|现在在|长期在|一直在|住在|来自|在)\s*(?:一个)?(?P<loc>[\u4e00-\u9fa5]{2,12}(?:市|省|县|区|州|特别行政区|地区|小县城|小城市|县城)?|台湾|澳门|香港|国外|国内|老家|家里)(?:这边|这里|那边)?(?:呢|呀|哦|哈|啊|啦)?",
+            r"^(?P<loc>台湾|澳门|香港|国外|国内|老家|家里|县城|小县城|小城市)(?:呢|呀|哦|哈|啊|啦)?$",
+        ]
+        for pattern in phrase_patterns:
+            match = re.search(pattern, content)
+            if not match:
+                continue
+            candidate = str(match.group("loc") or "").strip("，,、。！？!?~～ ")
+            candidate = re.sub(r"(这边|这里|那边|呢|呀|哦|哈|啊|啦)$", "", candidate)
+            candidate = candidate.lstrip("一个")
+            if not candidate:
+                continue
+            if candidate in common_terms:
+                return candidate
+            if re.search(r"(本科|大专|硕士|博士|研究生|单身|离异|未婚|已婚|做|工作|收入|月薪)", candidate):
+                continue
+            if re.fullmatch(r"[\u4e00-\u9fa5]{2,12}(?:市|省|县|区|州|特别行政区|地区)?", candidate):
+                return candidate
+        return None
+
+    @staticmethod
     def _extract_confirmed_sex_candidate_from_context(text: str) -> str | None:
         content = str(text or "").strip()
         if not content:
             return None
-        if re.search(r"(你这边是|你是|我理解你是)\s*男(?:生|的)?", content):
+        if re.search(r"(你这边是|你是|我理解你是|你应该是|应该是)\s*男(?:生|的|孩子)?", content):
             return "男"
-        if re.search(r"(你这边是|你是|我理解你是)\s*女(?:生|的)?", content):
+        if re.search(r"(你这边是|你是|我理解你是|你应该是|应该是)\s*女(?:生|的|孩子)?", content):
             return "女"
         return None
 
@@ -1163,6 +1430,35 @@ class TurnUnderstandingService:
             )
         )
 
+    @staticmethod
+    def _is_birth_year_question(last_response: str) -> bool:
+        text = str(last_response or "").strip()
+        if not text:
+            return False
+        return bool(
+            re.search(
+                r"(哪一年出生|几几年(?:的)?|具体是\d{2}几年的|具体是哪一年的|[89]\d几年出生|九几年出生|98年出生)",
+                text,
+            )
+        )
+
+    @staticmethod
+    def _extract_birth_year_from_context_answer(text: str) -> tuple[str, str] | None:
+        content = str(text or "").strip()
+        if not content:
+            return None
+        match = re.search(r"^\s*(?P<year>(?:19\d{2}|20\d{2}|\d{2}))(?:年)?(?:的)?(?:[呀呢哈哦啊啦]*)?(?:\s*[，,、 ]\s*(?:单身|未婚|离异|已婚|分居))?\s*$", content)
+        if not match:
+            return None
+        raw_year = str(match.group("year") or "").strip()
+        current_year = datetime.now().year
+        if len(raw_year) == 2:
+            suffix = int(raw_year)
+            birth_year = 2000 + suffix if suffix <= current_year % 100 else 1900 + suffix
+            return str(current_year - birth_year), f"{raw_year}年"
+        birth_year = int(raw_year)
+        return str(current_year - birth_year), f"{birth_year}年"
+
     def _apply_extraction_guards(
         self,
         extracted_data: Dict[str, str],
@@ -1174,9 +1470,32 @@ class TurnUnderstandingService:
         message = str(user_message or "").strip()
         last_ai = str(last_response or "")
 
+        if last_ai and self._looks_like_refusal(message):
+            refused_fields = self._detect_asked_fields_from_context(last_ai)
+            cleared_fields: list[str] = []
+            for field in refused_fields:
+                if self._message_explicitly_answers_field(field, message):
+                    continue
+                if field == "age":
+                    if "age" in guarded:
+                        guarded.pop("age", None)
+                        cleared_fields.append("age")
+                    if "age_label" in guarded:
+                        guarded.pop("age_label", None)
+                        if "age_label" not in cleared_fields:
+                            cleared_fields.append("age_label")
+                    continue
+                if field in guarded:
+                    guarded.pop(field, None)
+                    cleared_fields.append(field)
+            if cleared_fields:
+                logger.info("[提取保护] 拒绝语命中，清除上一轮被问字段的污染提取: %s", ",".join(cleared_fields))
+
+        confirmation_context_sex = self._extract_confirmed_sex_candidate_from_context(last_ai)
         sex_question_context = bool(
             re.search(r"(你是|是)(男生|女生|男的|女的|男|女)", last_ai)
             or "性别" in last_ai
+            or confirmation_context_sex
         )
         short_sex_answer = re.search(
             r"^\s*(?:你们)?\s*(男生|女生|男的|女的|男|女)"
@@ -1188,11 +1507,16 @@ class TurnUnderstandingService:
             r"^\s*(?:你们)?\s*(男生|女生|男的|女的|男|女)\s*[，,、 ]+\s*$",
             message,
         )
+        affirmative_prefixed_sex_answer = re.search(
+            r"^\s*(?:是的|对|对的|嗯|嗯嗯|好的|好|没错)"
+            r"(?:[呀呢啊哦哈啦嘛]*)?\s*(男生|女生|男的|女的|男|女)"
+            r"(?:\s*[，,、 ]\s*(?:\d{2}年|\d{2}后|\d{2}岁|19\d{2}年|20\d{2}年).*)?$",
+            message,
+        )
         embedded_context_sex_answer = re.search(
             r"(?:^|[，,、 ]|是|就是)\s*(男生|女生|男的|女的|男|女)\s*(?:呀|呢|哈|哦|啊)?(?:$|[，,。！？!? ])",
             message,
         )
-        confirmation_context_sex = self._extract_confirmed_sex_candidate_from_context(last_ai)
         affirmative_confirmation = self._is_affirmative_confirmation_answer(message)
         marital_question_context = bool(
             re.search(r"(单身状态|现在是单身吗|现在单身吗|感情状态.*单身|婚况.*单身)", last_ai)
@@ -1204,27 +1528,63 @@ class TurnUnderstandingService:
             if partner_value and any(token in partner_value for token in ["男", "女"]):
                 guarded.pop("partner_requirement", None)
                 logger.info("[提取保护] 性别问答上下文命中，移除本轮 partner_requirement 性别污染值")
+            if guarded.get("partner_gender_preference"):
+                guarded.pop("partner_gender_preference", None)
+                logger.info("[提取保护] 性别问答上下文命中，移除本轮 partner_gender_preference 性别污染值")
             logger.info("[提取保护] 性别问答上下文命中，按 short answer 强制写入 sex")
         elif sex_question_context and trailing_punct_sex_answer:
             raw = trailing_punct_sex_answer.group(1)
             guarded["sex"] = "男" if "男" in raw else "女"
+            if guarded.get("partner_gender_preference"):
+                guarded.pop("partner_gender_preference", None)
+                logger.info("[提取保护] 性别问答上下文命中，移除本轮 partner_gender_preference 性别污染值")
             logger.info("[提取保护] 性别问答上下文命中，按 trailing short answer 强制写入 sex")
+        elif sex_question_context and affirmative_prefixed_sex_answer:
+            raw = affirmative_prefixed_sex_answer.group(1)
+            guarded["sex"] = "男" if "男" in raw else "女"
+            if guarded.get("partner_gender_preference"):
+                guarded.pop("partner_gender_preference", None)
+                logger.info("[提取保护] 性别问答上下文命中，移除本轮 partner_gender_preference 性别污染值")
+            logger.info("[提取保护] 性别问答上下文命中，按 affirmative+sex 复合短答强制写入 sex")
         elif sex_question_context and embedded_context_sex_answer:
             raw = embedded_context_sex_answer.group(1)
             guarded["sex"] = "男" if "男" in raw else "女"
+            if guarded.get("partner_gender_preference"):
+                guarded.pop("partner_gender_preference", None)
+                logger.info("[提取保护] 性别问答上下文命中，移除本轮 partner_gender_preference 性别污染值")
             logger.info("[提取保护] 性别问答上下文命中，按 embedded answer 强制写入 sex")
         elif confirmation_context_sex and affirmative_confirmation:
             guarded["sex"] = confirmation_context_sex
+            if guarded.get("partner_gender_preference"):
+                guarded.pop("partner_gender_preference", None)
+                logger.info("[提取保护] 性别确认上下文命中，移除本轮 partner_gender_preference 性别污染值")
             logger.info("[提取保护] 性别确认上下文命中，按 affirmative answer 强制写入 sex")
         elif marital_question_context and affirmative_confirmation:
             guarded["marital_status"] = "单身"
             logger.info("[提取保护] 婚况问答上下文命中，按 affirmative answer 强制写入 marital_status")
+
+        birth_year_question_context = self._is_birth_year_question(last_ai)
+        if birth_year_question_context:
+            if self._looks_like_refusal(message):
+                guarded.pop("age", None)
+                guarded.pop("age_label", None)
+                logger.info("[提取保护] 出生年问答上下文命中，用户拒绝补充具体年份，本轮不提取 age/age_label")
+            else:
+                birth_year_answer = self._extract_birth_year_from_context_answer(message)
+                if birth_year_answer:
+                    age_value, age_label = birth_year_answer
+                    guarded["age"] = age_value
+                    guarded["age_label"] = age_label
+                    logger.info("[提取保护] 出生年问答上下文命中，按 short answer 强制写入 age/age_label")
 
         if not guarded:
             return guarded
 
         explicit_self_sex = re.search(r"(我是|本人|我)\s*(男生|女生|男的|女的|男|女)", message)
         preference_sex_hint = re.search(r"(找|想找|喜欢|偏好).{0,4}(男生|女生|男的|女的|男|女)", message)
+        if explicit_self_sex and "partner_gender_preference" in guarded and not preference_sex_hint:
+            guarded.pop("partner_gender_preference", None)
+            logger.info("[提取保护] 检测到明确自述性别，移除本轮 partner_gender_preference 污染值")
         if "sex" in guarded and not explicit_self_sex and preference_sex_hint:
             guarded.pop("sex", None)
             logger.info("[提取保护] 检测到择偶偏好语境，忽略 sex 提取，避免误写用户性别")
@@ -1242,6 +1602,113 @@ class TurnUnderstandingService:
             logger.info("[提取保护] 检测到择偶偏好城市语境，忽略 location 提取，避免误写用户所在地")
 
         return guarded
+
+    def _detect_asked_fields_from_context(self, response: str) -> set[str]:
+        text = str(response or "").strip().lower()
+        if not text:
+            return set()
+
+        asked_fields: set[str] = set()
+        pattern_map = {
+            "sex": (
+                r"男生还是女生",
+                r"男的还是女的",
+                r"你是男",
+                r"你是女",
+                r"你应该是男",
+                r"你应该是女",
+                r"性别",
+            ),
+            "age": (
+                r"多大",
+                r"几岁",
+                r"年龄",
+                r"年纪",
+                r"出生",
+                r"几几年(?:的)?",
+                r"哪一年出生",
+                r"九几年",
+                r"\d{2}几年",
+            ),
+            "location": (
+                r"哪个城市",
+                r"什么城市",
+                r"在哪个城市",
+                r"常住",
+                r"在哪边",
+                r"哪里生活",
+            ),
+            "education": (
+                r"学历",
+                r"什么学历",
+                r"最高学历",
+                r"毕业",
+            ),
+            "occupation": (
+                r"做什么工作",
+                r"做哪方面",
+                r"什么工作",
+                r"职业",
+                r"做哪行",
+            ),
+            "marital_status": (
+                r"感情状态",
+                r"婚况",
+                r"单身状态",
+                r"单身吗",
+                r"单身状态不",
+            ),
+            "monthly_income": (
+                r"月收入",
+                r"月薪",
+                r"收入",
+                r"工资",
+                r"多少钱",
+            ),
+            "partner_requirement": (
+                r"另一半",
+                r"择偶",
+                r"看重哪",
+                r"更看重",
+                r"看重对方哪一点",
+                r"更看重对方哪一点",
+                r"有什么要求",
+                r"想找个什么样",
+            ),
+        }
+        for field, patterns in pattern_map.items():
+            if any(re.search(pattern, text) for pattern in patterns):
+                asked_fields.add(field)
+        return asked_fields
+
+    def _message_explicitly_answers_field(self, field: str, message: str) -> bool:
+        text = str(message or "").strip()
+        if not text:
+            return False
+        if field == "sex":
+            return bool(re.search(r"(男生|女生|男的|女的|^男$|^女$)", text))
+        if field == "age":
+            return bool(
+                re.search(r"(\d{2})后", text)
+                or re.search(r"(19\d{2}|20\d{2}|\d{2})年", text)
+                or re.search(r"(我今年|今年|我现在|现在)?\s*\d{2}\s*岁", text)
+            )
+        if field == "location":
+            return bool(self._extract_location_like_text(text, compact_message=re.sub(r"[，,、。！？!?~～\s]+", "", text)))
+        if field == "education":
+            return any(token in text for token in ("博士", "硕士", "研究生", "本科", "大专", "中专", "高中"))
+        if field == "occupation":
+            return bool(
+                re.search(r"(?:^|[，,、\s])(?:做|做的是|我是)\s*([A-Za-z]{1,12}|[\u4e00-\u9fa5]{2,8})", text)
+                or text.strip().lower() in {"it", "ui", "hr", "qa"}
+            )
+        if field == "marital_status":
+            return any(token in text for token in ("单身", "未婚", "离异", "已婚", "分居"))
+        if field == "monthly_income":
+            return bool(self._extract_simple_monthly_income(text))
+        if field == "partner_requirement":
+            return bool(self._extract_simple_partner_requirement(text))
+        return False
 
     @staticmethod
     def _extract_simple_monthly_income(user_message: str) -> str | None:
@@ -1314,6 +1781,7 @@ class TurnUnderstandingService:
             return ""
         extracted = self._extract_profile_fields(text, last_response="")
         preference = self._extract_simple_partner_requirement(text) or ""
+        partner_gender = str(extracted.get("partner_gender_preference") or self._extract_partner_gender_preference(text) or "").strip()
         if extracted.get("sex"):
             return "你这边是男生。" if "男" in str(extracted["sex"]) else "你这边是女生。"
         if extracted.get("location"):
@@ -1326,6 +1794,10 @@ class TurnUnderstandingService:
         if extracted.get("age_label") or extracted.get("age"):
             age_text = str(extracted.get("age_label") or extracted.get("age") or "").strip()
             return f"{self._render_age_value(age_text)}这个年龄段。"
+        if partner_gender == "男":
+            return "你是想找男生这类。"
+        if partner_gender == "女":
+            return "你是想找女生这类。"
         if preference:
             natural_preference = self._render_preference_for_ack(preference)
             return f"你更偏向{natural_preference}这类。"
@@ -1423,6 +1895,10 @@ class TurnUnderstandingService:
             r"男的还是女的",
             r"你是男",
             r"你是女",
+            r"你应该是男",
+            r"你应该是女",
+            r"男孩子",
+            r"女孩子",
             r"性别",
             r"你这边是男生",
             r"你这边是女生",
@@ -1438,6 +1914,8 @@ class TurnUnderstandingService:
             r"有什么要求",
             r"看重哪",
             r"更在意哪",
+            r"看重对方哪一点",
+            r"更看重对方哪一点",
             r"想找个什么样",
             r"择偶",
         ]
@@ -1448,6 +1926,7 @@ class TurnUnderstandingService:
         age_patterns = [
             r"多大", r"年龄", r"几岁", r"岁数", r"出生", r"多老",
             r"年纪", r"年龄.*[？?]",
+            r"几几年(?:的)?", r"哪一年出生", r"九几年", r"\d{2}几年",
         ]
         for pattern in age_patterns:
             if re.search(pattern, detection_text):
@@ -1546,7 +2025,7 @@ class TurnUnderstandingService:
             return False
         return bool(
             re.search(
-                r"(找对象|想找对象|帮我找个对象|相亲|脱单|找另一半|找个男朋友|找个女朋友|认真聊聊)",
+                r"((?:想)?找(?:个)?(?:对象|另一半|男朋友|女朋友)|(?:帮(?:我|忙)?|给我)?(?:找|介绍|介绍下|牵线|安排)(?:个)?(?:对象|另一半|男朋友|女朋友)|介绍(?:个)?(?:对象|另一半|男朋友|女朋友)|相亲|脱单|认真聊聊)",
                 text,
             )
         )
@@ -1579,6 +2058,21 @@ class TurnUnderstandingService:
                 remainder = remainder.replace(token, "")
             return remainder == ""
         return False
+
+    def _has_opening_greeting_signal(self, message: str) -> bool:
+        text = str(message or "").strip()
+        if not text:
+            return False
+        if self._is_stable_opening_greeting(text):
+            return True
+        normalized = self._normalize_opening_probe_text(text)
+        if not normalized:
+            return False
+        greeting_tokens = ("你好", "您好", "hi", "hello", "哈喽", "嗨", "在吗", "在不", "早上好", "下午好", "晚上好")
+        return any(token in normalized for token in greeting_tokens)
+
+    def _looks_like_greeting(self, message: str) -> bool:
+        return self._has_opening_greeting_signal(message)
 
     def _is_opening_probe_followup_message(self, message: str, last_response: str) -> bool:
         text = str(message or "").strip()
@@ -1650,6 +2144,11 @@ class TurnUnderstandingService:
             return False
         if self._has_faq_priority_signal(previous_response):
             return True
+        if (
+            any(marker in previous_response for marker in ("保密", "严格保密", "精准", "更符合你预期"))
+            and any(marker in previous_response for marker in ("匹配", "要求", "男生", "对象"))
+        ):
+            return True
         return any(marker in previous_response for marker in FAQ_ANSWER_MARKERS)
 
     @staticmethod
@@ -1716,6 +2215,30 @@ class TurnUnderstandingService:
             return "matchmaking_intent"
         return "connective_opening"
 
+    def _extract_opening_signals(
+        self,
+        turn_input: TurnUnderstandingInput,
+        resolved_slots: Dict[str, str],
+    ) -> Dict[str, bool]:
+        message = str(turn_input.user_message or "").strip()
+        message_count = int(turn_input.message_count or 0)
+        if message_count > 1 or not message:
+            return {}
+
+        signals = {
+            "greeting": self._has_opening_greeting_signal(message),
+            "matchmaking_intent": self._is_explicit_matchmaking_intent_message(message),
+            "service_confirmation": False,
+            "low_pressure": False,
+            "clarify": False,
+            "profile_provided": bool(resolved_slots),
+        }
+        if not resolved_slots:
+            signals["service_confirmation"] = self._looks_like_opening_service_confirmation(turn_input, resolved_slots)
+            signals["low_pressure"] = self._looks_like_low_pressure_opening(turn_input, resolved_slots)
+            signals["clarify"] = self._looks_like_opening_clarify(turn_input, resolved_slots)
+        return signals
+
     def _looks_like_opening_clarify(
         self,
         turn_input: TurnUnderstandingInput,
@@ -1766,7 +2289,7 @@ class TurnUnderstandingService:
         elif context_ack_type == "opening_profile_ack":
             payload["field_ack"] = self._build_opening_profile_ack(message)
         elif context_ack_type == "field_soft_refusal_retry":
-            previous_field = self._detect_which_field_is_asked(turn_input.last_response)
+            previous_field = self._resolve_previous_asked_field(turn_input)
             if previous_field:
                 payload["field"] = previous_field
         return payload
