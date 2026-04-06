@@ -323,11 +323,32 @@ class ChatServicePreparationService:
     def _normalize_compact_text(text: str) -> str:
         return re.sub(r"[\s，,。！？!?~～、:：;；'\"（）()]+", "", str(text or "").lower()).strip()
 
+    def _looks_like_already_ended_reopen(self, text: str) -> bool:
+        message = str(text or "").strip()
+        if not message:
+            return False
+        reopen_patterns = (
+            "继续聊",
+            "继续问",
+            "继续了解",
+            "重新聊",
+            "重新开始",
+            "接着聊",
+            "往下聊",
+            "我再补",
+            "再补一个",
+            "补个微信",
+            "补个电话",
+            "补充一下",
+        )
+        return any(pattern in message for pattern in reopen_patterns) or self.host._is_resume_profile_collection_message(message)
+
     def _is_low_info_confirmation_text(self, text: str) -> bool:
         normalized = self._normalize_compact_text(text)
-        return normalized in {
+        if normalized in {
             "好",
             "好的",
+            "好呢",
             "嗯",
             "嗯嗯",
             "ok",
@@ -337,12 +358,33 @@ class ChatServicePreparationService:
             "知道了",
             "好哒",
             "好的呢",
-        }
+            "谢谢",
+            "谢谢啦",
+            "感谢",
+            "感谢啦",
+            "谢谢你",
+            "感谢你",
+            "好呢感谢",
+            "好呢谢谢",
+            "好的感谢",
+            "好的谢谢",
+            "好哒感谢",
+            "好哒谢谢",
+        }:
+            return True
+        return bool(
+            re.fullmatch(
+                r"(好|好的|好呢|好哒|嗯|嗯嗯|ok|okay|收到|收到啦|行|知道了|谢谢|谢谢啦|感谢|感谢啦|谢谢你|感谢你)+",
+                normalized,
+            )
+        )
 
     def _is_already_ended_reply_variant(self, text: str, base_response: str) -> bool:
         normalized = self._normalize_compact_text(text)
         if not normalized:
             return False
+        if self._looks_like_terminal_reply(text):
+            return True
         variants = {
             self._normalize_compact_text(base_response),
             self._normalize_compact_text("嗯嗯"),
@@ -358,7 +400,9 @@ class ChatServicePreparationService:
         markers = (
             "等好消息",
             "祝你早日脱单",
+            "匹配一般1-8小时",
             "匹配一般18小时",
+            "匹配一般1-2天",
             "匹配一般12天",
             "提前约时间",
             "不打扰你",
@@ -367,6 +411,64 @@ class ChatServicePreparationService:
             "通过微信联系你",
         )
         return any(self._normalize_compact_text(marker) in normalized for marker in markers)
+
+    async def _classify_already_ended_intent(
+        self,
+        *,
+        user_message: str,
+        user_profile: UserProfile,
+        recent_responses: list[str] | tuple[str, ...] | None = None,
+    ) -> str:
+        message = str(user_message or "").strip()
+        if not message:
+            return "end_ack"
+
+        if self._is_low_info_confirmation_text(message) or self.host._is_acknowledgement_only_message(message):
+            return "end_ack"
+
+        if self.host._is_withdraw_or_stop_message(message):
+            return "end_ack"
+
+        if self.host._get_priority_question_response(
+            message,
+            user_profile,
+            repeat_count=1,
+            recent_responses=recent_responses or (),
+        ):
+            return "end_faq"
+
+        if self._looks_like_already_ended_reopen(message):
+            return "end_reopen"
+
+        extracted = self.host.turn_understanding_service._extract_deterministic_profile_fields(message)  # noqa: SLF001
+        if extracted or self.host.turn_understanding_service._extract_simple_partner_requirement(message):  # noqa: SLF001
+            return "end_profile_update"
+
+        last_response = str((recent_responses or [])[-1] or "").strip() if recent_responses else ""
+        understanding = await self.host.unified_turn_understanding_service.analyze(
+            TurnUnderstandingInput(
+                user_message=message,
+                last_response=last_response,
+                message_count=len(recent_responses or []),
+                user_profile=user_profile,
+                conversation_context={"recent_responses": list(recent_responses or [])},
+                in_contact_flow=self.contact_context_service.has_active_contact_context(
+                    user_profile,
+                    user_message=message,
+                ),
+                pending_confirmation_field="sex" if getattr(user_profile, "pending_sex_confirmation", None) else None,
+            )
+        )
+
+        if understanding.primary_turn_type == "faq_concern":
+            return "end_faq"
+        if understanding.resume_profile_collection:
+            return "end_reopen"
+        if understanding.primary_turn_type in {"profile_answer", "contact_answer"}:
+            return "end_profile_update"
+        if understanding.primary_turn_type in {"confirmation", "invalid_input", "opening"}:
+            return "end_ack"
+        return "end_unclear"
 
     def _build_already_ended_reply(
         self,
@@ -392,7 +494,7 @@ class ChatServicePreparationService:
         normalized_last = self._normalize_compact_text(recent[-1])
         variants = ("嗯嗯", "好呀", "收到啦")
         if trailing_ended_replies >= 2:
-            return variants[trailing_ended_replies % len(variants)]
+            return ""
         if normalized_last == normalized_base:
             idx = len(recent) % len(variants)
             return variants[idx]
@@ -424,11 +526,22 @@ class ChatServicePreparationService:
         dialog_id: str,
         is_new_user_session: bool,
     ) -> Optional[AlreadyEndedPreparation]:
-        if self._is_low_info_confirmation_text(user_message) and not is_new_user_session:
+        if not is_new_user_session and user_profile.conversation_ended:
             conversation_context = await self.host.dialogue_manager.get_conversation_context(account_id)
             recent_responses = conversation_context.get("recent_responses") or []
             last_response = str(recent_responses[-1] or "").strip() if recent_responses else ""
-            if last_response and self._looks_like_terminal_reply(last_response):
+            ended_intent = await self._classify_already_ended_intent(
+                user_message=user_message,
+                user_profile=user_profile,
+                recent_responses=recent_responses,
+            )
+            if ended_intent in {"end_reopen", "end_profile_update"}:
+                logger.info("[already_ended_intent] reopen session: intent=%s", ended_intent)
+                user_profile.conversation_ended = False
+                await self.host.user_service.save_user_profile(account_id, user_profile)
+                return None
+
+            if ended_intent == "end_ack" and last_response and self._looks_like_terminal_reply(last_response):
                 final_response = self._build_already_ended_reply(user_message, last_response, recent_responses)
                 if not self._looks_like_terminal_reply(final_response):
                     final_response = self.host._sanitize_robotic_tone(final_response)
@@ -454,7 +567,12 @@ class ChatServicePreparationService:
         if user_profile.conversation_ended and not is_new_user_session:
             conversation_context = await self.host.dialogue_manager.get_conversation_context(account_id)
             recent_responses = conversation_context.get("recent_responses") or []
-            if not self._is_low_info_confirmation_text(user_message):
+            ended_intent = await self._classify_already_ended_intent(
+                user_message=user_message,
+                user_profile=user_profile,
+                recent_responses=recent_responses,
+            )
+            if ended_intent == "end_faq":
                 faq_response = self._build_already_ended_question_reply(
                     user_message=user_message,
                     user_profile=user_profile,

@@ -6797,7 +6797,7 @@ class ChatService:
             recent_openings.append(opening_signature)
             user_profile.recent_response_openings = recent_openings[-5:]
             profile_changed = True
-        if pending_sex_confirmation and asked_field == "sex":
+        if pending_sex_confirmation and (asked_field == "sex" or planned_ask_field == "sex"):
             if user_profile.pending_sex_confirmation != pending_sex_confirmation:
                 user_profile.pending_sex_confirmation = pending_sex_confirmation
                 profile_changed = True

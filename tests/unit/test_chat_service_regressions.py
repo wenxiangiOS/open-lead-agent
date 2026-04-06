@@ -458,6 +458,73 @@ async def test_finalize_generated_response_repairs_noncompliant_contact_completi
 
 
 @pytest.mark.asyncio
+async def test_finalize_generated_response_keeps_natural_contact_completion_ending_without_fixed_phrases():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_contact_completion_natural")
+    profile.sex = "男"
+    profile.age = 27
+    profile.age_label = "99年"
+    profile.education = "高中"
+    profile.monthly_income = "2万"
+    profile.location = "深圳"
+    profile.occupation = "下水管道维修工"
+    profile.marital_status = "单身"
+    profile.partner_requirement = "无特别要求"
+    profile.phone = "17688765456"
+    profile.phone_collected = True
+    profile.wechat = "wx999999"
+    profile.wechat_collected = True
+    profile.collection_progress.update(
+        {
+            "sex": True,
+            "age": True,
+            "education": True,
+            "occupation": True,
+            "location": True,
+            "marital_status": True,
+            "monthly_income": True,
+            "partner_requirement": True,
+            "contact": True,
+        }
+    )
+    chat_service._generate_ai_ending_response = AsyncMock()
+
+    natural_ending = (
+        "没问题哦，匹配一般1-2天就会有结果，后续牵线的同事联系你之前会提前跟你约好时间，"
+        "不会随便打扰你的，祝你早日脱单呀🥰"
+    )
+
+    final_response, delivery_ok, _ = await chat_service.finalize_service.finalize_generated_response(
+        account_id="u_finalize_contact_completion_natural",
+        user_profile=profile,
+        user_message="wx999999",
+        turn_decision=TurnDecision(
+            intent="general",
+            risk="none",
+            stage="complete",
+            next_action="continue",
+            primary_move="ack_and_ask",
+            ask_field=None,
+            prioritize_user_question=False,
+            allow_contact_target=False,
+            allow_medium_target=False,
+            response_channel="model",
+        ),
+        turn_understanding=TurnUnderstandingResult(primary_turn_type="contact_answer", subtype="contact_provided"),
+        collection_result={"ending_info": {"scenario": "normal_complete", "use_ai": True}},
+        response_to_clean=natural_ending,
+        ai_response=natural_ending,
+        bridge_prefix="",
+        contact_gate_before=False,
+        message_count=1,
+    )
+
+    assert delivery_ok is True
+    assert final_response == natural_ending
+    chat_service._generate_ai_ending_response.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_refused_core_field_first_time_sets_pending_retry():
     chat_service = _build_chat_service()
     service = ChatServiceCollectionPostprocessService(chat_service)
@@ -1317,8 +1384,112 @@ async def test_maybe_build_already_ended_payload_returns_light_ack_after_repeate
     )
 
     assert result is not None
-    assert result.final_response in {"嗯嗯", "好呀", "收到啦"}
+    assert result.final_response == ""
     assert result.route_name == "already_ended"
+
+
+@pytest.mark.asyncio
+async def test_maybe_build_already_ended_payload_returns_light_ack_after_natural_terminal_reply_and_thanks():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_already_ended_contact_complete_natural")
+    profile.conversation_ended = True
+    profile.phone = "17688987654"
+    profile.phone_collected = True
+    profile.wechat = "wx2392993450349"
+    profile.wechat_collected = True
+    profile.collection_progress.update(
+        {
+            "sex": True,
+            "age": True,
+            "location": True,
+            "education": True,
+            "occupation": True,
+            "marital_status": True,
+            "monthly_income": True,
+            "partner_requirement": True,
+            "contact": True,
+        }
+    )
+    profile.sex = "女"
+    profile.age = 28
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "美容类"
+    profile.marital_status = "单身"
+    profile.monthly_income = "3万"
+    profile.partner_requirement = "身高较高，外形帅气"
+    natural_terminal_reply = (
+        "好哒，匹配一般1-8小时就能出结果哦，负责牵线的同事联系你之前会提前跟你约时间的，"
+        "不会随便打扰你，祝你早日遇到合眼缘的人呀～"
+    )
+    chat_service._update_conversation_state = AsyncMock()
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service._build_chat_response = AsyncMock(return_value={"success": True, "response": "好呀"})
+    chat_service.dialogue_manager.get_conversation_context = AsyncMock(
+        return_value={"recent_responses": [natural_terminal_reply]}
+    )
+    chat_service.expectation_service.get_contact_completion_response = (
+        lambda _profile: "好的，那你等好消息啦，祝你早日脱单。"
+    )
+
+    result = await chat_service.maybe_build_already_ended_payload(
+        account_id="u_already_ended_contact_complete_natural",
+        user_profile=profile,
+        user_message="好呢，感谢",
+        dialog_id="dlg_end_complete_natural",
+        is_new_user_session=False,
+    )
+
+    assert result is not None
+    assert result.final_response in {"嗯嗯", "好呀", "收到啦"}
+    assert "等好消息" not in result.final_response
+    assert result.route_name == "already_ended"
+
+
+@pytest.mark.asyncio
+async def test_maybe_build_already_ended_payload_reopens_for_profile_update_after_end():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_already_ended_reopen_profile")
+    profile.conversation_ended = True
+    chat_service.user_service.save_user_profile = AsyncMock()
+    chat_service.dialogue_manager.get_conversation_context = AsyncMock(
+        return_value={"recent_responses": ["好哒，匹配一般1-2天就会有结果哦，不会随便打扰你。"]}
+    )
+
+    result = await chat_service.maybe_build_already_ended_payload(
+        account_id="u_already_ended_reopen_profile",
+        user_profile=profile,
+        user_message="我再补个微信吧，wx123456",
+        dialog_id="dlg_end_reopen_profile",
+        is_new_user_session=False,
+    )
+
+    assert result is None
+    assert profile.conversation_ended is False
+    chat_service.user_service.save_user_profile.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_maybe_build_already_ended_payload_reopens_for_resume_collection_message():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_already_ended_reopen_resume")
+    profile.conversation_ended = True
+    chat_service.user_service.save_user_profile = AsyncMock()
+    chat_service.dialogue_manager.get_conversation_context = AsyncMock(
+        return_value={"recent_responses": ["好哒，匹配一般1-8小时就能出结果哦，祝你顺顺利利。"]}
+    )
+
+    result = await chat_service.maybe_build_already_ended_payload(
+        account_id="u_already_ended_reopen_resume",
+        user_profile=profile,
+        user_message="继续聊资料吧",
+        dialog_id="dlg_end_reopen_resume",
+        is_new_user_session=False,
+    )
+
+    assert result is None
+    assert profile.conversation_ended is False
+    chat_service.user_service.save_user_profile.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1877,9 +2048,56 @@ def test_build_generation_prompt_instructs_same_turn_phone_ack_and_wechat_follow
     )
 
     assert "【联系方式成功后顺带追问专用生成】" in prompt
-    assert "自然确认手机号已收到" in prompt
-    assert "顺势轻问微信" in prompt
-    assert "不要只确认已收到就结束" in prompt
+    assert "这轮核心动作是顺势轻问微信" in prompt
+    assert "不需要机械地先确认再追问" in prompt
+    assert "这轮最终文案里必须明确出现“微信”" in prompt
+    assert "不要为了显得自然去复述用户资料" in prompt
+    assert "不要拿职业、城市、收入、年龄起手" in prompt
+    assert "不要用“有合适的信息/有合适的方向/沟通起来更顺/信息沟通更顺”" in prompt
+    assert "我存好咯" in prompt
+    assert "后续有合适的匹配方向我会及时联系你" in prompt
+    assert "【联系方式动作专用生成】" not in prompt
+    assert "这轮只能围绕“电话”生成" not in prompt
+
+
+def test_build_generation_prompt_instructs_same_turn_wechat_followup_even_when_pre_validation_next_action_is_none():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_contact_success_followup_prompt_none_action")
+    profile.sex = "男"
+    profile.age = 27
+    profile.age_label = "99年"
+    profile.location = "深圳"
+    profile.education = "高中"
+    profile.occupation = "下水管道维修工"
+    profile.monthly_income = "2万"
+    profile.marital_status = "单身"
+    profile.last_contact_request_type = "phone"
+    profile.phone_ask_count = 2
+
+    prompt = chat_service.build_generation_prompt(
+        user_message="17688987654",
+        user_profile=profile,
+        conversation_context={},
+        turn_decision=TurnDecision(
+            ask_field="contact",
+            response_channel="model",
+            primary_move="ack_and_ask",
+            allow_medium_target=False,
+            allow_contact_target=True,
+        ),
+        understanding_result=TurnUnderstandingResult(
+            primary_turn_type="contact_answer",
+            subtype="contact_context_reply",
+        ),
+    )
+
+    assert "【联系方式成功后顺带追问专用生成】" in prompt
+    assert "这轮核心动作是顺势轻问微信" in prompt
+    assert "这轮最终文案里必须明确出现“微信”" in prompt
+    assert "不要为了显得自然去复述用户资料" in prompt
+    assert "不要拿职业、城市、收入、年龄起手" in prompt
+    assert "【联系方式动作专用生成】" not in prompt
+    assert "这轮只能围绕“电话”生成" not in prompt
 
 
 @pytest.mark.asyncio
@@ -3943,6 +4161,32 @@ async def test_update_conversation_state_sets_pending_sex_confirmation_from_conf
 
 
 @pytest.mark.anyio
+async def test_update_conversation_state_sets_pending_sex_confirmation_when_planned_sex_soft_confirm_is_used():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_pending_sex_planned")
+    chat_service.dialogue_manager.add_to_history = AsyncMock()
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
+    chat_service.dialogue_manager.update_recent_responses = AsyncMock()
+    chat_service.dialogue_manager.increment_message_count = AsyncMock()
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=6)
+    chat_service.ask_tracking_service.track_ai_asked_fields = AsyncMock()
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+
+    await chat_service._update_conversation_state(
+        "u_pending_sex_planned",
+        "高点的帅气的",
+        "好哒，这些我都记下了，你这边是女生对吧？",
+        "",
+        turn_decision=SimpleNamespace(ask_field="sex"),
+        track_asked_fields=True,
+    )
+
+    assert profile.pending_sex_confirmation == "女"
+    chat_service.user_service.save_user_profile.assert_awaited()
+
+
+@pytest.mark.anyio
 async def test_update_conversation_state_records_side_field_for_composite_confirm_prompt():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_pending_sex_side")
@@ -4162,6 +4406,54 @@ def test_build_policy_field_prompt_prefers_soft_gender_confirmation_from_partner
     assert "男生还是女生" not in response
     assert "男生" in response
     assert any(token in response for token in ("对吧", "是吧", "确认"))
+
+
+def test_build_policy_field_prompt_prefers_soft_gender_confirmation_from_handsome_tall_partner_requirement():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_soft_gender_priority_handsome_tall")
+    profile.partner_requirement = "身高较高、外形帅气"
+
+    response = chat_service._build_policy_field_prompt("sex", profile, user_message="喜欢高点的帅气的")
+
+    assert "男生还是女生" not in response
+    assert "女生" in response
+    assert any(token in response for token in ("对吧", "是吧", "确认"))
+
+
+def test_build_generation_prompt_prefers_soft_gender_confirmation_for_handsome_tall_partner_requirement():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_soft_gender_prompt_handsome_tall")
+    profile.age = 28
+    profile.age_label = "98年"
+    profile.location = "深圳"
+    profile.occupation = "美容相关"
+    profile.monthly_income = "3万"
+    profile.education = "本科"
+    profile.marital_status = "单身"
+    profile.partner_requirement = "身高较高、外形帅气"
+
+    prompt = chat_service.build_generation_prompt(
+        user_message="本科，单身呢",
+        user_profile=profile,
+        conversation_context={},
+        turn_decision=TurnDecision(
+            ask_field="sex",
+            response_channel="model",
+            primary_move="ack_and_ask",
+            allow_medium_target=False,
+            allow_contact_target=True,
+        ),
+        understanding_result=TurnUnderstandingResult(
+            primary_turn_type="profile_answer",
+            subtype="multi_slot_compound",
+            resolved_slots={"education": "本科", "marital_status": "单身"},
+        ),
+    )
+
+    assert "【性别软确认专用生成】" in prompt
+    assert "不要直接写“你是男生还是女生呀？”" in prompt
+    assert "不要说“我听出来了/我分析出来了/按你的偏好判断”" in prompt
+    assert "女生" in prompt
 
 
 @pytest.mark.anyio

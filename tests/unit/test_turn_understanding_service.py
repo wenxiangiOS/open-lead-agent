@@ -620,9 +620,41 @@ def test_turn_understanding_extracts_simple_partner_requirement_from_modal_parti
     assert service._extract_simple_partner_requirement("温柔吧") == "温柔"  # noqa: SLF001
 
 
+def test_turn_understanding_extracts_numeric_height_preference_from_short_reply():
+    service = TurnUnderstandingService(_StubChatService())
+    assert service._extract_simple_partner_requirement("180吧") == "身高180cm"  # noqa: SLF001
+    assert service._extract_simple_partner_requirement("175以上") == "身高175cm以上"  # noqa: SLF001
+
+
 def test_turn_understanding_extracts_simple_partner_requirement_from_polluted_short_answer():
     service = TurnUnderstandingService(_StubChatService())
     assert service._extract_simple_partner_requirement("本科，我温柔 点") == "温柔"  # noqa: SLF001
+
+
+def test_turn_understanding_guard_blocks_age_pollution_in_partner_requirement_height_context():
+    service = TurnUnderstandingService(_StubChatService())
+    guarded = service._apply_extraction_guards(  # noqa: SLF001
+        {"age": "18"},
+        "180吧",
+        last_response="嗯呐，那你希望对方的身高大概在什么范围呀？",
+    )
+    assert guarded["partner_requirement"] == "身高180cm"
+    assert "age" not in guarded
+    assert "age_label" not in guarded
+
+
+def test_turn_understanding_analyze_treats_numeric_height_reply_as_partner_requirement_not_age():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input(
+            "180吧",
+            last_response="嗯呐，那你希望对方的身高大概在什么范围呀？",
+            message_count=8,
+        )
+    )
+    assert result.resolved_slots["partner_requirement"] == "身高180cm"
+    assert "age" not in result.resolved_slots
+    assert "age_label" not in result.resolved_slots
 
 
 def test_turn_understanding_guard_prioritizes_sex_answer_in_sex_question_context():

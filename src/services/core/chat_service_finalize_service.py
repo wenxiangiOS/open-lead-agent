@@ -283,10 +283,6 @@ class ChatServiceFinalizeService:
             bool(text)
             and not contains_question
             and has_expected_timeline
-            and "提前约时间" in text
-            and "不打扰你" in text
-            and ("等好消息" in text or "好消息" in text)
-            and "祝你早日脱单" in text
             and not any(marker in text for marker in banned_markers)
         )
         if looks_like_valid_ending:
@@ -309,10 +305,6 @@ class ChatServiceFinalizeService:
         regenerated_valid = (
             not regenerated_contains_question
             and regenerated_has_expected_timeline
-            and "提前约时间" in regenerated
-            and "不打扰你" in regenerated
-            and ("等好消息" in regenerated or "好消息" in regenerated)
-            and "祝你早日脱单" in regenerated
             and not any(marker in regenerated for marker in banned_markers)
         )
         return regenerated if regenerated_valid else fallback

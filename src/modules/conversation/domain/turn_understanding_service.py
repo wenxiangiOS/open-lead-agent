@@ -496,6 +496,21 @@ class TurnUnderstandingService:
             )
             blocked.update(pre_blocked)
 
+        asked_field = self._detect_which_field_is_asked(last_response)
+        if asked_field == "partner_requirement":
+            partner_preference = self._extract_simple_partner_requirement(message)
+            if partner_preference:
+                raw_fields["partner_requirement"] = partner_preference
+                if "age" in raw_fields or "age_label" in raw_fields:
+                    raw_fields.pop("age", None)
+                    raw_fields.pop("age_label", None)
+                    logger.info("[提取保护] 槽位解析命中择偶要求上下文，移除 age/age_label 数字污染")
+        elif self._extract_numeric_height_preference(message) and "partner_requirement" in raw_fields:
+            if "age" in raw_fields or "age_label" in raw_fields:
+                raw_fields.pop("age", None)
+                raw_fields.pop("age_label", None)
+                logger.info("[提取保护] 槽位解析命中数字身高偏好，移除 age/age_label 数字污染")
+
         compact_message = re.sub(r"\s+", "", message)
         if "sex" not in raw_fields and re.search(r"(^|[，,、])(?:男生|男的|男)(?=$|[，,、])", compact_message):
             raw_fields["sex"] = "男"
@@ -1001,6 +1016,9 @@ class TurnUnderstandingService:
             return "无特别要求"
         if any(token in compact_message for token in ("随缘", "看感觉", "看眼缘", "看缘分", "顺其自然")):
             return "看感觉/随缘"
+        numeric_height_preference = self._extract_numeric_height_preference(compact_message)
+        if numeric_height_preference:
+            return numeric_height_preference
         compact_message = re.sub(
             r"(^|[，,])我(?=(温柔|性格好|聊得来|合适|人好|高挑|高一点|同城优先|成熟稳重|三观合拍))",
             r"\1",
@@ -1045,6 +1063,26 @@ class TurnUnderstandingService:
         if len(normalized) == 1 and normalized[0] in {"男生", "女生"}:
             return None
         return "，".join(normalized) if normalized else None
+
+    @staticmethod
+    def _extract_numeric_height_preference(message: str) -> str | None:
+        text = str(message or "").strip()
+        if not text:
+            return None
+        compact = re.sub(r"\s+", "", text)
+        short_meter_match = re.fullmatch(r"1米([5-9])", compact)
+        if short_meter_match:
+            return f"身高1米{short_meter_match.group(1)}"
+        meter_match = re.fullmatch(r"1米([5-9]\d)", compact)
+        if meter_match:
+            return f"身高{meter_match.group(1)}cm"
+        bare_match = re.fullmatch(r"(1[5-9]\d)(?:cm|CM)?(?:左右|以上|以下|以内|吧)?", compact)
+        if bare_match:
+            suffix = compact[bare_match.end(1):]
+            normalized_suffix = suffix.replace("CM", "cm").replace("cm", "")
+            normalized_suffix = re.sub(r"^吧$", "", normalized_suffix)
+            return f"身高{bare_match.group(1)}cm{normalized_suffix}"
+        return None
 
     @staticmethod
     def _normalize_partner_requirement_value(value: str) -> str:
@@ -1469,6 +1507,7 @@ class TurnUnderstandingService:
         guarded = dict(extracted_data or {})
         message = str(user_message or "").strip()
         last_ai = str(last_response or "")
+        asked_field = self._detect_which_field_is_asked(last_ai)
 
         if last_ai and self._looks_like_refusal(message):
             refused_fields = self._detect_asked_fields_from_context(last_ai)
@@ -1577,6 +1616,28 @@ class TurnUnderstandingService:
                     guarded["age_label"] = age_label
                     logger.info("[提取保护] 出生年问答上下文命中，按 short answer 强制写入 age/age_label")
 
+        numeric_height_preference = self._extract_numeric_height_preference(message)
+        if numeric_height_preference and ("age" in guarded or "age_label" in guarded):
+            guarded["partner_requirement"] = str(guarded.get("partner_requirement") or numeric_height_preference).strip()
+            guarded.pop("age", None)
+            guarded.pop("age_label", None)
+            logger.info("[提取保护] 数字身高偏好命中，移除 age/age_label 数字污染")
+
+        if asked_field == "partner_requirement":
+            partner_preference = self._extract_simple_partner_requirement(message)
+            if partner_preference:
+                guarded["partner_requirement"] = partner_preference
+            if partner_preference and ("age" in guarded or "age_label" in guarded):
+                guarded.pop("age", None)
+                guarded.pop("age_label", None)
+                logger.info("[提取保护] 择偶要求问答上下文命中，移除 age/age_label 数字污染")
+            elif self._extract_numeric_height_preference(message) and (
+                "age" in guarded or "age_label" in guarded
+            ):
+                guarded.pop("age", None)
+                guarded.pop("age_label", None)
+                logger.info("[提取保护] 择偶身高上下文命中，移除 age/age_label 数字污染")
+
         if not guarded:
             return guarded
 
@@ -1674,6 +1735,9 @@ class TurnUnderstandingService:
                 r"更看重对方哪一点",
                 r"有什么要求",
                 r"想找个什么样",
+                r"希望对方的身高",
+                r"身高大概在什么范围",
+                r"身高.*范围",
             ),
         }
         for field, patterns in pattern_map.items():

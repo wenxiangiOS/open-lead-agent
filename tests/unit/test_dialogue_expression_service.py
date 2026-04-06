@@ -217,6 +217,18 @@ def test_render_field_question_for_sex_keeps_neutral_question_when_only_single_w
     assert "男生还是女生" in response
 
 
+def test_render_field_question_for_sex_uses_soft_confirmation_for_handsome_tall_preference():
+    service = DialogueExpressionService()
+    profile = UserProfile(account_id="u_expr_sex_handsome_tall")
+    profile.partner_requirement = "身高较高、外形帅气"
+
+    response = service.render_field_question("sex", profile=profile, stage="trust", user_message="喜欢高点的帅气的")
+
+    assert "男生还是女生" not in response
+    assert "女生" in response
+    assert any(token in response for token in ("对吧", "对吗", "确认"))
+
+
 def test_render_field_question_for_sex_handles_user_challenge_with_text_chat_style():
     service = DialogueExpressionService()
     profile = UserProfile(account_id="u_expr_sex_challenge")

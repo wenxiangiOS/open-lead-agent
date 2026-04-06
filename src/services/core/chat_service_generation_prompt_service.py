@@ -166,13 +166,17 @@ class ChatServiceGenerationPromptService:
         return (
             "【联系方式成功后顺带追问专用生成】\n"
             f"用户这轮刚刚提供了有效{current_label}，而且按当前状态机，下一步应该继续询问{followup_label}。\n"
-            "这轮第一次生成就要一次性完成两个动作：\n"
-            f"1. 自然确认{current_label}已收到；\n"
-            f"2. 顺势轻问{followup_label}。\n"
+            "这轮第一次生成就要自然顺着当前语境，把下一步联系方式继续问出来。\n"
             "第一次生成的话术就是最终展示话术，后续不会再改写。\n"
-            "这轮不要只确认已收到就结束，也不要拆到下一轮再问。\n"
-            "语气要像真人顺着聊，只能给一句很轻的原因，比如后面沟通更顺一点、联系更方便一点。\n"
+            f"这轮核心动作是顺势轻问{followup_label}，不要停留在“只确认{current_label}已收到”。\n"
+            "不需要机械地先确认再追问，可以像真人一样自然转到下一句联系方式追问。\n"
+            "不要只确认已收到就结束，也不要拆到下一轮再问。\n"
+            "语气要像真人顺着聊，整句尽量短，只保留一个很轻的理由，比如平时联系会顺手一点、后面找你方便一点。\n"
+            "不要为了显得自然去复述用户资料，不要拿职业、城市、收入、年龄起手，不要写“你平时应该挺忙的”“你在深圳做什么工作”这种铺垫。\n"
+            "不要用“有合适的信息/有合适的方向/沟通起来更顺/信息沟通更顺”这类明显业务腔表达。\n"
             "不要营销腔，不要承诺过满，不要固定模板复读。\n"
+            "禁止写成已经完成收集、准备后续联系的口吻，比如“我存好了/我存好咯/我记下了/我都备注清楚了/后续有合适的匹配方向我会及时联系你/后面联系你/回头联系你”。\n"
+            f"这轮最终文案里必须明确出现“{followup_label}”。\n"
         )
 
     def _should_limit_opening_followup_to_single_field(
@@ -287,6 +291,23 @@ class ChatServiceGenerationPromptService:
         else:
             instruction += "7. 这轮只问当前主字段，不要额外再补第二个无关问题。\n"
         return instruction
+
+    @staticmethod
+    def _build_soft_gender_confirmation_generation_instruction(*, soft_confirmation: str) -> str:
+        confirmation = str(soft_confirmation or "").strip()
+        if not confirmation:
+            return ""
+        return (
+            "【性别软确认专用生成】\n"
+            "当前唯一主任务：这轮对性别使用软确认式问法，不要回退成直接硬问。\n"
+            "第一次生成的话术就是最终展示话术，后续不会再改写。\n"
+            f"建议问法方向：{confirmation}\n"
+            "这轮必须满足：\n"
+            "1. 问法要像顺手确认一下，不要像重新审问资料。\n"
+            "2. 不要直接写“你是男生还是女生呀？”。\n"
+            "3. 不要说“我听出来了/我分析出来了/按你的偏好判断”。\n"
+            "4. 只围绕性别做轻确认，不要额外拼第二个问题。\n"
+        )
 
     @staticmethod
     def _build_retry_generation_instruction(*, ask_field: str, retry_reason: str) -> str:
@@ -445,14 +466,31 @@ class ChatServiceGenerationPromptService:
         ):
             side_target = ""
         primary_followup_instruction = ""
+        if ask_field == "sex":
+            preference_hint = str(
+                dict(getattr(understanding_result, "resolved_slots", {}) or {}).get("partner_requirement")
+                or getattr(user_profile, "partner_requirement", "")
+                or self.host.turn_understanding_service._extract_simple_partner_requirement(user_message)  # noqa: SLF001
+                or ""
+            ).strip()
+            soft_confirmation = self.host.dialogue_expression_service._build_soft_gender_confirmation_prompt(  # noqa: SLF001
+                user_profile,
+                user_message=user_message,
+                preference_hint=preference_hint,
+            )
+            if soft_confirmation:
+                primary_followup_instruction = self._build_soft_gender_confirmation_generation_instruction(
+                    soft_confirmation=soft_confirmation
+                )
         if ask_field in retryable_fields and not (
             getattr(understanding_result, "subtype", None) == "soft_refusal_current_field"
             or pending_retry_field == ask_field
         ):
-            primary_followup_instruction = self._build_primary_followup_generation_instruction(
-                ask_field=ask_field,
-                side_target=side_target if getattr(turn_decision, "allow_medium_target", False) else "",
-            )
+            if not primary_followup_instruction:
+                primary_followup_instruction = self._build_primary_followup_generation_instruction(
+                    ask_field=ask_field,
+                    side_target=side_target if getattr(turn_decision, "allow_medium_target", False) else "",
+                )
         if ask_field in retryable_fields:
             if getattr(understanding_result, "subtype", None) == "soft_refusal_current_field":
                 retry_instruction = self._build_retry_generation_instruction(
@@ -465,22 +503,34 @@ class ChatServiceGenerationPromptService:
                     retry_reason="pending_retry",
                 )
         if ask_field == "contact":
+            success_followup_instruction = self._build_contact_success_followup_generation_instruction(
+                user_message=user_message,
+                user_profile=user_profile,
+                action_value="",
+            )
             try:
                 next_action = self.host.contact_service.get_next_action(user_profile, user_message)
                 action_value = str(getattr(next_action, "value", next_action) or "").strip()
             except Exception:
                 action_value = ""
-            if action_value in {"ask_phone", "persuade_phone", "ask_wechat", "persuade_wechat"}:
+            if not success_followup_instruction and action_value in {"ask_phone", "persuade_phone", "ask_wechat", "persuade_wechat"}:
+                success_followup_instruction = self._build_contact_success_followup_generation_instruction(
+                    user_message=user_message,
+                    user_profile=user_profile,
+                    action_value=action_value,
+                )
+            if action_value in {"ask_phone", "persuade_phone", "ask_wechat", "persuade_wechat"} or success_followup_instruction:
+                contact_action_instruction = ""
+                if not success_followup_instruction and action_value in {"ask_phone", "persuade_phone", "ask_wechat", "persuade_wechat"}:
+                    contact_action_instruction = self._build_contact_action_generation_instruction(
+                        action_value=action_value,
+                    )
                 retry_instruction = "\n\n".join(
                     part for part in (
                         primary_followup_instruction,
                         retry_instruction,
-                        self._build_contact_action_generation_instruction(action_value=action_value),
-                        self._build_contact_success_followup_generation_instruction(
-                            user_message=user_message,
-                            user_profile=user_profile,
-                            action_value=action_value,
-                        ),
+                        contact_action_instruction,
+                        success_followup_instruction,
                         self._build_contact_candidate_generation_instruction(
                             user_message=user_message,
                             user_profile=user_profile,
