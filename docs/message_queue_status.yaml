@@ -1,6 +1,6 @@
 version: 1
 project: message_queue_orchestration
-last_updated: "2026-03-18 23:59:30 +0800"
+last_updated: "2026-04-08 11:14:30 +0800"
 baseline_commit: "2bef0da"
 owner: "unassigned"
 
@@ -27,9 +27,12 @@ status:
         - "pytest -q -o addopts='' tests/unit/test_queue_intent_classifier.py tests/unit/test_queue_store.py tests/unit/test_message_orchestrator.py tests/unit/test_reply_sender_worker.py tests/unit/test_message_queue_worker.py tests/unit/test_reply_delivery_service.py"
         - "pytest -q -o addopts='' tests/integration/test_message_queue_pipeline_integration.py"
         - "pytest -q -o addopts='' tests/integration/test_xhs_ingest_to_delivery_local_http.py"
+        - "pytest -q -o addopts='' tests/integration/test_message_queue_pipeline_integration.py tests/unit/test_reply_sender_worker.py tests/unit/test_queue_store.py tests/unit/test_message_orchestrator.py tests/unit/test_xiaohongshu_ingest_route.py tests/unit/test_app_mq_toggle.py"
       test_results:
         - "queue integration tests: 4 passed"
         - "local-http delivery e2e: 1 passed"
+        - "mq focused regression pack: 34 passed"
+        - "validated semantics: RUNNING + ordinary new messages => dirty=true then next turn; cancel-like only => stale drop"
       updated_by: "codex-gpt5"
 
   p1:

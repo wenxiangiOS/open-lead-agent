@@ -314,6 +314,12 @@ worker 迁移：
 - `RUNNING` 完成且无新消息 -> `IDLE`
 - `RUNNING` 完成且有新消息 -> `DEBOUNCING`（`now + MQ_RUNNING_RECHECK_MS`）
 
+首版语义澄清：
+
+- `RUNNING` 期间收到**普通补发消息**时，不提升 `generation`，也**不要求**把当前 turn 判成 stale。
+- 当前 turn 可以正常完成并投递；worker 在 `finish_turn_success()` 后基于 `dirty=true` 触发下一轮。
+- 只有 `cancel / 结束 / 反悔` 这类消息才通过 `generation += 1` 让旧 turn 回复 stale drop。
+
 ### 0.5 关键参数默认值（首版强制）
 
 ```python
@@ -1647,6 +1653,7 @@ next_retry_at_ms = now_ms + delay * 1000
 
 1. 连续发送 4 条短消息，最终只调用一次 `ChatService`
 2. AI 处理中再次发消息，旧轮结束后会触发下一轮
+   这里指普通补发消息默认遵循 `RUNNING + dirty=true` 语义：当前轮可先完成，随后再跑下一轮；并不要求普通补发也 stale 掉当前轮。
 3. AI 处理中发送“算了”，旧轮结果不再发送
 4. 平台重复回调不会触发重复回复
 5. sender 失败后最多重试到配置上限

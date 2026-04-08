@@ -65,6 +65,15 @@ class ReplySenderWorker:
                         if self._stop_event.is_set():
                             return
                         try:
+                            if hasattr(self.queue_store, "is_outbox_job_stale") and await self.queue_store.is_outbox_job_stale(job):
+                                logger.info(
+                                    "[mq.sender] stale outbox job dropped",
+                                    extra={"job_id": job.job_id, "account_id": job.account_id, "generation": job.generation},
+                                )
+                                await self.queue_store.mark_outbox_done(job.job_id)
+                                await self._incr_metric("outbox_delivery_drop")
+                                await self._incr_metric("stale_drop_count")
+                                return
                             await self.delivery_service.send_reply(
                                 account_id=job.account_id,
                                 reply_text=job.reply_text,

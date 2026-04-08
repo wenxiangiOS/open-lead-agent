@@ -156,6 +156,77 @@ async def _test_cancel_drops_stale_reply():
     assert metrics["stale_drop_count"] >= 1
 
 
+def test_running_new_messages_trigger_next_turn_after_current_turn_finishes():
+    asyncio.run(_test_running_new_messages_trigger_next_turn_after_current_turn_finishes())
+
+
+async def _test_running_new_messages_trigger_next_turn_after_current_turn_finishes():
+    redis_service.enabled = False
+
+    store = QueueStore()
+    chat = SlowFirstTurnChatService()
+    orchestrator = MessageOrchestrator(chat_service=chat, queue_store=store)
+    worker = MessageQueueWorker(orchestrator=orchestrator, queue_store=store, batch_size=20, poll_ms=10)
+
+    worker_task = asyncio.create_task(worker.run_forever())
+
+    account_id = "it_running_dirty_user"
+    await orchestrator.ingest(
+        {
+            "accountId": account_id,
+            "dialogId": "d_running_dirty",
+            "message": "我来自深圳 好了",
+            "platformMsgId": "running_dirty_1",
+            "timestamp": "2026-03-18T12:03:00+08:00",
+        }
+    )
+
+    await asyncio.wait_for(chat.first_call_started.wait(), timeout=1.0)
+
+    await orchestrator.ingest(
+        {
+            "accountId": account_id,
+            "dialogId": "d_running_dirty",
+            "message": "我今年35岁",
+            "platformMsgId": "running_dirty_2",
+            "timestamp": "2026-03-18T12:03:02+08:00",
+        }
+    )
+    await orchestrator.ingest(
+        {
+            "accountId": account_id,
+            "dialogId": "d_running_dirty",
+            "message": "我想找一个深圳的男的",
+            "platformMsgId": "running_dirty_3",
+            "timestamp": "2026-03-18T12:03:03+08:00",
+        }
+    )
+
+    # Non-cancel messages during RUNNING should mark dirty=true and trigger the next turn
+    # after the current turn finishes, rather than stale-dropping the current turn.
+    chat.release_first_call.set()
+
+    await asyncio.sleep(0.7)
+    worker.stop()
+    await asyncio.sleep(0.05)
+    worker_task.cancel()
+    await asyncio.gather(worker_task, return_exceptions=True)
+
+    assert chat.questions == [
+        "我来自深圳 好了",
+        "我今年35岁\n我想找一个深圳的男的",
+    ]
+
+    jobs = list(store._memory_outbox.values())  # noqa: SLF001
+    replies = [job.reply_text for job in jobs]
+    assert len(replies) == 2
+    assert any("我来自深圳 好了" in reply for reply in replies)
+    assert any("我今年35岁\n我想找一个深圳的男的" in reply for reply in replies)
+
+    metrics = await store.get_queue_metrics()
+    assert metrics["stale_drop_count"] == 0
+
+
 def test_worker_restart_can_resume_pending_messages():
     asyncio.run(_test_worker_restart_can_resume_pending_messages())
 
@@ -187,3 +258,50 @@ async def _test_worker_restart_can_resume_pending_messages():
     session = await store.get_session(account_id)
     assert session.last_consumed_seq >= 1
     assert len(chat.questions) >= 1
+
+
+def test_recover_stale_running_session_and_resume_processing():
+    asyncio.run(_test_recover_stale_running_session_and_resume_processing())
+
+
+async def _test_recover_stale_running_session_and_resume_processing():
+    redis_service.enabled = False
+
+    store = QueueStore()
+    chat = EchoChatService()
+    orchestrator = MessageOrchestrator(chat_service=chat, queue_store=store)
+
+    account_id = "it_recover_running_user"
+    now_ms = int(time.time() * 1000)
+
+    await orchestrator.ingest(
+        {
+            "accountId": account_id,
+            "dialogId": "d_recover",
+            "message": "恢复场景消息 好了",
+            "platformMsgId": "recover_1",
+            "timestamp": "2026-03-18T12:04:00+08:00",
+        }
+    )
+
+    session = await store.get_session(account_id)
+    session.state = "RUNNING"
+    session.active_turn_id = "stale_turn_id"
+    session.updated_at_ms = now_ms - 999999
+    store._memory_sessions[account_id] = session  # noqa: SLF001
+
+    recovered = await store.recover_stale_running_sessions(now_ms, stale_after_ms=1000, limit=10)
+    assert recovered == 1
+
+    worker = MessageQueueWorker(orchestrator=orchestrator, queue_store=store, batch_size=20, poll_ms=10)
+    await _run_worker_for(worker, 1.0)
+
+    session = await store.get_session(account_id)
+    assert session.state == "IDLE"
+    assert session.last_consumed_seq >= 1
+    assert len(chat.questions) == 1
+    assert chat.questions[0] == "恢复场景消息 好了"
+
+    jobs = list(store._memory_outbox.values())  # noqa: SLF001
+    assert len(jobs) == 1
+    assert "恢复场景消息 好了" in jobs[0].reply_text

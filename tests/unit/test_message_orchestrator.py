@@ -87,6 +87,35 @@ async def _test_ingest_returns_queued():
     assert result["status"] == "queued"
 
 
+def test_ingest_duplicate_returns_duplicate_status():
+    asyncio.run(_test_ingest_duplicate_returns_duplicate_status())
+
+
+async def _test_ingest_duplicate_returns_duplicate_status():
+    redis_service.enabled = False
+    store = QueueStore()
+    orchestrator = MessageOrchestrator(chat_service=DummyChatService(), queue_store=store)
+
+    payload = {
+        "accountId": "u_dup",
+        "dialogId": "d_dup",
+        "message": "你好",
+        "platformMsgId": "pm_dup_1",
+        "timestamp": "2026-03-18T00:00:00+08:00",
+    }
+
+    first = await orchestrator.ingest(payload)
+    second = await orchestrator.ingest(payload)
+
+    assert first["accepted"] is True
+    assert first["status"] == "queued"
+    assert second["accepted"] is False
+    assert second["status"] == "duplicate"
+
+    metrics = await store.get_queue_metrics()
+    assert metrics["ingest_duplicate"] == 1
+
+
 def test_combine_messages_keep_last():
     messages = [
         {"content": "第一句"},

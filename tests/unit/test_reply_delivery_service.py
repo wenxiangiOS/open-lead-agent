@@ -41,6 +41,27 @@ async def _test_delivery_fallback_to_backup_endpoint():
     ]
 
 
+def test_delivery_primary_success_does_not_call_backup():
+    asyncio.run(_test_delivery_primary_success_does_not_call_backup())
+
+
+async def _test_delivery_primary_success_does_not_call_backup():
+    service = FakeReplyDeliveryService(
+        primary="https://primary.example/send",
+        backup="https://backup.example/send",
+        fail_primary=False,
+    )
+
+    await service.send_reply(
+        account_id="u1",
+        reply_text="hello",
+        dialog_id="d1",
+        idempotency_key="job1",
+    )
+
+    assert service.calls == ["https://primary.example/send"]
+
+
 def test_delivery_skip_when_no_endpoint():
     asyncio.run(_test_delivery_skip_when_no_endpoint())
 

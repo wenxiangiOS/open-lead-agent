@@ -783,6 +783,10 @@ class QueueStore:
         await client.setex(key, self._session_ttl(), json.dumps(item, ensure_ascii=False))
         await client.zadd(self._key("mq:outbox:ready"), {job_id: next_retry_at_ms})
 
+    async def is_outbox_job_stale(self, job: OutboxJob) -> bool:
+        session = await self.get_session(job.account_id)
+        return int(session.generation) != int(job.generation)
+
     async def append_delivered_reply(
         self,
         account_id: str,
