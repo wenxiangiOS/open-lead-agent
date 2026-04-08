@@ -158,6 +158,10 @@ class _ModelExtractionService:
     def _parse_age(text):
         return None
 
+    @staticmethod
+    def _looks_like_partner_age_range_expression(text):
+        return False
+
 
 class _ModelChatService:
     def __init__(self):
@@ -167,6 +171,7 @@ class _ModelChatService:
         self.extraction_service = _ModelExtractionService()
         self.response_payload = None
         self.state_updates = []
+        self.short_circuit_kwargs = None
 
     async def maybe_build_already_ended_payload(self, **kwargs):
         return None
@@ -204,6 +209,7 @@ class _ModelChatService:
         )()
 
     async def maybe_build_pre_generation_short_circuit_payload(self, **kwargs):
+        self.short_circuit_kwargs = kwargs
         return None, None, kwargs["user_profile"]
 
     async def handle_refusal_detection(self, user_message, account_id, user_profile):
@@ -757,3 +763,32 @@ async def test_execute_restores_monthly_income_after_quick_faq_confirmation():
     assert "电话" not in resume_payload["response"]
     assert chat_service.generation_called == 1
     assert chat_service.user_service.profile.resume_profile_target is None
+
+
+@pytest.mark.asyncio
+async def test_execute_suppresses_under_limit_short_circuit_for_partner_age_range_expression():
+    class _PartnerAgeExtractionService(_ModelExtractionService):
+        @staticmethod
+        def _parse_age(text):
+            return 3
+
+        @staticmethod
+        def _looks_like_partner_age_range_expression(text):
+            return "上下3岁" in str(text or "")
+
+    chat_service = _ModelChatService()
+    chat_service.extraction_service = _PartnerAgeExtractionService()
+    use_case = ProcessChatTurnUseCase(chat_service=chat_service)
+
+    payload = await use_case.execute(
+        ChatRequest(
+            question="是的，89年的想找个上下3岁的男朋友",
+            accountId="u_partner_age_range",
+            dialogId="dlg_partner_age_range",
+        )
+    )
+
+    assert payload["success"] is True
+    assert payload["meta"]["route"] == "model"
+    assert chat_service.short_circuit_kwargs is not None
+    assert chat_service.short_circuit_kwargs["parsed_age"] is None

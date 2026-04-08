@@ -219,6 +219,39 @@ def test_turn_understanding_extracts_age_from_natural_self_report():
     assert result.resolved_slots["age"] == "36"
 
 
+def test_turn_understanding_treats_no_education_as_valid_education_answer():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(_make_input("没有学历"))
+    assert result.primary_turn_type == "profile_answer"
+    assert result.resolved_slots["education"] == "没学历"
+
+
+def test_turn_understanding_treats_divorce_as_valid_marital_status_answer():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(_make_input("离婚"))
+    assert result.primary_turn_type == "profile_answer"
+    assert result.resolved_slots["marital_status"] == "离异"
+
+
+def test_turn_understanding_extracts_sex_and_marital_status_from_affirmative_compound_answer():
+    service = TurnUnderstandingService(_StubChatService())
+    profile = UserProfile(account_id="u_affirmative_compound")
+    profile.pending_sex_confirmation = "女"
+
+    result = service.analyze(
+        _make_input(
+            "是的，离婚",
+            last_response="我顺嘴核对下哦，你是女生对吧？另外你现在的感情状态大概是什么样呀？",
+            user_profile=profile,
+            pending_confirmation_field="sex",
+        )
+    )
+
+    assert result.primary_turn_type == "profile_answer"
+    assert result.resolved_slots["sex"] == "女"
+    assert result.resolved_slots["marital_status"] == "离异"
+
+
 def test_turn_understanding_opening_matchmaking_with_explicit_age_keeps_actual_age():
     service = TurnUnderstandingService(_StubChatService())
     result = service.analyze(_make_input("我想找对象，我今年26岁", message_count=1))
@@ -442,6 +475,17 @@ def test_turn_understanding_normalizes_noisy_beauty_occupation_prefix():
 
     assert extracted["occupation"] == "美容"
     assert extracted["monthly_income"] == "7万左右"
+
+
+def test_turn_understanding_extracts_short_occupation_answer_in_occupation_context():
+    service = TurnUnderstandingService(_StubChatService())
+    profile = UserProfile(account_id="u_short_occupation")
+    profile.last_asked_field = "occupation"
+
+    result = service.analyze(_make_input("客服", last_response="你现在是做什么工作的呀？", user_profile=profile))
+
+    assert result.primary_turn_type == "profile_answer"
+    assert result.resolved_slots["occupation"] == "客服"
 
 
 def test_turn_understanding_extracts_generic_location_short_reply():

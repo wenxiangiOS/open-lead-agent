@@ -35,6 +35,14 @@ class AIContextDisambiguationLayer:
         "closing_exit",
     }
 
+    @staticmethod
+    def _resolve_ai_timeout() -> float:
+        try:
+            timeout = float(os.getenv("UNIFIED_TURN_AI_DISAMBIGUATION_TIMEOUT_SECONDS", "20"))
+        except (TypeError, ValueError):
+            timeout = 20.0
+        return max(1.0, timeout)
+
     async def analyze(
         self,
         *,
@@ -80,7 +88,7 @@ class AIContextDisambiguationLayer:
                 system_prompt,
                 temperature=0.0,
                 max_tokens=60,
-                timeout=8.0,
+                timeout=self._resolve_ai_timeout(),
             )
         except AIServiceException as exc:
             logger.warning("[unified_understanding.ai_disambiguation] failed: %s", exc)

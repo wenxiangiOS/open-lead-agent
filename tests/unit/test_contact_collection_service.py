@@ -127,6 +127,7 @@ class TestContactCollectionService:
         """下一步动作 - 非香港用户电话已收集，询问微信（仅1次）"""
         profile = UserProfile(account_id="test", location="北京")
         profile.phone_collected = True
+        profile.phone = "13800138000"
         assert self.service.get_next_action(profile) == NextAction.ASK_WECHAT
 
     def test_detect_refusal_does_not_pollute_contact_state_when_only_next_action_is_contact(self):
@@ -150,6 +151,7 @@ class TestContactCollectionService:
         """下一步动作 - 非香港用户电话已收集，微信已问过"""
         profile = UserProfile(account_id="test", location="北京")
         profile.phone_collected = True
+        profile.phone = "13800138000"
         profile.wechat_ask_count = 1
         profile.wechat_effective_ask_count = 1
         assert self.service.get_next_action(profile) == NextAction.NONE
@@ -313,6 +315,70 @@ class TestContactCollectionService:
         assert result is not None
         assert result.contact_type == 'wechat'
         assert result.is_refusal == True
+
+    def test_detect_refusal_phone_only_preference_counts_as_wechat_refusal_after_phone_collected(self):
+        """已收电话后说“电话联系就好了”，应视为拒绝微信。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone = "13800138000"
+        profile.phone_collected = True
+        profile.wechat_ask_count = 1
+        profile.wechat_effective_ask_count = 1
+        profile.last_contact_request_type = "wechat"
+
+        result = self.service.detect_refusal("电话联系就好了", profile, "方便给下你的微信不")
+
+        assert result is not None
+        assert result.contact_type == 'wechat'
+        assert result.is_final is True
+        assert profile.rejected_wechat is True
+
+    def test_detect_refusal_repeated_phone_only_preference_counts_as_wechat_refusal(self):
+        """已收电话后说“说了电话联系”，也应视为拒绝微信。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone = "13800138000"
+        profile.phone_collected = True
+        profile.wechat_ask_count = 1
+        profile.wechat_effective_ask_count = 1
+        profile.last_contact_request_type = "wechat"
+
+        result = self.service.detect_refusal("说了电话联系", profile, "要是方便的话可以留个微信")
+
+        assert result is not None
+        assert result.contact_type == 'wechat'
+        assert result.is_final is True
+        assert profile.rejected_wechat is True
+
+    def test_detect_refusal_short_phone_contact_preference_counts_as_wechat_refusal(self):
+        """已收电话且正在要微信时，短句“电话联系”也应视为拒绝微信。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone = "13800138000"
+        profile.phone_collected = True
+        profile.wechat_ask_count = 1
+        profile.wechat_effective_ask_count = 1
+        profile.last_contact_request_type = "wechat"
+
+        result = self.service.detect_refusal("电话联系", profile, "你方便留个微信不")
+
+        assert result is not None
+        assert result.contact_type == 'wechat'
+        assert result.is_final is True
+        assert profile.rejected_wechat is True
+
+    def test_detect_refusal_dianlian_variant_counts_as_wechat_refusal(self):
+        """已收电话后说“电联吧”，也应视为拒绝微信。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone = "13800138000"
+        profile.phone_collected = True
+        profile.wechat_ask_count = 1
+        profile.wechat_effective_ask_count = 1
+        profile.last_contact_request_type = "wechat"
+
+        result = self.service.detect_refusal("电联吧", profile, "后面联系更顺手些，你方便留个微信不")
+
+        assert result is not None
+        assert result.contact_type == 'wechat'
+        assert result.is_final is True
+        assert profile.rejected_wechat is True
 
     def test_detect_refusal_general_with_context(self):
         """拒绝检测 - 通用拒绝 + 上下文"""

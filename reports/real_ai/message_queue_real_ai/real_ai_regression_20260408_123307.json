@@ -1,0 +1,195 @@
+{
+  "started_at": "2026-04-08T12:32:49",
+  "ended_at": "2026-04-08T12:33:07",
+  "scenario_file": "/tmp/real_ai_all_v4hzh2wj",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "total_duration_seconds": 18.495,
+    "avg_duration_seconds": 18.495,
+    "max_duration_seconds": 18.495,
+    "token_usage": {
+      "prompt_tokens": 6663,
+      "completion_tokens": 822,
+      "total_tokens": 7485,
+      "call_count": 1
+    },
+    "failure_breakdown": {}
+  },
+  "results": [
+    {
+      "scenario_id": "field_multi_sentence_extract",
+      "source_file": "/tmp/real_ai_all_v4hzh2wj/scenarios__field_collection_regression.json",
+      "category": "field_collection",
+      "tags": [
+        "extract_basic"
+      ],
+      "description": "多句输入时应尽量同时接住多个字段。",
+      "passed": true,
+      "checks_total": 3,
+      "checks_passed": 3,
+      "failures": [],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "我是女生。深圳的。本科。做运营。",
+          "assistant_response": "在深圳做运营应该挺充实的吧～方便说下你是哪年出生的呀，还有你目前的感情状态大概是怎样的呀？",
+          "collected_info": {
+            "sex": "女",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "深圳",
+            "education": "本科",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "运营",
+            "contact": "未留",
+            "partner_gender_preference": "未留",
+            "partner_requirement": "未留"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_field_multi_sentence_extract_4569e40d",
+        "created_at": "2026-04-08T12:32:49.267227",
+        "updated_at": "2026-04-08T12:33:07.632038",
+        "sex": "女",
+        "last_name": null,
+        "age": null,
+        "age_label": null,
+        "pending_birth_year_bucket": null,
+        "birth_year_confirmation_closed": false,
+        "height": null,
+        "weight": null,
+        "location": "深圳",
+        "education": "本科",
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": "运营",
+        "contact": null,
+        "phone": null,
+        "wechat": null,
+        "partner_requirement": null,
+        "partner_gender_preference": null,
+        "extraction_evidence": {
+          "sex": {
+            "value": "女",
+            "source_text": "我是女生。深圳的。本科。做运营。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "ai+rule",
+            "updated_at": "2026-04-08T12:33:07.600921"
+          },
+          "education": {
+            "value": "本科",
+            "source_text": "我是女生。深圳的。本科。做运营。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "ai+rule",
+            "updated_at": "2026-04-08T12:33:07.600939"
+          },
+          "location": {
+            "value": "深圳",
+            "source_text": "我是女生。深圳的。本科。做运营。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "ai+rule",
+            "updated_at": "2026-04-08T12:33:07.600950"
+          },
+          "occupation": {
+            "value": "运营",
+            "source_text": "运营",
+            "turn_id": 1,
+            "confidence": 0.74,
+            "source": "ai_preferred",
+            "updated_at": "2026-04-08T12:33:07.600959"
+          }
+        },
+        "collection_progress": {
+          "sex": true,
+          "last_name": false,
+          "age": false,
+          "age_label": false,
+          "height": false,
+          "weight": false,
+          "location": true,
+          "education": true,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": true,
+          "contact": false,
+          "partner_requirement": false,
+          "partner_gender_preference": false,
+          "partner_pref_location": false,
+          "partner_pref_age": false,
+          "partner_pref_height": false,
+          "partner_pref_education": false,
+          "partner_pref_personality": false,
+          "partner_pref_income": false,
+          "partner_pref_other": false
+        },
+        "progress_percentage": 57.14,
+        "missing_fields": [
+          "age",
+          "marital_status",
+          "contact"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {
+          "age": 1,
+          "marital_status": 1
+        },
+        "recent_asked_fields": [
+          "age"
+        ],
+        "active_ask_closed_fields": {},
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "divorce_confirmation_pending": false,
+        "pending_sex_confirmation": null,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": false,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "last_contact_request_type": null,
+        "is_hongkong_user": null,
+        "resume_profile_mode": null,
+        "resume_profile_target": null,
+        "last_user_concern_type": null,
+        "field_miss_streak": {},
+        "last_effective_progress": true,
+        "last_asked_field": "age",
+        "last_asked_side_field": "marital_status",
+        "last_asked_turn_index": 1,
+        "pending_retry_field": null,
+        "needs_bridge_back": false,
+        "last_side_topic_type": null,
+        "complaint_cooldown_until": null,
+        "recent_semantic_slots": [],
+        "recent_response_openings": [
+          "在深圳做运营应该"
+        ],
+        "repair_mode": false,
+        "repair_reason": null,
+        "ask_cooldown_turns": 0,
+        "blocked_ask_intents": [],
+        "non_cooperation_turns": 0,
+        "off_topic_turns": 0,
+        "open_profile_attempts": 0,
+        "last_engagement_mode": "full",
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 18.495
+    }
+  ]
+}

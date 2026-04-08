@@ -206,6 +206,7 @@ class AskTrackingService:
                 continue
 
             if field in self.COOLDOWN_MANAGED_FIELDS and field in cooldown_fields:
+                user_profile.increment_effective_ask_count(field)
                 logger.info(f"[智能追问-冷却] 字段 {field} 处于冷却窗口，跳过计数与自动跳过")
                 continue
 
@@ -219,16 +220,18 @@ class AskTrackingService:
                     continue
 
             user_profile.increment_ask_count(field)
+            user_profile.increment_effective_ask_count(field)
             current_count = user_profile.get_ask_count(field)
+            effective_count = user_profile.get_effective_ask_count(field)
             logger.debug(f"[智能追问] AI询问了字段 {field}，当前追问次数: {current_count}")
             if field in self.COOLDOWN_MANAGED_FIELDS and not recorded_primary:
                 user_profile.mark_recent_asked_field(field, max_history=max_history)
                 recorded_primary = True
 
-            if current_count >= 2 and not skip_guard_enabled:
+            if effective_count >= 2 and not skip_guard_enabled:
                 user_profile.skipped_fields[field] = True
-                logger.debug(f"[智能追问] 字段 {field} 已问2次未回答，自动标记为跳过")
-            elif current_count >= 2 and skip_guard_enabled:
-                logger.debug(f"[智能追问-防抖] 字段 {field} 达到2次，已启用 skip 防抖，不自动标记跳过")
+                logger.debug(f"[智能追问] 字段 {field} 已有效问2次未回答，自动标记为跳过")
+            elif effective_count >= 2 and skip_guard_enabled:
+                logger.debug(f"[智能追问-防抖] 字段 {field} 达到2次有效询问，已启用 skip 防抖，不自动标记跳过")
 
         await self.user_service.save_user_profile(account_id, user_profile)

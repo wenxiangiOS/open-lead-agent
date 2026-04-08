@@ -219,7 +219,10 @@ class ProcessChatTurnUseCase:
                 refusal_detection_done = True
                 _mark("refusal_detection", t0)
 
-            parsed_age = self.chat_service.extraction_service._parse_age(request.question)  # noqa: SLF001
+            if self.chat_service.extraction_service._looks_like_partner_age_range_expression(request.question):  # noqa: SLF001
+                parsed_age = None
+            else:
+                parsed_age = self.chat_service.extraction_service._parse_age(request.question)  # noqa: SLF001
             t0 = time.perf_counter()
             short_route, short_payload, user_profile = await self.chat_service.maybe_build_pre_generation_short_circuit_payload(
                 account_id=account_id,

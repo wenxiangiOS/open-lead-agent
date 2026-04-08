@@ -101,6 +101,10 @@ class UserProfile(BaseModel):
         default_factory=dict,
         description="每个字段被问过的次数，用于智能追问机制"
     )
+    effective_field_ask_count: Dict[str, int] = Field(
+        default_factory=dict,
+        description="每个字段真实展示给用户的有效询问次数，用于主动追问上限控制"
+    )
     recent_asked_fields: List[str] = Field(
         default_factory=list,
         description="最近被 AI 主动追问的字段历史（按轮次）"
@@ -569,6 +573,15 @@ class UserProfile(BaseModel):
         self.field_ask_count[field_name] = self.field_ask_count.get(field_name, 0) + 1
         return self.field_ask_count[field_name]
 
+    def increment_effective_ask_count(self, field_name: str) -> int:
+        """
+        增加字段有效询问计数。
+
+        有效询问用于控制主动追问上限，不能被错位回答回退或冷却逻辑冲掉。
+        """
+        self.effective_field_ask_count[field_name] = self.effective_field_ask_count.get(field_name, 0) + 1
+        return self.effective_field_ask_count[field_name]
+
     def decrement_ask_count(self, field_name: str) -> int:
         """
         回退字段追问计数。
@@ -635,7 +648,15 @@ class UserProfile(BaseModel):
         """
         if field_name in self.field_ask_count:
             self.field_ask_count[field_name] = 0
+        if field_name in self.effective_field_ask_count:
+            self.effective_field_ask_count[field_name] = 0
         self.clear_field_miss_streak(field_name)
+
+    def get_effective_ask_count(self, field_name: str) -> int:
+        """
+        获取字段有效询问次数。
+        """
+        return self.effective_field_ask_count.get(field_name, 0)
 
     def get_ask_count(self, field_name: str) -> int:
         """
@@ -696,7 +717,7 @@ class UserProfile(BaseModel):
             list: 被问过多次的字段名列表
         """
         result = []
-        for field, count in self.field_ask_count.items():
+        for field, count in self.effective_field_ask_count.items():
             if count >= min_times:
                 # 检查字段是否还未收集且未被跳过
                 is_collected = self.collection_progress.get(field, False)
@@ -873,6 +894,7 @@ class UserProfile(BaseModel):
             "missing_fields": self.get_missing_fields(),
             "skipped_fields": self.skipped_fields,
             "field_ask_count": self.field_ask_count,
+            "effective_field_ask_count": self.effective_field_ask_count,
             "recent_asked_fields": self.recent_asked_fields,
             "active_ask_closed_fields": self.active_ask_closed_fields,
             "error_count": self.error_count,

@@ -188,6 +188,32 @@ def test_question_budget_guard_falls_back_to_complete_question_instead_of_broken
     assert guarded != "哈哈看来你找对象"
 
 
+def test_question_budget_guard_rewrites_trailing_fragment_like_dagaide():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_budget_guard_dagaide")
+
+    guarded = chat_service._enforce_question_budget_guard(
+        "做自媒体时间上应该还挺灵活的对吧，你是什么学历呀，大概的",
+        user_profile=profile,
+        user_message="做自媒体",
+        turn_decision=TurnDecision(
+            intent="general",
+            risk="none",
+            stage="opening",
+            next_action="continue",
+            primary_move="ack_and_ask",
+            ask_field="education",
+            prioritize_user_question=False,
+            allow_contact_target=False,
+            allow_medium_target=True,
+            response_channel="model",
+        ),
+    )
+
+    assert "大概的" not in guarded
+    assert "学历" in guarded
+
+
 def test_contact_completion_response_uses_fast_timeline_when_profile_qualifies():
     service = ExpectationService()
     profile = UserProfile(account_id="u_fast_timeline")
@@ -767,6 +793,108 @@ async def test_prepare_turn_execution_forces_resume_after_faq_even_if_turn_decis
 
 
 @pytest.mark.asyncio
+async def test_prepare_turn_execution_confirmation_with_resolved_slot_continues_mainline_instead_of_dangling_ack():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_confirmation_continue_mainline")
+    profile.age = 33
+    profile.age_label = "93年"
+    profile.collection_progress["age"] = True
+    profile.location = "深圳"
+    profile.collection_progress["location"] = True
+    profile.occupation = "自媒体"
+    profile.collection_progress["occupation"] = True
+    profile.education = "高中"
+    profile.collection_progress["education"] = True
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="confirmation",
+        subtype="weak_confirmation",
+        resolved_slots={"sex": "女"},
+        confidence=0.85,
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+    chat_service._build_turn_decision = AsyncMock(
+        return_value=TurnDecision(
+            intent="confirmation",
+            primary_move="light_followup",
+            ask_field=None,
+            prioritize_user_question=True,
+            allow_contact_target=False,
+            allow_medium_target=False,
+            response_channel="model",
+            user_concern_type="faq",
+        )
+    )
+
+    prepared = await chat_service.prepare_turn_execution(
+        user_message="是的",
+        user_profile=profile,
+        conversation_context={"message_count": 6, "recent_responses": ["你应该是女孩子对吧？"]},
+        last_response="你应该是女孩子对吧？",
+        message_count=6,
+    )
+
+    assert prepared.turn_decision.intent == "general"
+    assert prepared.turn_decision.ask_field is not None
+    assert prepared.turn_decision.ask_field != "contact"
+    assert prepared.turn_decision.prioritize_user_question is False
+    assert prepared.turn_decision.resume_applied is True
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_execution_confirmation_can_jump_to_contact_when_only_contact_remains():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_confirmation_continue_contact")
+    profile.age = 33
+    profile.age_label = "93年"
+    profile.collection_progress["age"] = True
+    profile.location = "广州、东莞、深圳"
+    profile.collection_progress["location"] = True
+    profile.education = "高中"
+    profile.collection_progress["education"] = True
+    profile.occupation = "自媒体"
+    profile.collection_progress["occupation"] = True
+    profile.marital_status = "离异（手续已办妥）"
+    profile.collection_progress["marital_status"] = True
+    profile.monthly_income = "有时多有时少"
+    profile.collection_progress["monthly_income"] = True
+    profile.partner_requirement = "找深二代男"
+    profile.collection_progress["partner_requirement"] = True
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="confirmation",
+        subtype="weak_confirmation",
+        resolved_slots={"sex": "女"},
+        confidence=0.85,
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+    chat_service._build_turn_decision = AsyncMock(
+        return_value=TurnDecision(
+            intent="confirmation",
+            primary_move="light_followup",
+            ask_field=None,
+            prioritize_user_question=True,
+            allow_contact_target=False,
+            allow_medium_target=False,
+            response_channel="model",
+            user_concern_type="faq",
+        )
+    )
+
+    prepared = await chat_service.prepare_turn_execution(
+        user_message="是的",
+        user_profile=profile,
+        conversation_context={"message_count": 7, "recent_responses": ["顺嘴核对下哦，你是女生对不？"]},
+        last_response="顺嘴核对下哦，你是女生对不？",
+        message_count=7,
+    )
+
+    assert prepared.turn_decision.intent == "general"
+    assert prepared.turn_decision.ask_field == "contact"
+    assert prepared.turn_decision.prioritize_user_question is False
+    assert prepared.turn_decision.resume_applied is True
+    assert prepared.turn_decision.allow_contact_target is True
+
+
+@pytest.mark.asyncio
 async def test_prepare_turn_execution_locks_divorce_confirmation_before_generation():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_divorce_pre_generation")
@@ -819,6 +947,64 @@ async def test_prepare_turn_execution_clears_divorce_confirmation_before_generat
     assert profile.divorce_confirmed is True
     assert profile.marital_status == "离异（手续已办妥）"
     assert profile.collection_progress["marital_status"] is True
+    assert prepared.turn_decision.next_action != "confirm_divorce_status"
+    assert prepared.turn_decision.ask_field != "marital_status"
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_execution_clears_divorce_confirmation_when_user_has_court_judgment():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_divorce_done_by_judgment")
+    profile.marital_status = "离异"
+    profile.divorce_confirmation_pending = True
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="opening",
+        subtype="connective_opening",
+        resolved_slots={},
+        confidence=0.82,
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+
+    prepared = await chat_service.prepare_turn_execution(
+        user_message="有法院判决书",
+        user_profile=profile,
+        conversation_context={"message_count": 2, "recent_responses": ["那你这边离婚手续都已经办妥了吗？"]},
+        last_response="那你这边离婚手续都已经办妥了吗？",
+        message_count=2,
+    )
+
+    assert profile.divorce_confirmation_pending is False
+    assert profile.divorce_confirmed is True
+    assert profile.marital_status == "离异（手续已办妥）"
+    assert prepared.turn_decision.next_action != "confirm_divorce_status"
+    assert prepared.turn_decision.ask_field != "marital_status"
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_execution_clears_divorce_confirmation_on_affirmative_answer():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_divorce_done_by_yes")
+    profile.marital_status = "离异"
+    profile.divorce_confirmation_pending = True
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="confirmation",
+        subtype="weak_confirmation",
+        resolved_slots={},
+        confidence=0.85,
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+
+    prepared = await chat_service.prepare_turn_execution(
+        user_message="是的",
+        user_profile=profile,
+        conversation_context={"message_count": 3, "recent_responses": ["有法院判决书的话，那离婚相关的手续就都已经处理妥当啦对吧？"]},
+        last_response="有法院判决书的话，那离婚相关的手续就都已经处理妥当啦对吧？",
+        message_count=3,
+    )
+
+    assert profile.divorce_confirmation_pending is False
+    assert profile.divorce_confirmed is True
+    assert profile.marital_status == "离异（手续已办妥）"
     assert prepared.turn_decision.next_action != "confirm_divorce_status"
     assert prepared.turn_decision.ask_field != "marital_status"
 
@@ -3558,6 +3744,7 @@ def test_is_divorce_status_complete_message_accepts_natural_confirmation_variant
 
     positive_cases = [
         "办理好了",
+        "办了好了",
         "手续都办好了",
         "都弄好了",
         "已经恢复单身了",
@@ -3664,6 +3851,34 @@ async def test_process_collection_result_clears_pending_after_divorce_formality_
     decision = policy.decide(profile, user_message="办理好了", message_count=2)
     assert decision.main_target != "marital_status"
     assert decision.can_enter_contact is False
+
+
+@pytest.mark.anyio
+async def test_process_collection_result_clears_pending_after_court_judgment_reply():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_divorce_done_judgment_flow")
+    profile.marital_status = "离异"
+    profile.divorce_confirmation_pending = True
+
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="那你这边离婚手续都已经办妥了吗？")
+    chat_service.extraction_service.process_extracted_data = AsyncMock(return_value={"all_fields": []})
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+    chat_service.ending_service.check_and_get_ending = lambda *_args, **_kwargs: None
+
+    result = await chat_service._process_collection_result(
+        account_id="u_divorce_done_judgment_flow",
+        user_profile=profile,
+        extracted_data={},
+        user_message="有法院判决书",
+        extraction_meta={},
+        turn_id=2,
+    )
+
+    assert result["divorce_confirmation_cleared"] is True
+    assert profile.divorce_confirmation_pending is False
+    assert profile.divorce_confirmed is True
+    assert profile.marital_status == "离异（手续已办妥）"
 
 
 @pytest.mark.anyio
@@ -4312,6 +4527,146 @@ async def test_refresh_turn_decision_after_collection_preserves_resume_followup_
     )
 
     assert final_decision is previous_turn_decision
+
+
+@pytest.mark.anyio
+async def test_refresh_turn_decision_after_collection_forces_next_target_after_real_progress():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_refresh_progress_followup")
+    profile.sex = "女"
+    profile.age = 33
+    profile.location = "沈阳"
+    profile.education = "本科"
+    profile.collection_progress.update(
+        {"sex": True, "age": True, "location": True, "education": True}
+    )
+    previous_turn_decision = TurnDecision(
+        intent="general",
+        primary_move="light_followup",
+        ask_field="occupation",
+        prioritize_user_question=False,
+        response_channel="model",
+    )
+    chat_service._build_turn_decision = AsyncMock(
+        return_value=TurnDecision(
+            intent="general",
+            primary_move="light_followup",
+            ask_field=None,
+            prioritize_user_question=False,
+            response_channel="model",
+        )
+    )
+
+    _, final_decision = await chat_service.refresh_turn_decision_after_collection(
+        ai_response="原来是做客服相关工作的呀，我记下来啦。",
+        account_id="u_refresh_progress_followup",
+        user_message="客服",
+        user_profile=profile,
+        conversation_context={"recent_responses": ["你现在是做什么工作的呀？"]},
+        understanding_result=TurnUnderstandingResult(
+            primary_turn_type="invalid_input",
+            subtype="ambiguous_short_answer",
+            confidence=0.51,
+        ),
+        previous_turn_decision=previous_turn_decision,
+        collection_result={"all_fields": [{"field": "occupation", "value": "客服"}]},
+    )
+
+    assert final_decision.ask_field == "marital_status"
+    assert final_decision.primary_move == "light_followup"
+
+
+def test_policy_uses_effective_ask_count_to_block_core_field_even_when_raw_count_is_low():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_effective_ask_limit")
+    profile.effective_field_ask_count["occupation"] = 2
+    profile.field_ask_count["occupation"] = 0
+
+    assert chat_service.collection_policy.can_actively_ask(profile, "occupation") is False
+
+
+def test_finalize_followup_alignment_rewrites_dangling_ack_when_progress_exists():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_dangling_ack")
+    profile.sex = "女"
+    profile.age = 33
+    profile.location = "沈阳"
+    profile.education = "本科"
+    profile.collection_progress.update(
+        {"sex": True, "age": True, "location": True, "education": True}
+    )
+    turn_decision = TurnDecision(
+        intent="general",
+        primary_move="light_followup",
+        ask_field="marital_status",
+        allow_medium_target=True,
+        response_channel="model",
+    )
+
+    rewritten = chat_service.finalize_service._maybe_enforce_main_followup_alignment(
+        user_profile=profile,
+        user_message="客服",
+        final_response="原来是做客服相关工作的呀，我记下来啦。",
+        turn_decision=turn_decision,
+        collection_result={"all_fields": [{"field": "occupation", "value": "客服"}]},
+    )
+
+    assert rewritten != "原来是做客服相关工作的呀，我记下来啦。"
+    assert "感情状态" in rewritten or "婚况" in rewritten or "单身" in rewritten or "离婚" in rewritten
+
+
+def test_budget_guard_fallback_uses_divorce_confirmation_question_instead_of_neutral_hold():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_budget_divorce_hold")
+    profile.marital_status = "离异"
+    profile.divorce_confirmation_pending = True
+    profile.collection_progress["marital_status"] = True
+
+    rewritten = chat_service._build_budget_guard_fallback_response(
+        user_profile=profile,
+        user_message="离婚",
+        ask_field="marital_status",
+        allow_medium_target=False,
+    )
+
+    assert "离婚" in rewritten
+    assert "办妥" in rewritten or "手续" in rewritten
+    assert "继续往下说" not in rewritten
+    assert "先放这儿" not in rewritten
+
+
+def test_finalize_service_rewrites_divorce_dangling_hold_to_confirmation_question():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_divorce_hold")
+    profile.sex = "女"
+    profile.age = 39
+    profile.location = "沈阳"
+    profile.education = "本科"
+    profile.occupation = "客服"
+    profile.marital_status = "离异"
+    profile.divorce_confirmation_pending = True
+    profile.collection_progress.update(
+        {"sex": True, "age": True, "location": True, "education": True, "occupation": True, "marital_status": True}
+    )
+
+    rewritten = chat_service.finalize_service._maybe_eliminate_dangling_progress_hold(
+        user_profile=profile,
+        user_message="离婚",
+        final_response="现在是这个状态。 这个我先放这儿，咱们继续往下说。",
+        turn_decision=TurnDecision(
+            intent="general",
+            primary_move="confirm_status_only",
+            ask_field="marital_status",
+            next_action="confirm_divorce_status",
+            allow_medium_target=False,
+            response_channel="model",
+        ),
+        collection_result={"all_fields": [{"field": "marital_status", "value": "离异"}]},
+    )
+
+    assert "离婚" in rewritten
+    assert "办妥" in rewritten or "手续" in rewritten
+    assert rewritten != "现在是这个状态。 这个我先放这儿，咱们继续往下说。"
 
 
 def test_legacy_clean_response_collapses_redundant_confirmation_phrase():
@@ -6582,6 +6937,46 @@ def test_resolve_effective_followup_field_prefers_monthly_income_after_occupatio
     )
 
     assert next_field == "monthly_income"
+
+
+def test_build_interleaving_followup_does_not_force_income_onto_education():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_interleave_education_only")
+    profile.occupation = "自媒体"
+    profile.collection_progress["occupation"] = True
+    profile.location = "深圳"
+    profile.collection_progress["location"] = True
+    profile.age = 33
+    profile.collection_progress["age"] = True
+
+    response = chat_service._build_interleaving_followup(
+        profile,
+        "做自媒体",
+        main_target="education",
+        preferred_side_target="monthly_income",
+        allow_medium_target=True,
+    )
+
+    assert "学历" in response
+    assert "收入" not in response
+
+
+def test_build_interleaving_followup_can_fuse_income_with_location_after_occupation_collected():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_interleave_income_location")
+    profile.occupation = "自媒体"
+    profile.collection_progress["occupation"] = True
+
+    response = chat_service._build_interleaving_followup(
+        profile,
+        "我在深圳",
+        main_target="location",
+        preferred_side_target="monthly_income",
+        allow_medium_target=True,
+    )
+
+    assert "城市" in response or "深圳" in response or "哪" in response
+    assert "收入" in response
 
 
 @pytest.mark.asyncio

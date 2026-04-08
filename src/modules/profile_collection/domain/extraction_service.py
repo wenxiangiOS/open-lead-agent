@@ -199,6 +199,26 @@ class ExtractionService:
     def _message_has_explicit_age_semantics(user_message: str) -> bool:
         return bool(re.search(r"(岁|年龄|今年|出生|哪年|90后|95后|85后)", str(user_message or "")))
 
+    @staticmethod
+    def _looks_like_partner_age_range_expression(user_message: str) -> bool:
+        text = str(user_message or "").strip()
+        if not text:
+            return False
+        compact = re.sub(r"\s+", "", text)
+        patterns = (
+            r"上下\d{1,2}岁",
+            r"大我\d{1,2}岁",
+            r"小我\d{1,2}岁",
+            r"比我大\d{1,2}岁",
+            r"比我小\d{1,2}岁",
+            r"年龄差.{0,4}\d{1,2}岁",
+            r"同龄",
+            r"差不多大",
+            r"\d{2}年到\d{2}年之间",
+            r"\d{2}后到\d{2}后",
+        )
+        return any(re.search(pattern, compact) for pattern in patterns)
+
     def extract_json_from_response(self, response: str) -> Dict[str, Any]:
         """
         从 AI 回复中提取 JSON 数据
@@ -529,9 +549,19 @@ class ExtractionService:
 
         values_with_pos: List[tuple[int, str]] = []
         patterns = [
+            r"(深二代)",
+            r"(富二代)",
+            r"(拆二代)",
             r"(年龄不超过\d{1,2}岁)",
             r"(不超过\d{1,2}岁)",
             r"(\d{1,2}岁以下)",
+            r"(上下\d{1,2}岁)",
+            r"(大我\d{1,2}岁)",
+            r"(小我\d{1,2}岁)",
+            r"(比我大\d{1,2}岁)",
+            r"(比我小\d{1,2}岁)",
+            r"(年龄差.{0,4}\d{1,2}岁)",
+            r"(\d{2}年到\d{2}年之间)",
             r"(年龄至少\d{1,3})",
             r"(身高至少\d{2,3})",
             r"(身高不低于\d{2,3})",
@@ -569,6 +599,9 @@ class ExtractionService:
             value = re.sub(r"^(\d{1,2})岁以下$", r"年龄不超过\1岁", value)
             value = re.sub(r"^至少(\d{2,3})$", r"身高至少\1", value)
             value = re.sub(r"^(?:不要低于|别低于|不低于)(\d{2,3})$", r"身高不低于\1", value)
+            value = re.sub(r"^上下(\d{1,2})岁$", r"年龄上下\1岁", value)
+            value = re.sub(r"^大我(\d{1,2})岁$", r"比我大\1岁", value)
+            value = re.sub(r"^小我(\d{1,2})岁$", r"比我小\1岁", value)
             value = re.sub(r"(温柔)(一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?$", r"\1", value)
             value = re.sub(r"^(温柔)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(性格好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
@@ -606,6 +639,27 @@ class ExtractionService:
         return "，".join(normalized)
 
     @staticmethod
+    def _user_explicitly_mentions_zodiac(user_message: str) -> bool:
+        text = str(user_message or "").strip()
+        if not text:
+            return False
+        zodiac_tokens = ("生肖", "属鼠", "属牛", "属虎", "属兔", "属龙", "属蛇", "属马", "属羊", "属猴", "属鸡", "属狗", "属猪")
+        return any(token in text for token in zodiac_tokens)
+
+    @classmethod
+    def _remove_unspoken_inferred_partner_requirement_content(cls, value: str, user_message: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if not cls._user_explicitly_mentions_zodiac(user_message):
+            text = re.sub(r"属(?:鼠|牛|虎|兔|龙|蛇|马|羊|猴|鸡|狗|猪)的?", "", text)
+            text = re.sub(r"生肖(?:鼠|牛|虎|兔|龙|蛇|马|羊|猴|鸡|狗|猪)", "", text)
+        text = re.sub(r"(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的)$", "", text)
+        text = re.sub(r"(?:对象)$", "", text)
+        text = re.sub(r"[，,、]+", "，", text).strip("，,、 ")
+        return text
+
+    @staticmethod
     def _normalize_partner_requirement_part(part: str) -> str:
         value = str(part or "").strip()
         value = re.sub(r"^(?:看中|看重|更看重|比较看重|喜欢|偏向|希望)(?:对方|另一半)?", "", value)
@@ -632,6 +686,9 @@ class ExtractionService:
         extracted_data: Dict[str, Any],
     ) -> bool:
         clean_part = str(part or "").strip()
+        if not clean_part:
+            return True
+        clean_part = ExtractionService._remove_unspoken_inferred_partner_requirement_content(clean_part, user_message)
         if not clean_part:
             return True
         clean_part = ExtractionService._normalize_partner_requirement_part(clean_part)
@@ -806,12 +863,20 @@ class ExtractionService:
                     ):
                         logger.info("[提取保护] 联系方式语境命中，跳过 age 写入: %s", value)
                         continue
+                    if self._looks_like_partner_age_range_expression(user_message):
+                        logger.info("[提取保护] 择偶年龄范围语境命中，跳过 age 下限短路参与: %s", value)
+                        # 这里不跳过 age 正常落库，只禁止后面的 under-limit 短路。
+                        pass
 
                 # 年龄限制检查：用户必须年满24岁
                 if mapped_field == "age":
                     parsed_age = self._parse_age(value)
                     age_label = self._extract_age_label(value) or self._extract_age_label(user_message)
-                    if parsed_age is not None and parsed_age < 24:
+                    if (
+                        parsed_age is not None
+                        and parsed_age < 24
+                        and not self._looks_like_partner_age_range_expression(user_message)
+                    ):
                         logger.info(f"[年龄限制] 用户年龄 {parsed_age} 岁低于24岁，不符合服务条件")
                         # 设置年龄限制标志
                         user_profile.age_under_limit = True
@@ -978,8 +1043,8 @@ class ExtractionService:
                 # 特殊处理：择偶要求字段需要累积而不是覆盖
                 if mapped_field == "partner_requirement":
                     user_message_preferred_value = self._extract_partner_requirement_from_user_message(user_message)
+                    model_value = self._remove_unspoken_inferred_partner_requirement_content(str(value or "").strip(), user_message)
                     if user_message_preferred_value:
-                        model_value = str(value or "").strip()
                         if not model_value:
                             value = user_message_preferred_value
                         elif len(user_message_preferred_value) > len(model_value):
@@ -1005,6 +1070,8 @@ class ExtractionService:
                                 ):
                                     merged_parts.append(clean_part)
                             value = "，".join(merged_parts)
+                    else:
+                        value = model_value
 
                     # 有价值的内容关键词（即使包含结束信号，也要收集这些内容）
                     valuable_keywords = ['看感觉', '随缘', '看眼缘', '看缘分', '顺其自然', '都可以', '不限']

@@ -375,6 +375,7 @@
         let lastReplyId = 0;
         let localMsgSeq = 0;
         let waitingReply = false;
+        let pendingReplyStartedAt = null;
         document.getElementById('toggleInfoBtn').style.display = 'block';
 
         // 生成随机用户ID
@@ -413,6 +414,12 @@
             messageDiv.appendChild(bubble);
             chatBox.appendChild(messageDiv);
             chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function formatElapsedTime(startedAt) {
+            if (!startedAt) return '';
+            const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(2);
+            return `\n\n⏱️ 总耗时: ${elapsedSeconds}秒`;
         }
 
         function formatContactDisplay(profile) {
@@ -622,6 +629,9 @@
                 return;
             }
 
+            const elapsedText = formatElapsedTime(pendingReplyStartedAt);
+            let attachedElapsed = false;
+
             for (const item of replies) {
                 let text = item.message || '';
                 if (showDebugInfo) {
@@ -630,6 +640,10 @@
                         text += debugText;
                     }
                 }
+                if (!attachedElapsed && elapsedText) {
+                    text += elapsedText;
+                    attachedElapsed = true;
+                }
                 addMessage('ai', text);
                 if (item.id && item.id > lastReplyId) {
                     lastReplyId = item.id;
@@ -637,6 +651,7 @@
             }
 
             waitingReply = false;
+            pendingReplyStartedAt = null;
             hideTyping();
             setSendingState(false);
             stopReplyPolling();
@@ -696,6 +711,7 @@
             // 添加用户消息
             addMessage('user', message);
             waitingReply = true;
+            pendingReplyStartedAt = Date.now();
             showTyping();
             setSendingState(true);
             clearReplyStreamFallback();
@@ -727,6 +743,7 @@
 
                 if (!data.success || !data.accepted) {
                     waitingReply = false;
+                    pendingReplyStartedAt = null;
                     hideTyping();
                     setSendingState(false);
                     if (data.status === 'queue_full') {
@@ -744,6 +761,7 @@
                 console.log('消息已入队:', platformMsgId, data);
             } catch (error) {
                 waitingReply = false;
+                pendingReplyStartedAt = null;
                 hideTyping();
                 setSendingState(false);
                 stopReplyPolling();

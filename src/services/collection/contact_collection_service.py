@@ -133,6 +133,22 @@ class ContactCollectionService:
         "用微信联系吧", "微信吧", "用微信吧", "加微信吧", "微信也行",
     ]
 
+    PHONE_ONLY_CONTACT_PATTERNS: List[str] = [
+        r"电话联系$",
+        r"电话联系就好",
+        r"电话联系就好了",
+        r"说了电话联系",
+        r"打电话就行",
+        r"电话就行",
+        r"电话沟通吧",
+        r"有事电话说",
+        r"电话说就好",
+        r"就电话吧",
+        r"直接电话",
+        r"电联吧",
+        r"电联就行",
+    ]
+
     SOFT_ACK_MESSAGES: List[str] = [
         "嗯", "嗯嗯", "恩", "好", "好的", "好呀", "好的呢", "行", "可以", "ok", "好的哈"
     ]
@@ -637,6 +653,8 @@ class ContactCollectionService:
         phone_refusal = self._is_explicit_refusal(message_lower, 'phone')
         wechat_refusal = self._is_explicit_refusal(message_lower, 'wechat')
         general_refusal = self._has_general_refusal(message_lower)
+        if self._is_phone_only_contact_preference(message_lower, profile):
+            wechat_refusal = True
 
         # 详细匹配日志
         logger.debug(f"[拒绝检测-分析] 电话拒绝={phone_refusal}, 微信拒绝={wechat_refusal}, 通用拒绝={general_refusal}, last_response={'有' if last_response else '无'}")
@@ -753,6 +771,31 @@ class ContactCollectionService:
             r'不.{0,2}给',
         ]
         return any(re.search(pattern, message_lower) for pattern in soft_patterns)
+
+    def _is_phone_only_contact_preference(self, message_lower: str, profile: UserProfile) -> bool:
+        """电话已收后，识别用户明确表示只接受电话联系。"""
+        if not message_lower:
+            return False
+        if not bool(profile.phone_collected and profile.phone):
+            return False
+        in_wechat_context = bool(
+            str(getattr(profile, "last_contact_request_type", "") or "").strip() == "wechat"
+            or int(getattr(profile, "wechat_ask_count", 0) or 0) > 0
+            or int(getattr(profile, "wechat_effective_ask_count", 0) or 0) > 0
+        )
+        if not in_wechat_context:
+            return False
+        if "微信" in message_lower and self._has_general_refusal(message_lower):
+            return True
+        if any(re.search(pattern, message_lower) for pattern in self.PHONE_ONLY_CONTACT_PATTERNS):
+            return True
+
+        phone_priority_patterns = [
+            r"(电话|手机|手机号|号码).{0,4}(联系|沟通|说|聊|打)",
+            r"(联系|沟通|说|聊|打).{0,4}(电话|手机|手机号|号码)",
+            r"电联",
+        ]
+        return any(re.search(pattern, message_lower) for pattern in phone_priority_patterns)
 
     def _is_context_about(self, last_response: Optional[str], contact_type: str) -> bool:
         """

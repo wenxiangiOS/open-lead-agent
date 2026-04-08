@@ -1,6 +1,6 @@
 version: 1
 project: message_queue_orchestration
-last_updated: "2026-04-08 11:14:30 +0800"
+last_updated: "2026-04-08 11:31:00 +0800"
 baseline_commit: "2bef0da"
 owner: "unassigned"
 
@@ -28,11 +28,17 @@ status:
         - "pytest -q -o addopts='' tests/integration/test_message_queue_pipeline_integration.py"
         - "pytest -q -o addopts='' tests/integration/test_xhs_ingest_to_delivery_local_http.py"
         - "pytest -q -o addopts='' tests/integration/test_message_queue_pipeline_integration.py tests/unit/test_reply_sender_worker.py tests/unit/test_queue_store.py tests/unit/test_message_orchestrator.py tests/unit/test_xiaohongshu_ingest_route.py tests/unit/test_app_mq_toggle.py"
+        - "python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000 --scenario-id mq_ingest_queue_full_backpressure --scenario-id mq_replies_poll_no_duplicate_delivery --scenario-id mq_dashboard_metrics_funnel_consistency --verbose"
+        - "python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000 --scenario-id mq_running_dirty_recheck_consumes_new_messages --scenario-id mq_stale_turn_dropped_after_cancel --scenario-id mq_recover_stale_running_sessions --scenario-id mq_outbox_retry_then_success --verbose"
+        - "python3 scripts/run_mq_ingest_regression.py --base-url http://127.0.0.1:8000 --scenario-id mq_sender_primary_fail_backup_success --scenario-id mq_hot_user_isolation_no_starvation --scenario-id mq_worker_restart_recover_pending_messages --verbose"
       test_results:
         - "queue integration tests: 4 passed"
         - "local-http delivery e2e: 1 passed"
         - "mq focused regression pack: 34 passed"
         - "validated semantics: RUNNING + ordinary new messages => dirty=true then next turn; cancel-like only => stale drop"
+        - "mq real-ingest regression batch A: 3 passed (queue_full_backpressure, replies_poll_no_duplicate_delivery, dashboard_metrics_funnel_consistency)"
+        - "mq real-ingest regression batch B: 4 passed (running_dirty_recheck_consumes_new_messages, stale_turn_dropped_after_cancel, recover_stale_running_sessions, outbox_retry_then_success)"
+        - "mq real-ingest regression batch C: 3 passed (sender_primary_fail_backup_success, hot_user_isolation_no_starvation, worker_restart_recover_pending_messages)"
       updated_by: "codex-gpt5"
 
   p1:

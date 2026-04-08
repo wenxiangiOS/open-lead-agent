@@ -56,9 +56,9 @@ class ProfileCollectionPolicy:
         self.followup_planning_layer = FollowupPlanningLayer(policy=self)
 
     SIDE_TARGET_HOST_ORDERS: Dict[str, tuple[str, ...]] = {
-        "monthly_income": ("occupation", "education", "location", "age"),
-        "marital_status": ("education", "age", "occupation", "location", "sex"),
-        "partner_requirement": ("marital_status", "location", "age", "education", "occupation", "sex"),
+        "monthly_income": ("occupation", "location", "age", "education"),
+        "marital_status": ("age", "location", "occupation", "education", "sex"),
+        "partner_requirement": ("age", "location", "occupation", "education", "marital_status", "sex"),
     }
 
     CORE_FIELDS = ["sex", "age", "education", "occupation", "location", "contact"]
@@ -499,7 +499,7 @@ class ProfileCollectionPolicy:
             message_count == 0 or message_count >= 2 or self._message_contains_profile_context(message)
         ):
             score += 90
-        if field == "partner_requirement" and main_target == "marital_status":
+        if field == "partner_requirement" and main_target in {"age", "location", "occupation"}:
             score += 90
 
         host_order = self.SIDE_TARGET_HOST_ORDERS.get(field, ())
@@ -513,21 +513,21 @@ class ProfileCollectionPolicy:
         score += host_context_bonus
 
         if field == "marital_status":
-            if main_target in {"education", "age"} and (
-                latest_cue in {"education", "age", "occupation"} or profile_sufficient
+            if main_target in {"age", "location", "occupation"} and (
+                latest_cue in {"age", "location", "occupation"} or profile_sufficient
             ):
                 score += 35
-            elif main_target in {"age", "location", "education", "sex"} and (
+            elif main_target in {"age", "location", "occupation", "education"} and (
                 message_count >= 5 or profile_sufficient
             ):
                 score += 18
 
-        if field == "partner_requirement" and main_target in {"age", "education", "occupation", "location"} and (
+        if field == "partner_requirement" and main_target in {"age", "location", "occupation", "education"} and (
             message_count >= 5 or profile_sufficient
         ):
             score += 24
 
-        if field == "monthly_income" and main_target in {"education", "location", "age"}:
+        if field == "monthly_income" and main_target in {"location", "age"}:
             if self.is_collected(profile, "occupation") or profile.collection_progress.get("occupation"):
                 score += 28
             elif "occupation" in cue_order:
@@ -554,7 +554,7 @@ class ProfileCollectionPolicy:
         if field == "monthly_income":
             if main_target == "occupation":
                 return True
-            if main_target in {"education", "location"} and (
+            if main_target in {"location", "age"} and (
                 self.is_collected(profile, "occupation")
                 or profile.collection_progress.get("occupation")
                 or "occupation" in cue_order
@@ -563,10 +563,10 @@ class ProfileCollectionPolicy:
             return False
 
         if field == "marital_status":
-            return main_target == "education"
+            return main_target in {"age", "location", "occupation"}
 
         if field == "partner_requirement":
-            return main_target == "marital_status"
+            return main_target in {"age", "location", "occupation"}
 
         return False
 
@@ -839,14 +839,14 @@ class ProfileCollectionPolicy:
             and not getattr(profile, "birth_year_confirmation_closed", False)
         ):
             return False
-        return self.is_collected(profile, field) or profile.get_ask_count(field) >= 2
+        return self.is_collected(profile, field) or profile.get_effective_ask_count(field) >= 2
 
     def is_medium_field_covered(self, profile: UserProfile, field: str) -> bool:
         if profile.skipped_fields.get(field, False) or profile.is_active_ask_closed(field):
             return True
         if self._has_pending_resume_for_field(profile, field):
             return False
-        return self.is_collected(profile, field) or profile.get_ask_count(field) >= 1
+        return self.is_collected(profile, field) or profile.get_effective_ask_count(field) >= 1
 
     @staticmethod
     def _has_pending_resume_for_field(profile: UserProfile, field: str) -> bool:
@@ -1161,7 +1161,7 @@ class ProfileCollectionPolicy:
         if ask_limit == 0 and field != "contact":
             return self.DISABLED
 
-        ask_count = profile.field_ask_count.get(field, 0)
+        ask_count = profile.get_effective_ask_count(field)
         if field == "contact":
             return self.ACTIVE if not self.is_collected(profile, "contact") else self.DISABLED
         if ask_count >= ask_limit:

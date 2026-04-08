@@ -1038,6 +1038,9 @@ class TurnUnderstandingService:
             r"(不超过\d{2}岁)",
             r"(成熟稳重)",
             r"(三观合拍)",
+            r"(深二代)",
+            r"(富二代)",
+            r"(拆二代)",
             r"(喜欢[^\s，,。]{0,10}(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的|男|女))",
             r"(想找[^\s，,。]{0,10}(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的|男|女))",
             r"(找[^\s，,。]{0,10}(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的|男|女))",
@@ -1331,6 +1334,8 @@ class TurnUnderstandingService:
             if location_text:
                 extracted["location"] = location_text
 
+        if re.search(r"(没有学历|没学历|无学历)", user_message):
+            extracted["education"] = "没学历"
         for edu in ["博士", "硕士", "研究生", "本科", "大专", "中专", "高中"]:
             if edu in user_message:
                 extracted["education"] = edu
@@ -1340,6 +1345,8 @@ class TurnUnderstandingService:
             if marital in user_message:
                 extracted["marital_status"] = marital
                 break
+        if not extracted.get("marital_status") and re.search(r"(离婚|离过婚|已经离婚|离异)", user_message):
+            extracted["marital_status"] = "离异"
 
         segments = re.split(r"[，,、\s]+", user_message)
         education_tokens = {"博士", "硕士", "研究生", "本科", "大专", "中专", "高中"}
@@ -1556,6 +1563,12 @@ class TurnUnderstandingService:
             r"(?:^|[，,、 ]|是|就是)\s*(男生|女生|男的|女的|男|女)\s*(?:呀|呢|哈|哦|啊)?(?:$|[，,。！？!? ])",
             message,
         )
+        affirmative_prefixed_marital_answer = re.search(
+            r"^\s*(?:是的|对|对的|嗯|嗯嗯|好的|好|没错)"
+            r"(?:[呀呢啊哦哈啦嘛]*)?\s*[，,、 ]+\s*(单身|未婚|离异|已婚|分居|离婚)"
+            r"(?:\s*[，,、 ]|$)",
+            message,
+        )
         affirmative_confirmation = self._is_affirmative_confirmation_answer(message)
         marital_question_context = bool(
             re.search(r"(单身状态|现在是单身吗|现在单身吗|感情状态.*单身|婚况.*单身)", last_ai)
@@ -1598,6 +1611,14 @@ class TurnUnderstandingService:
                 guarded.pop("partner_gender_preference", None)
                 logger.info("[提取保护] 性别确认上下文命中，移除本轮 partner_gender_preference 性别污染值")
             logger.info("[提取保护] 性别确认上下文命中，按 affirmative answer 强制写入 sex")
+        elif confirmation_context_sex and affirmative_prefixed_marital_answer:
+            guarded["sex"] = confirmation_context_sex
+            marital_raw = affirmative_prefixed_marital_answer.group(1)
+            guarded["marital_status"] = "离异" if marital_raw == "离婚" else marital_raw
+            if guarded.get("partner_gender_preference"):
+                guarded.pop("partner_gender_preference", None)
+                logger.info("[提取保护] 性别确认上下文命中，移除本轮 partner_gender_preference 性别污染值")
+            logger.info("[提取保护] 多字段确认上下文命中，按 affirmative+marital 复合短答写入 sex/marital_status")
         elif marital_question_context and affirmative_confirmation:
             guarded["marital_status"] = "单身"
             logger.info("[提取保护] 婚况问答上下文命中，按 affirmative answer 强制写入 marital_status")
@@ -1637,6 +1658,18 @@ class TurnUnderstandingService:
                 guarded.pop("age", None)
                 guarded.pop("age_label", None)
                 logger.info("[提取保护] 择偶身高上下文命中，移除 age/age_label 数字污染")
+
+        if asked_field == "occupation" and "occupation" not in guarded:
+            compact_message = re.sub(r"[，,。！？!?~～、\s]+", "", message)
+            if (
+                compact_message
+                and len(compact_message) <= 8
+                and not self._looks_like_refusal(message)
+                and not re.search(r"(收费|多少钱|几万|几千|电话|微信|离婚|单身|未婚|离异|本科|大专|硕士|博士|\d)", compact_message)
+                and re.fullmatch(r"[A-Za-z\u4e00-\u9fa5]{2,8}", compact_message)
+            ):
+                guarded["occupation"] = compact_message
+                logger.info("[提取保护] 职业问答上下文命中，按 short answer 强制写入 occupation")
 
         if not guarded:
             return guarded

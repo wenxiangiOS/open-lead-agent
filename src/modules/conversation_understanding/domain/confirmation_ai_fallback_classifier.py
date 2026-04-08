@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -21,6 +22,14 @@ class ConfirmationAIFallbackClassifier:
 
     def __init__(self, *, ai_service: Any) -> None:
         self.ai_service = ai_service
+
+    @staticmethod
+    def _resolve_ai_timeout() -> float:
+        try:
+            timeout = float(os.getenv("CONFIRMATION_AI_FALLBACK_TIMEOUT_SECONDS", "20"))
+        except (TypeError, ValueError):
+            timeout = 20.0
+        return max(1.0, timeout)
 
     async def classify(
         self,
@@ -54,7 +63,7 @@ class ConfirmationAIFallbackClassifier:
                 system_prompt,
                 temperature=0.0,
                 max_tokens=40,
-                timeout=8.0,
+                timeout=self._resolve_ai_timeout(),
             )
         except AIServiceException as exc:
             logger.warning("[confirmation_ai_fallback] failed: %s", exc)

@@ -114,6 +114,28 @@ def test_extract_partner_requirement_from_user_message_keeps_trait_when_gender_p
     assert extracted == "成熟稳重"
 
 
+def test_extract_partner_requirement_from_user_message_captures_partner_age_range_expression():
+    extracted = ExtractionService._extract_partner_requirement_from_user_message(
+        "89年的想找个上下3岁的男朋友"
+    )
+
+    assert extracted == "年龄上下3岁"
+
+
+def test_extract_partner_requirement_from_user_message_captures_shenzhen_second_gen_preference():
+    extracted = ExtractionService._extract_partner_requirement_from_user_message(
+        "93年女生找深二代男朋友"
+    )
+
+    assert extracted == "深二代"
+
+
+def test_partner_age_range_expression_does_not_count_as_user_underage_signal():
+    service = ExtractionService(_FakeUserService())
+
+    assert service._looks_like_partner_age_range_expression("89年的想找个上下3岁的男朋友") is True
+
+
 @pytest.mark.anyio
 async def test_process_extracted_data_allows_trailing_punct_sex_self_intro():
     user_service = _FakeUserService()
@@ -359,3 +381,20 @@ async def test_process_extracted_data_does_not_mix_education_into_partner_requir
     refreshed = await user_service.get_user_profile("user_partner_education_mix")
     assert refreshed.education == "本科"
     assert refreshed.partner_requirement == "苗条漂亮，身高至少160"
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_drops_unspoken_zodiac_inference_from_partner_requirement():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_partner_req_no_zodiac")
+
+    await service.process_extracted_data(
+        "user_partner_req_no_zodiac",
+        profile,
+        {"partner_requirement": "属蛇的深二代男朋友"},
+        user_message="93年女生找深二代男朋友",
+    )
+
+    refreshed = await user_service.get_user_profile("user_partner_req_no_zodiac")
+    assert refreshed.partner_requirement == "深二代"

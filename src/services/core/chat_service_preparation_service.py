@@ -79,6 +79,12 @@ class ChatServicePreparationService:
             user_message=user_message,
             last_response=last_response,
         )
+        self._apply_confirmation_followup_override(
+            turn_decision=turn_decision,
+            understanding=understanding,
+            decision_profile=decision_profile,
+            user_message=user_message,
+        )
         await self._sync_decision_profile_state(
             user_profile=user_profile,
             decision_profile=decision_profile,
@@ -148,6 +154,67 @@ class ChatServicePreparationService:
             resume_field,
             plan.source or "-",
             previous_intent,
+        )
+
+    def _apply_confirmation_followup_override(
+        self,
+        *,
+        turn_decision: TurnDecision,
+        understanding: TurnUnderstandingResult,
+        decision_profile: UserProfile,
+        user_message: str,
+    ) -> None:
+        """确认类回答已成功写入字段时，当前轮直接恢复主线，不留空悬承接。"""
+        if understanding.primary_turn_type != "confirmation":
+            return
+        if not (understanding.resolved_slots or {}):
+            return
+        if turn_decision.ask_field:
+            return
+
+        policy_decision = self.host.collection_policy.decide(
+            decision_profile,
+            user_message=user_message,
+            allow_contact_target=False,
+            allow_medium_target=True,
+            prioritize_user_question=False,
+            primary_move="light_followup",
+        )
+        next_field = str(getattr(policy_decision, "main_target", "") or "").strip()
+        if not next_field:
+            contact_policy_decision = self.host.collection_policy.decide(
+                decision_profile,
+                user_message=user_message,
+                allow_contact_target=True,
+                allow_medium_target=True,
+                prioritize_user_question=False,
+                primary_move="light_followup",
+            )
+            next_field = str(getattr(contact_policy_decision, "main_target", "") or "").strip()
+            if next_field:
+                policy_decision = contact_policy_decision
+        if not next_field:
+            return
+        if next_field == "contact" and not self.host.collection_policy.can_enter_contact(decision_profile):
+            return
+        if not self.host.collection_policy.can_actively_ask(decision_profile, next_field):
+            return
+
+        turn_decision.intent = "general"
+        turn_decision.primary_move = "light_followup"
+        turn_decision.ask_field = next_field
+        turn_decision.prioritize_user_question = False
+        turn_decision.allow_contact_target = next_field == "contact"
+        turn_decision.allow_medium_target = bool(getattr(policy_decision, "allow_medium_target", True))
+        turn_decision.response_channel = "model"
+        turn_decision.user_concern_type = None
+        turn_decision.resume_target = next_field
+        turn_decision.resume_applied = True
+        decision_profile.resume_profile_target = next_field
+        logger.info(
+            "[prepare_confirmation_followup_override] resolved=%s ask_field=%s",
+            sorted((understanding.resolved_slots or {}).keys()),
+            next_field,
         )
 
     async def _sync_decision_profile_state(

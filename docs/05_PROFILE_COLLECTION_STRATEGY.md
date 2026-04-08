@@ -465,20 +465,36 @@
 当前推荐拼接优先级：
 
 - `monthly_income`
-  - 优先和 `occupation` 所在语境拼接
-  - 其次 `education`
-  - 再其次 `location / age`
-  - 如果工作字段已经收集，不代表月薪必须单独起一轮；它可以继续吸附在当前最顺的核心字段上
+  - 第一优先：`occupation`
+  - 第二优先：`location`
+  - 第三优先：`education`
+  - 再其次：`age`
+  - 不建议和 `sex` 硬拼
+  - 如果 `occupation` 已经收集，不代表 `monthly_income` 必须单独起一轮；它应继续吸附在当前最顺、语义最近的未收核心字段上
 - `marital_status`
-  - 优先和 `education / age` 这类基础背景字段拼接
-  - 其次 `occupation / location / sex`
-  - 如果当前轮不是 `education / age`，但仍处在基础资料了解阶段，也可以顺着其他基础资料字段自然带出
+  - 第一优先：`age`
+  - 第二优先：`location`
+  - 第三优先：`education / occupation`
+  - `sex` 不是优先宿主，不建议默认硬拼
+  - 如果当前轮不是最优宿主，但仍处在基础资料了解阶段，也可以顺着当前最自然的基础字段带出
   - 问法应优先是开放式婚况/感情状态确认，不应默认窄化成“单身确认”
 - `partner_requirement`
-  - 优先和 `marital_status` 拼接
-  - 其次 `location / age / education / occupation / sex`
+  - 第一优先：`age`
+  - 第二优先：`location`
+  - 第三优先：`occupation`
+  - 再其次才考虑 `education / marital_status`
+  - 不建议和 `sex` 硬拼
   - 从“你自己的情况”过渡到“你想找什么样的人”更自然时再带出
   - 如果已经知道 `partner_gender_preference`，这里追问的是“除此之外更看重什么”，而不是再追问性别方向
+
+补充约束：
+
+- 中等字段永远找语义最近的未收核心字段挂靠，不固定死模板
+- 如果当前没有合适宿主，就单独问，不强拼
+- 问题预算控制只允许删整问，不允许裁成残句
+- 例如：
+  - 可以回退成只问 `学历`
+  - 不能出现 `你是什么学历呀，大概的` 这种半截话
 
 执行算法要求：
 

@@ -162,6 +162,14 @@ class ChatServiceFinalizeService:
             user_message=user_message,
             final_response=final_response,
             turn_decision=turn_decision,
+            collection_result=collection_result,
+        )
+        final_response = self._maybe_eliminate_dangling_progress_hold(
+            user_profile=user_profile,
+            user_message=user_message,
+            final_response=final_response,
+            turn_decision=turn_decision,
+            collection_result=collection_result,
         )
         delivery_ok = bool(final_response)
         final_response = self._maybe_enforce_contact_followup_response(
@@ -228,6 +236,7 @@ class ChatServiceFinalizeService:
         user_message: str,
         final_response: str,
         turn_decision: TurnDecision,
+        collection_result: Dict[str, Any],
     ) -> str:
         text = str(final_response or "").strip()
         ask_field = str(getattr(turn_decision, "ask_field", "") or "").strip()
@@ -236,6 +245,15 @@ class ChatServiceFinalizeService:
 
         asked_fields = self.host._detect_asked_fields_in_response(text) | self.host._detect_all_questioned_fields_in_response(text)
         if not asked_fields:
+            has_progress = bool((collection_result.get("all_fields") or []))
+            if has_progress:
+                fallback = self.host._build_budget_guard_fallback_response(
+                    user_profile=user_profile,
+                    user_message=user_message,
+                    ask_field=ask_field,
+                    allow_medium_target=bool(getattr(turn_decision, "allow_medium_target", False)),
+                )
+                return str(fallback or text).strip()
             return text
         if ask_field in asked_fields:
             return text
@@ -244,6 +262,65 @@ class ChatServiceFinalizeService:
             user_profile=user_profile,
             user_message=user_message,
             ask_field=ask_field,
+            allow_medium_target=bool(getattr(turn_decision, "allow_medium_target", False)),
+        )
+        return str(fallback or text).strip()
+
+    def _maybe_eliminate_dangling_progress_hold(
+        self,
+        *,
+        user_profile: UserProfile,
+        user_message: str,
+        final_response: str,
+        turn_decision: TurnDecision,
+        collection_result: Dict[str, Any],
+    ) -> str:
+        text = str(final_response or "").strip()
+        if not text:
+            return text
+
+        ask_field = str(getattr(turn_decision, "ask_field", "") or "").strip()
+        next_action = str(getattr(turn_decision, "next_action", "") or "").strip()
+        target_field = ask_field or str(
+            self.host._select_next_progress_target(user_profile, user_message=user_message) or ""
+        ).strip()
+        if not target_field:
+            return text
+
+        explicit_question_fields = (
+            self.host._detect_asked_fields_in_response(text)
+            | self.host._detect_all_questioned_fields_in_response(text)
+        )
+        hold_markers = (
+            "这个我先放这儿",
+            "继续往下说",
+            "继续往下聊",
+            "接着往下聊",
+            "先顺着",
+        )
+        has_progress = bool((collection_result.get("all_fields") or []))
+        if next_action == "confirm_divorce_status":
+            has_progress = True
+
+        if not has_progress and target_field != "contact":
+            return text
+
+        if next_action == "confirm_divorce_status":
+            if target_field != "marital_status":
+                target_field = "marital_status"
+            if target_field not in explicit_question_fields or "离婚" not in text:
+                return self.host._build_divorce_confirmation_response()
+            return text
+
+        if target_field in explicit_question_fields and not any(marker in text for marker in hold_markers):
+            return text
+        if not any(marker in text for marker in hold_markers) and not self.host._looks_like_low_information_model_reply(text):
+            return text
+
+        fallback = self.host._build_budget_guard_fallback_response(
+            user_profile=user_profile,
+            user_message=user_message,
+            ask_field=target_field,
             allow_medium_target=bool(getattr(turn_decision, "allow_medium_target", False)),
         )
         return str(fallback or text).strip()

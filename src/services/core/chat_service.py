@@ -1247,6 +1247,11 @@ class ChatService:
         next_field = str(decision.main_target or "").strip()
         if next_field and next_field != "contact" and self.collection_policy.can_actively_ask(user_profile, next_field):
             return next_field
+        next_progress_target = str(
+            self._select_next_progress_target(user_profile, user_message=fallback_user_message) or ""
+        ).strip()
+        if next_progress_target and next_progress_target != "contact":
+            return next_progress_target
         return None
 
     def _build_resume_after_interrupt_response(
@@ -4047,12 +4052,38 @@ class ChatService:
             last_response=str((conversation_context.get("recent_responses") or [""])[-1] or ""),
             understanding_result=understanding_result,
         )
+        refreshed_decision_profile = self._merge_collection_result_into_shadow_profile(
+            refreshed_decision_profile,
+            collection_result=collection_result,
+        )
         refreshed_turn_decision = await self._build_turn_decision(
             user_message,
             refreshed_decision_profile,
             conversation_context=conversation_context,
             understanding_result=understanding_result,
         )
+        if self._should_force_progress_followup_after_collection(
+            refreshed_turn_decision=refreshed_turn_decision,
+            collection_result=collection_result,
+            user_profile=refreshed_decision_profile,
+        ):
+            forced_field = self._select_next_progress_target(
+                refreshed_decision_profile,
+                user_message=user_message,
+            )
+            if forced_field:
+                refreshed_turn_decision.intent = "general"
+                refreshed_turn_decision.primary_move = "light_followup"
+                refreshed_turn_decision.ask_field = forced_field
+                refreshed_turn_decision.prioritize_user_question = False
+                refreshed_turn_decision.allow_contact_target = forced_field == "contact"
+                refreshed_turn_decision.allow_medium_target = forced_field != "contact"
+                refreshed_turn_decision.response_channel = "model"
+                refreshed_turn_decision.user_concern_type = None
+                logger.info(
+                    "[refresh_turn_decision_force_followup] forced_ask_field=%s",
+                    forced_field,
+                )
         if previous_turn_decision.resume_applied and previous_turn_decision.ask_field:
             previous_field = str(previous_turn_decision.ask_field or "").strip()
             refreshed_field = str(getattr(refreshed_turn_decision, "ask_field", "") or "").strip()
@@ -4073,6 +4104,89 @@ class ChatService:
                 )
                 return ai_response, previous_turn_decision
         return ai_response, refreshed_turn_decision
+
+    def _merge_collection_result_into_shadow_profile(
+        self,
+        shadow_profile: UserProfile,
+        *,
+        collection_result: Dict[str, Any],
+    ) -> UserProfile:
+        merged = shadow_profile.model_copy(deep=True)
+        for item in (collection_result.get("all_fields") or []):
+            if not isinstance(item, dict):
+                continue
+            field = str(item.get("field") or "").strip()
+            value = item.get("value")
+            if not field or value in (None, ""):
+                continue
+            if hasattr(merged, field):
+                setattr(merged, field, value)
+            if field in merged.collection_progress:
+                merged.collection_progress[field] = True
+            if field == "phone":
+                merged.phone_collected = True
+                merged.collection_progress["contact"] = True
+            elif field == "wechat":
+                merged.wechat_collected = True
+                merged.collection_progress["contact"] = True
+            elif field == "contact":
+                merged.collection_progress["contact"] = True
+        return merged
+
+    def _should_force_progress_followup_after_collection(
+        self,
+        *,
+        refreshed_turn_decision: TurnDecision,
+        collection_result: Dict[str, Any],
+        user_profile: UserProfile,
+    ) -> bool:
+        if str(getattr(refreshed_turn_decision, "ask_field", "") or "").strip():
+            return False
+        if getattr(refreshed_turn_decision, "prioritize_user_question", False):
+            return False
+        if getattr(refreshed_turn_decision, "next_action", "") in {"repair_and_release"}:
+            return False
+        transition_reason = str(
+            getattr(refreshed_turn_decision, "context_ack_payload", {}).get("pre_generation_transition_reason") or ""
+        ).strip()
+        has_progress = bool((collection_result.get("all_fields") or []))
+        if transition_reason == "resume_after_divorce_confirmation_complete":
+            has_progress = True
+        if not has_progress:
+            return False
+        return bool(
+            self._select_next_progress_target(user_profile, user_message="")  # noqa: B023
+        )
+
+    def _select_next_progress_target(
+        self,
+        user_profile: UserProfile,
+        *,
+        user_message: str = "",
+    ) -> Optional[str]:
+        policy_decision = self.collection_policy.decide(
+            user_profile,
+            user_message=user_message,
+            allow_contact_target=True,
+            allow_medium_target=True,
+            prioritize_user_question=False,
+            primary_move="light_followup",
+        )
+        candidate = str(getattr(policy_decision, "main_target", "") or "").strip()
+        if candidate == "contact":
+            return "contact" if self.collection_policy.can_enter_contact(user_profile) else None
+        if candidate and self.collection_policy.can_actively_ask(user_profile, candidate):
+            return candidate
+
+        for field in [
+            *self.collection_policy.get_uncovered_core_fields(user_profile),
+            *self.collection_policy.get_uncovered_medium_fields(user_profile),
+        ]:
+            if self.collection_policy.can_actively_ask(user_profile, field):
+                return field
+        if self.collection_policy.can_enter_contact(user_profile) and not self.collection_policy.is_collected(user_profile, "contact"):
+            return "contact"
+        return None
 
     async def finalize_generated_response(
         self,
@@ -4718,8 +4832,17 @@ class ChatService:
             .strip()
         )
         keywords = [
+            "有法院判决书",
+            "法院判决书",
+            "判决书",
+            "有判决书",
+            "有离婚证",
+            "离婚证",
+            "有调解书",
+            "调解书",
             "办妥了",
             "办好了",
+            "办了好了",
             "办理好了",
             "已办妥",
             "已办好",
@@ -4748,10 +4871,12 @@ class ChatService:
         compact = normalized.replace(" ", "")
         regex_patterns = [
             r"办[理\s]*好[了啦呀啊哈]*",
+            r"办了好[了啦呀啊哈]*",
             r"办[妥完][了啦呀啊哈]*",
             r"都[弄办处][好完妥][了啦呀啊哈]*",
             r"恢复单身",
             r"离干净了",
+            r"(法院判决书|判决书|离婚证|调解书)",
         ]
         return any(re.search(pattern, compact) for pattern in regex_patterns)
 
@@ -4798,7 +4923,9 @@ class ChatService:
         text = str(last_response or "").strip()
         if not text:
             return False
-        return "离婚手续" in text and any(token in text for token in ("办妥", "办好", "办完"))
+        if "离婚" not in text:
+            return False
+        return any(token in text for token in ("办妥", "办好", "办完", "处理妥当", "手续", "判决书", "离婚证", "调解书"))
 
     def _should_lock_divorce_confirmation(self, user_profile: UserProfile, user_message: str) -> bool:
         marital_status = str(getattr(user_profile, "marital_status", "") or "").strip()
@@ -5142,6 +5269,17 @@ class ChatService:
                 sorted(updated_asked_fields),
             )
             return updated
+        if self._looks_like_broken_followup_fragment(updated, ask_field=ask_field):
+            logger.info(
+                "[问题预算护栏] 裁剪未减少问题数但命中残句保护，回退到稳定追问: ask_field=%s",
+                ask_field or "-",
+            )
+            return self._build_budget_guard_fallback_response(
+                user_profile=user_profile,
+                user_message=user_message,
+                ask_field=ask_field,
+                allow_medium_target=bool(getattr(turn_decision, "allow_medium_target", False)),
+            )
         return text
 
     def _build_budget_guard_fallback_response(
@@ -5153,6 +5291,10 @@ class ChatService:
         allow_medium_target: bool,
     ) -> str:
         main_target = str(ask_field or "").strip()
+        if not main_target:
+            main_target = str(
+                self._select_next_progress_target(user_profile, user_message=user_message) or ""
+            ).strip()
         preferred_side_target = None
         if main_target and main_target != "contact" and allow_medium_target:
             try:
@@ -5171,6 +5313,16 @@ class ChatService:
             except Exception:
                 preferred_side_target = None
 
+        direct_followup = ""
+        if main_target:
+            direct_followup = self._build_followup_seed_for_model_rewrite(
+                main_target,
+                user_profile,
+                user_message=user_message,
+            ).strip()
+            if direct_followup and not preferred_side_target:
+                return direct_followup
+
         fallback = self._build_interleaving_seed_for_model_rewrite(
             user_profile,
             user_message,
@@ -5178,14 +5330,17 @@ class ChatService:
             preferred_side_target=preferred_side_target,
             allow_medium_target=allow_medium_target,
         ).strip()
+        if (
+            fallback
+            and main_target
+            and self._looks_like_low_information_model_reply(fallback)
+            and direct_followup
+        ):
+            return direct_followup
         if fallback:
             return fallback
-        if main_target:
-            return self._build_followup_seed_for_model_rewrite(
-                main_target,
-                user_profile,
-                user_message=user_message,
-            ).strip()
+        if direct_followup:
+            return direct_followup
         return ""
 
     @staticmethod
@@ -5205,8 +5360,13 @@ class ChatService:
             r"后面有合适",
             r"联系你也更方便",
             r"那你",
+            r"大概的$",
+            r"顺便的$",
+            r"另外的$",
         )
         if any(re.search(pattern, text) for pattern in broken_prefix_patterns):
+            return True
+        if re.search(r"(大概的|顺便|另外|还有|以及)\s*$", text):
             return True
         if ask_field and len(text) <= 10:
             return True
@@ -6283,39 +6443,16 @@ class ChatService:
         side_prompt = ""
         if (
             allow_medium_target
-            and preferred_side_target == "partner_requirement"
-            and self.collection_policy.can_actively_ask(user_profile, "partner_requirement")
+            and preferred_side_target
+            and self.collection_policy.can_actively_ask(user_profile, preferred_side_target)
         ):
-            if main_target in {"age", "education", "occupation"}:
-                return self._build_fused_partner_requirement_prompt(main_target, user_profile)
-            elif bridge_context:
-                side_prompt = random.choice(PARTNER_REQUIREMENT_ASK_VARIANTS)
-            else:
-                side_prompt = random.choice(PARTNER_REQUIREMENT_ASK_VARIANTS)
-        elif (
-            allow_medium_target
-            and preferred_side_target == "monthly_income"
-            and self.collection_policy.can_actively_ask(user_profile, "monthly_income")
-        ):
-            if main_target == "occupation":
-                if bridge_context:
-                    side_prompt = random.choice(INCOME_ASK_VARIANTS)
-                else:
-                    return self._build_fused_income_prompt(
-                        main_target,
-                        user_profile,
-                        user_message=user_message,
-                    )
-            else:
-                side_prompt = random.choice(INCOME_ASK_VARIANTS)
-        elif (
-            allow_medium_target
-            and preferred_side_target == "marital_status"
-            and self.collection_policy.can_actively_ask(user_profile, "marital_status")
-        ):
-            if main_target in {"age", "location", "education", "occupation"}:
-                return self._build_fused_marital_status_prompt(main_target)
-            side_prompt = "你现在的感情状态方便说个大概吗？我这边先了解一下，后面接话会更顺一点。"
+            side_prompt = self._build_semantic_side_prompt(
+                side_target=preferred_side_target,
+                main_target=main_target,
+                user_profile=user_profile,
+                user_message=user_message,
+                bridge_context=bridge_context,
+            )
         elif allow_medium_target and preferred_side_target:
             side_prompt = self._build_policy_field_prompt(preferred_side_target, user_profile, user_message=user_message)
 
@@ -6338,6 +6475,53 @@ class ChatService:
         if ack:
             return f"{ack} {prompt}".strip()
         return prompt
+
+    @staticmethod
+    def _can_semantically_attach_side_target(
+        side_target: str,
+        *,
+        main_target: Optional[str],
+    ) -> bool:
+        host_map = {
+            "monthly_income": {"occupation", "location", "age"},
+            "marital_status": {"age", "location", "occupation"},
+            "partner_requirement": {"age", "location", "occupation"},
+        }
+        if not side_target or not main_target:
+            return False
+        return main_target in host_map.get(side_target, set())
+
+    def _build_semantic_side_prompt(
+        self,
+        *,
+        side_target: str,
+        main_target: Optional[str],
+        user_profile: UserProfile,
+        user_message: str,
+        bridge_context: Optional[dict[str, Any]] = None,
+    ) -> str:
+        if side_target == "partner_requirement":
+            if self._can_semantically_attach_side_target(side_target, main_target=main_target):
+                return self._build_fused_partner_requirement_prompt(main_target, user_profile)
+            return ""
+
+        if side_target == "monthly_income":
+            if self._can_semantically_attach_side_target(side_target, main_target=main_target):
+                if main_target == "occupation" and bridge_context:
+                    return random.choice(INCOME_ASK_VARIANTS)
+                return self._build_fused_income_prompt(
+                    main_target,
+                    user_profile,
+                    user_message=user_message,
+                )
+            return ""
+
+        if side_target == "marital_status":
+            if self._can_semantically_attach_side_target(side_target, main_target=main_target):
+                return self._build_fused_marital_status_prompt(main_target)
+            return ""
+
+        return self._build_policy_field_prompt(side_target, user_profile, user_message=user_message)
 
     def _build_interleaving_seed_for_model_rewrite(
         self,
@@ -6878,12 +7062,14 @@ class ChatService:
         ask_count_snapshot = field_ask_count_before if field_ask_count_before is not None else {}
 
         # 辅助函数：获取字段显示值（区分"未留"和"已跳过"）
+        effective_ask_count_snapshot = dict(getattr(user_profile, "effective_field_ask_count", {}) or {})
+
         def get_field_display(field_name: str, value, default: str = "未留") -> str:
             if value:
                 return str(value)
             # 检查是否被跳过（问了2次及以上未回答）
             # 使用"增加前"的快照值，这样用户还有机会回答当前问题
-            ask_count = ask_count_snapshot.get(field_name, 0)
+            ask_count = effective_ask_count_snapshot.get(field_name, ask_count_snapshot.get(field_name, 0))
             if ask_count >= 2:
                 return f"已跳过({ask_count}次未答)"
             return default

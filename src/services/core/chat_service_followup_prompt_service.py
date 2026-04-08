@@ -68,6 +68,12 @@ class ChatServiceFollowupPromptService:
     ) -> str:
         if not field:
             return ""
+        if (
+            field == "marital_status"
+            and user_profile is not None
+            and self.host.collection_policy.has_divorce_confirmation_pending(user_profile)
+        ):
+            return self.host._build_divorce_confirmation_response()
         if field == "sex":
             preference_hint = ChatServiceSummaryHelperService.extract_partner_requirement_hint(
                 collection_result
