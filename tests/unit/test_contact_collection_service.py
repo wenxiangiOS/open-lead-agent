@@ -190,6 +190,16 @@ class TestContactCollectionService:
         profile = UserProfile(account_id="test", location="北京")
         profile.phone_ask_count = 1
         assert self.service.get_next_action(profile, "电话不方便，留微信可以吗") == NextAction.ASK_WECHAT
+        assert profile.pending_contact_field == "phone"
+        assert profile.pending_contact_hint == "channel_switch"
+
+    def test_get_next_action_prefers_wechat_over_phone_with_colloquial_phrase(self):
+        """下一步动作 - `微信可以不` 也应识别为渠道切换，不是继续劝电话。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+        assert self.service.get_next_action(profile, "微信可以不") == NextAction.ASK_WECHAT
+        assert profile.pending_contact_field == "phone"
+        assert profile.pending_contact_hint == "channel_switch"
 
     def test_get_next_action_after_phone_attempt_keeps_persuade_phone_for_non_hk(self):
         """下一步动作 - 非香港用户电话首次询问后，继续第二次电话追问"""
@@ -269,6 +279,30 @@ class TestContactCollectionService:
         assert action == NextAction.ASK_WECHAT
         assert "微信" in instruction
         assert "电话" not in instruction
+
+    def test_get_next_action_resumes_phone_after_wechat_collected_from_channel_switch(self):
+        """渠道切换先收微信后，应恢复电话，不继续停留在微信分支。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+        profile.wechat = "abc123"
+        profile.wechat_collected = True
+        profile.pending_contact_field = "phone"
+        profile.pending_contact_hint = "channel_switch"
+
+        assert self.service.get_next_action(profile) == NextAction.ASK_PHONE
+
+    def test_build_instruction_resumes_phone_after_wechat_collected_from_channel_switch(self):
+        """渠道切换恢复电话时，应使用微信已收后的补充电话提示。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 1
+        profile.wechat = "abc123"
+        profile.wechat_collected = True
+        profile.pending_contact_field = "phone"
+        profile.pending_contact_hint = "channel_switch"
+
+        instruction, action = self.service.build_instruction(profile)
+        assert action == NextAction.ASK_PHONE
+        assert "补充电话" in instruction or "电话" in instruction
 
     def test_build_instruction_after_phone_attempt_keeps_phone_prompt(self):
         """构建指令 - 电话首次推进后，仍应继续电话追问而不是提前切微信"""
@@ -494,8 +528,8 @@ class TestContactCollectionService:
         assert profile.rejected_phone is True
         assert self.service.get_next_action(profile) == NextAction.ASK_WECHAT
 
-    def test_detect_refusal_clears_unfulfilled_phone_effective_ask_when_switching_to_wechat(self):
-        """用户明确拒微信时，若上一轮未兑现地预问过电话，应同时清掉电话有效询问计数。"""
+    def test_detect_refusal_keeps_phone_effective_ask_when_switching_to_wechat(self):
+        """切换到微信流程时，已经真实问过的电话次数仍应计入有效询问上限。"""
         profile = UserProfile(account_id="test", location="北京")
         profile.phone_ask_count = 1
         profile.phone_effective_ask_count = 1
@@ -509,12 +543,12 @@ class TestContactCollectionService:
 
         assert result is not None
         assert result.contact_type == "wechat"
-        assert profile.phone_ask_count == 0
-        assert profile.phone_effective_ask_count == 0
+        assert profile.phone_ask_count == 1
+        assert profile.phone_effective_ask_count == 1
         assert self.service.get_next_action(profile) == NextAction.PERSUADE_WECHAT
 
-    def test_clear_pending_request_state_only_rolls_back_latest_phone_attempt(self):
-        """FAQ/切换打断时，只回滚最近一次未兑现的电话追问，不抹掉历史有效询问。"""
+    def test_clear_pending_request_state_only_clears_request_context(self):
+        """清理 pending 状态不应回退已真实展示的询问计数。"""
         profile = UserProfile(account_id="test", location="北京")
         profile.phone_ask_count = 2
         profile.phone_effective_ask_count = 2
@@ -522,8 +556,8 @@ class TestContactCollectionService:
 
         self.service.clear_pending_request_state(profile, "phone")
 
-        assert profile.phone_ask_count == 1
-        assert profile.phone_effective_ask_count == 1
+        assert profile.phone_ask_count == 2
+        assert profile.phone_effective_ask_count == 2
         assert profile.last_contact_request_type is None
 
     def test_is_contact_complete_false_after_wechat_collected_with_only_one_phone_effective_ask(self):
@@ -536,6 +570,27 @@ class TestContactCollectionService:
 
         assert self.service.is_contact_complete(profile) is False
         assert self.service.get_next_action(profile) == NextAction.PERSUADE_PHONE
+
+    def test_detect_refusal_treats_already_left_wechat_as_phone_refusal_in_phone_context(self):
+        """用户在电话语境中说“已经留了微信了”时，应归因为拒绝电话而不是拒绝微信。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.wechat = "abc123"
+        profile.wechat_collected = True
+        profile.phone_ask_count = 2
+        profile.phone_effective_ask_count = 2
+        profile.last_contact_request_type = "phone"
+
+        result = self.service.detect_refusal(
+            "不方便了，已经留了微信了",
+            profile,
+            "微信我看到了。你要是方便的话，也可以补个常用手机号。",
+        )
+
+        assert result is not None
+        assert result.contact_type == "phone"
+        assert result.is_final is True
+        assert profile.rejected_phone is True
+        assert profile.rejected_wechat is False
 
     # ==================== get_status_display 测试 ====================
 

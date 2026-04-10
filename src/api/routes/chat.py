@@ -26,6 +26,48 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _format_occupation_inference_display(profile: Dict[str, Any]) -> str | None:
+    if str(profile.get("occupation") or "").strip():
+        return None
+    candidate = str(profile.get("occupation_inference_candidate") or "").strip()
+    if not candidate:
+        return None
+    evidence = dict(profile.get("extraction_evidence") or {}).get("occupation_inference_candidate") or {}
+    confidence = evidence.get("confidence")
+    reason = str(evidence.get("reason") or "").strip()
+    reason_label_map = {
+        "explicit_self_industry": "自述行业",
+        "same_industry_exclusion": "同行反推",
+        "same_work_alignment": "同行表述",
+        "industry_context_fallback": "语境弱推断",
+    }
+    reason_label = reason_label_map.get(reason, reason)
+    try:
+        confidence_value = float(confidence)
+    except (TypeError, ValueError):
+        confidence_value = None
+    if confidence_value is None:
+        return f"[推断] {candidate} ({reason_label})" if reason_label else f"[推断] {candidate}"
+    confidence_label = (
+        "高置信" if confidence_value >= 0.85
+        else "中置信" if confidence_value >= 0.70
+        else "低置信"
+    )
+    suffix_parts = [f"{confidence_value:.2f}", confidence_label]
+    if reason_label:
+        suffix_parts.append(reason_label)
+    return f"[推断] {candidate} ({', '.join(suffix_parts)})"
+
+
+def _format_occupation_display(profile: Dict[str, Any]) -> str | None:
+    occupation = str(profile.get("occupation") or "").strip()
+    if occupation:
+        return occupation
+    if str(profile.get("occupation_inference_candidate") or "").strip():
+        return "未确认"
+    return None
+
+
 def init_service(service: ChatService):
     """Initialize chat service"""
     global chat_service
@@ -242,9 +284,10 @@ def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_b
         "weight": "体重",
         "location": "坐标",
         "education": "学历",
-        "marital_status": "婚况",
-        "monthly_income": "月薪",
         "occupation": "职业",
+        "occupation_inference_candidate": "职业推断(调试)",
+        "monthly_income": "月薪",
+        "marital_status": "婚况",
         "contact": "联系方式",
         "partner_gender_preference": "择偶性别偏好",
         "partner_requirement": "择偶要求",
@@ -262,9 +305,17 @@ def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_b
             contact_display = _format_contact_display(profile)
             lines.append(f"  {name}: {contact_display}")
         else:
-            value = profile.get(field)
+            value = (
+                _format_occupation_inference_display(profile)
+                if field == "occupation_inference_candidate"
+                else _format_occupation_display(profile)
+                if field == "occupation"
+                else profile.get(field)
+            )
             if value is not None:
                 lines.append(f"  {name}: {value}")
+            elif field == "occupation_inference_candidate":
+                lines.append(f"  {name}: 无")
             else:
                 # 检查是否被跳过（用户明确拒绝）
                 skipped = profile.get("skipped_fields", {})
@@ -291,9 +342,10 @@ def _format_debug_info(profile: Dict[str, Any]) -> str:
         "weight": "体重",
         "location": "坐标",
         "education": "学历",
-        "marital_status": "婚况",
-        "monthly_income": "月薪",
         "occupation": "职业",
+        "occupation_inference_candidate": "职业推断(调试)",
+        "monthly_income": "月薪",
+        "marital_status": "婚况",
         "contact": "联系方式",
         "partner_gender_preference": "择偶性别偏好",
         "partner_requirement": "择偶要求",
@@ -311,9 +363,17 @@ def _format_debug_info(profile: Dict[str, Any]) -> str:
             contact_display = _format_contact_display(profile)
             lines.append(f"  {name}: {contact_display}")
         else:
-            value = profile.get(field)
+            value = (
+                _format_occupation_inference_display(profile)
+                if field == "occupation_inference_candidate"
+                else _format_occupation_display(profile)
+                if field == "occupation"
+                else profile.get(field)
+            )
             if value is not None:
                 lines.append(f"  {name}: {value}")
+            elif field == "occupation_inference_candidate":
+                lines.append(f"  {name}: 无")
             else:
                 # 检查是否被跳过（用户明确拒绝）
                 skipped = profile.get("skipped_fields", {})

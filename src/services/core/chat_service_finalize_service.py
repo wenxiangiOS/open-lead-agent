@@ -258,6 +258,9 @@ class ChatServiceFinalizeService:
         if ask_field in asked_fields:
             return text
 
+        if asked_fields and not self.host._looks_like_low_information_model_reply(text):
+            return text
+
         fallback = self.host._build_budget_guard_fallback_response(
             user_profile=user_profile,
             user_message=user_message,

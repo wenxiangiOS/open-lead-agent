@@ -126,6 +126,8 @@ class ProcessChatTurnUseCase:
                 f"trace_id={trace_id} account_id={account_id} dialog_id={request.dialogId or 'na'} "
                 f"ok={1 if ok else 0} route={route} response_channel={response_channel} "
                 f"prompt_chars={prompt_chars} extracted_fields={extracted_fields_count} "
+                f"occupation={getattr(user_profile, 'occupation', None) or '-'} "
+                f"occupation_inference_candidate={getattr(user_profile, 'occupation_inference_candidate', None) or '-'} "
                 f"total_ms={total_ms} stages={stages} "
                 f"pre_gen_source={getattr(pre_generation_resolution, 'source', '') or '-'} "
                 f"pre_gen_reason={getattr(pre_generation_resolution, 'transition_reason', '') or '-'} "
@@ -219,10 +221,6 @@ class ProcessChatTurnUseCase:
                 refusal_detection_done = True
                 _mark("refusal_detection", t0)
 
-            if self.chat_service.extraction_service._looks_like_partner_age_range_expression(request.question):  # noqa: SLF001
-                parsed_age = None
-            else:
-                parsed_age = self.chat_service.extraction_service._parse_age(request.question)  # noqa: SLF001
             t0 = time.perf_counter()
             short_route, short_payload, user_profile = await self.chat_service.maybe_build_pre_generation_short_circuit_payload(
                 account_id=account_id,
@@ -232,7 +230,6 @@ class ProcessChatTurnUseCase:
                 turn_decision=turn_decision,
                 turn_understanding=turn_understanding,
                 message_count=message_count,
-                parsed_age=parsed_age,
             )
             if short_payload is not None and short_route is not None:
                 _mark("state_update", t0)

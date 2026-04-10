@@ -534,6 +534,48 @@ class TestProfileCollectionPolicyIntegration:
             for keyword in ["微信", "联系你", "好消息", "月收入", "择偶", "要求", "学历", "工作", "职业", "好的", "明白"]
         ), response_2
 
+    def test_wechat_collected_then_refuse_phone_does_not_fall_into_boundary_pause(self):
+        """已留微信后再拒绝电话，应结束电话流程而不是返回“先不追问”的空悬话术。"""
+        account_id = f"policy_wechat_then_refuse_phone_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+
+        profile = self._run(
+            self._seed_profile_fields(
+                account_id,
+                sex="女",
+                age=93,
+                location="南山",
+                education="本科",
+                occupation="互联网相关",
+                marital_status="未婚",
+                monthly_income="年薪税后大概20左右",
+                partner_requirement="未婚，学历本科及以上，身高符合要求，大厂程序员",
+            )
+        )
+        profile.phone_ask_count = 1
+        profile.phone_effective_ask_count = 1
+        profile.wechat_ask_count = 1
+        profile.wechat_effective_ask_count = 1
+        profile.pending_contact_field = "phone"
+        profile.pending_contact_hint = "channel_switch"
+        self._run(self.user_service.save_user_profile(account_id, profile))
+        self._run(self.chat_service.dialogue_manager.update_recent_responses(account_id, "当然可以呀，之后有合适的方向联系起来也顺畅，你说下你的微信号就好~"))
+
+        response_1, profile_1 = self._run(self._send_message(account_id, "我的微信是KJHGUGGG", sex="女"))
+        assert profile_1 is not None
+        assert profile_1.wechat_collected is True
+        assert profile_1.wechat == "KJHGUGGG"
+        assert any(keyword in response_1 for keyword in ["电话", "手机号", "联系"]), response_1
+
+        response_2, profile_2 = self._run(self._send_message(account_id, "不方便了，已经留了微信了", sex="女"))
+        assert profile_2 is not None
+        assert profile_2.wechat_collected is True
+        assert profile_2.rejected_phone is True
+        assert "先不追问" not in response_2, response_2
+        assert "舒服一点的节奏" not in response_2, response_2
+        assert "电话" not in response_2, response_2
+        assert any(keyword in response_2 for keyword in ["1-8小时", "好消息", "提前约时间", "不打扰"]), response_2
+
     def test_real_ai_divorce_confirmed_returns_to_mainline(self):
         """用户离异但手续已办妥时，AI 应确认后回到主线，而不是结束对话"""
         account_id = f"policy_divorce_confirmed_{uuid.uuid4().hex[:8]}"

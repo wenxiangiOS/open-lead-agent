@@ -18,9 +18,182 @@ def _is_affirmative_confirmation_answer(text: str) -> bool:
 
 class ChatServiceCollectionPostprocessService:
     CORE_RETRYABLE_FIELDS = {"sex", "age", "education", "occupation", "location"}
+    SELF_PARTNER_CONFLICT_RULES = {
+        "occupation": {"label": "职业", "match": "partner_text"},
+        "location": {"label": "地点", "match": "partner_requirement_contains"},
+        "education": {"label": "学历", "match": "partner_requirement_contains"},
+    }
 
     def __init__(self, host: Any) -> None:
         self.host = host
+
+    @staticmethod
+    def _expected_birth_year_bucket_from_age(age: object) -> str:
+        try:
+            age_value = int(str(age).strip())
+        except (TypeError, ValueError):
+            return ""
+        birth_year = 2026 - age_value
+        return f"{birth_year % 100:02d}后"
+
+    def _resolve_self_age_label_from_message(self, user_message: str, age: object) -> str:
+        text = str(user_message or "").strip()
+        if not text:
+            return ""
+        service = getattr(self.host, "turn_understanding_service", None)
+        if service is not None:
+            extracted = service._extract_deterministic_profile_fields(text)  # noqa: SLF001
+            age_label = str((extracted or {}).get("age_label") or "").strip()
+            if age_label:
+                return age_label
+        return self._expected_birth_year_bucket_from_age(age)
+
+    def _extract_deterministic_self_fields(self, user_message: str) -> Dict[str, str]:
+        service = getattr(self.host, "turn_understanding_service", None)
+        if service is None:
+            return {}
+        return dict(service._extract_deterministic_profile_fields(str(user_message or "").strip()) or {})  # noqa: SLF001
+
+    @staticmethod
+    def _upsert_collection_result_field(
+        *,
+        collection_result: Dict[str, Any],
+        field_name: str,
+        value: str,
+    ) -> None:
+        all_fields = list(collection_result.get("all_fields") or [])
+        replaced = False
+        for item in all_fields:
+            if str(item.get("field") or "").strip() == field_name:
+                item["value"] = value
+                replaced = True
+        if not replaced:
+            all_fields.append({"field": field_name, "value": value})
+        collection_result["all_fields"] = all_fields
+
+    async def _repair_partner_text_polluted_self_field(
+        self,
+        *,
+        account_id: str,
+        user_profile,
+        collection_result: Dict[str, Any],
+        user_message: str,
+        field_name: str,
+        current_value: str,
+        resolved_value: str,
+        log_label: str,
+    ) -> None:
+        updated = await self.host.user_service.update_user_profile_field(
+            account_id,
+            field_name,
+            resolved_value,
+        )
+        if not updated:
+            return
+
+        setattr(user_profile, field_name, resolved_value)
+        self._upsert_collection_result_field(
+            collection_result=collection_result,
+            field_name=field_name,
+            value=resolved_value,
+        )
+        logger.info(
+            "[字段纠偏] 修复 self/partner %s串扰: current_%s=%s repaired_%s=%s",
+            log_label,
+            field_name,
+            current_value,
+            field_name,
+            resolved_value,
+        )
+
+    async def _repair_self_partner_age_scope_conflict(
+        self,
+        *,
+        account_id: str,
+        user_profile,
+        collection_result: Dict[str, Any],
+        user_message: str,
+    ) -> None:
+        age = getattr(user_profile, "age", None)
+        current_age_label = str(getattr(user_profile, "age_label", "") or "").strip()
+        partner_requirement = str(getattr(user_profile, "partner_requirement", "") or "").strip()
+        if not age or not current_age_label or not partner_requirement:
+            return
+
+        current_bucket_match = re.fullmatch(r"\d{2}后", current_age_label)
+        if not current_bucket_match:
+            return
+        if current_age_label not in partner_requirement:
+            return
+
+        resolved_self_age_label = self._resolve_self_age_label_from_message(user_message, age)
+        if not resolved_self_age_label or resolved_self_age_label == current_age_label:
+            return
+
+        updated = await self.host.user_service.update_user_profile_field(
+            account_id,
+            "age_label",
+            resolved_self_age_label,
+        )
+        if not updated:
+            return
+
+        user_profile.age_label = resolved_self_age_label
+        if re.fullmatch(r"\d{2}后", resolved_self_age_label):
+            user_profile.pending_birth_year_bucket = resolved_self_age_label
+        else:
+            user_profile.pending_birth_year_bucket = None
+        self._upsert_collection_result_field(
+            collection_result=collection_result,
+            field_name="age_label",
+            value=resolved_self_age_label,
+        )
+        logger.info(
+            "[字段纠偏] 修复 self/partner 年龄串扰: current_age_label=%s repaired_age_label=%s partner_requirement=%s",
+            current_age_label,
+            resolved_self_age_label,
+            partner_requirement,
+        )
+
+    async def _repair_self_partner_simple_scope_conflicts(
+        self,
+        *,
+        account_id: str,
+        user_profile,
+        collection_result: Dict[str, Any],
+        user_message: str,
+    ) -> None:
+        extracted = self._extract_deterministic_self_fields(user_message)
+        partner_requirement = str(getattr(user_profile, "partner_requirement", "") or "").strip()
+        extraction_service = getattr(self.host, "extraction_service", None)
+        for field_name, rule in self.SELF_PARTNER_CONFLICT_RULES.items():
+            current_value = str(getattr(user_profile, field_name, "") or "").strip()
+            if not current_value:
+                continue
+            resolved_value = str((extracted or {}).get(field_name) or "").strip()
+            if not resolved_value or resolved_value == current_value:
+                continue
+
+            match_type = str(rule.get("match") or "").strip()
+            if match_type == "partner_text":
+                if extraction_service is None or not hasattr(extraction_service, "_looks_like_partner_requirement_content"):
+                    continue
+                if not extraction_service._looks_like_partner_requirement_content(current_value):  # noqa: SLF001
+                    continue
+            else:
+                if not partner_requirement or current_value not in partner_requirement:
+                    continue
+
+            await self._repair_partner_text_polluted_self_field(
+                account_id=account_id,
+                user_profile=user_profile,
+                collection_result=collection_result,
+                user_message=user_message,
+                field_name=field_name,
+                current_value=current_value,
+                resolved_value=resolved_value,
+                log_label=str(rule.get("label") or field_name),
+            )
 
     @staticmethod
     def _looks_like_tail_completion_reply(user_message: str) -> bool:
@@ -192,6 +365,19 @@ class ChatServiceCollectionPostprocessService:
                 suspicious_fields=suspicious_fields,
             )
             logger.info("[异常值澄清] 标记可疑字段待澄清: %s", ",".join(suspicious_fields))
+
+        await self._repair_self_partner_age_scope_conflict(
+            account_id=account_id,
+            user_profile=user_profile,
+            collection_result=collection_result,
+            user_message=user_message,
+        )
+        await self._repair_self_partner_simple_scope_conflicts(
+            account_id=account_id,
+            user_profile=user_profile,
+            collection_result=collection_result,
+            user_message=user_message,
+        )
 
         ending_info = self.host.ending_service.check_and_get_ending(
             user_message,

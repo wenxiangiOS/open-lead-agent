@@ -143,8 +143,12 @@ SELF_HARM_GUARD_PATTERNS = (
 MEDICAL_GUARD_PATTERNS = (
     r"抑郁",
     r"吃什么药",
-    r"医疗",
     r"诊断",
+    r"怎么用药",
+    r"开什么药",
+    r"药怎么吃",
+    r"是不是.*病",
+    r"要不要看医生",
 )
 LEGAL_GUARD_PATTERNS = (
     r"法律",
@@ -1044,6 +1048,9 @@ class ChatService:
         if not has_real_contact_flow:
             return False
 
+        if last_contact_type in {"phone", "wechat"}:
+            return True
+
         try:
             next_action = self.contact_service.get_next_action(user_profile, message)
             action_value = getattr(next_action, "value", str(next_action))
@@ -1052,21 +1059,45 @@ class ChatService:
 
         return action_value in {"ask_phone", "persuade_phone", "ask_wechat", "persuade_wechat"}
 
-    @staticmethod
-    def _looks_like_fake_info_message(user_message: str) -> bool:
+    def _looks_like_fake_info_message(self, user_message: str) -> bool:
         message = str(user_message or "").strip()
         if not message:
             return False
 
+        extraction_service = getattr(self, "extraction_service", None)
+        analysis = {}
+        stable_self_age = None
+        if extraction_service is not None:
+            analysis = extraction_service.analyze_numeric_semantics(message)
+            stable_self_age, _ = extraction_service.resolve_stable_self_age(
+                user_message=message,
+                resolved_age=None,
+            )
+        if stable_self_age is not None and (stable_self_age <= 10 or stable_self_age >= 120):
+            return True
+
         age_match = re.search(r"(?:今年|我今年|年龄|岁数)?\s*(\d{1,4})\s*岁", message)
-        if age_match:
+        if age_match and not bool((analysis or {}).get("partner_age_gap_candidates")):
             age_value = int(age_match.group(1))
             if age_value <= 10 or age_value >= 120:
                 return True
 
-        height_cm_match = re.search(r"(?:身高|高)\s*(\d{2,3})\s*(?:cm|厘米)?", message, re.IGNORECASE)
-        if height_cm_match:
-            height_value = int(height_cm_match.group(1))
+        for raw_height in list((analysis or {}).get("height_candidates") or []):
+            digits = re.sub(r"[^\d.]", "", str(raw_height or ""))
+            if not digits:
+                continue
+            if "." in digits:
+                try:
+                    meter_value = float(digits)
+                except ValueError:
+                    meter_value = 0.0
+                if meter_value >= 2.6 or meter_value <= 0.8:
+                    return True
+                continue
+            try:
+                height_value = int(digits)
+            except ValueError:
+                height_value = 0
             if height_value <= 80 or height_value >= 260:
                 return True
 
@@ -1385,7 +1416,8 @@ class ChatService:
     ) -> TurnDecision:
         tone_policy = {
             "ack_budget_per_n_turns": 3,
-            "max_question_per_turn": 1,
+            "max_core_question_per_turn": 1,
+            "allow_related_medium_side_target": True,
             "enforce_contact_transition": False,
             "core_streak_max": 1 if primary_move == "soft_hold" else 3,
         }
@@ -1630,7 +1662,8 @@ class ChatService:
 
         tone_policy = {
             "ack_budget_per_n_turns": 3,
-            "max_question_per_turn": 1,
+            "max_core_question_per_turn": 1,
+            "allow_related_medium_side_target": True,
             "enforce_contact_transition": False,
             "core_streak_max": 3,
         }
@@ -2129,7 +2162,8 @@ class ChatService:
     ) -> TurnDecision:
         tone_policy = {
             "ack_budget_per_n_turns": 3,
-            "max_question_per_turn": 1,
+            "max_core_question_per_turn": 1,
+            "allow_related_medium_side_target": True,
             "enforce_contact_transition": True,
             "core_streak_max": 3,
         }
@@ -4002,6 +4036,8 @@ class ChatService:
             ai_extracted_data,
             self._normalize_rule_extracted_fields(rule_extracted_data),
             user_message,
+            user_profile=user_profile,
+            last_response=last_response,
             understanding_result=understanding_result,
         )
         if not extracted_data.get("partner_requirement"):
@@ -4285,7 +4321,6 @@ class ChatService:
         turn_decision: TurnDecision,
         turn_understanding: TurnUnderstandingResult,
         message_count: int,
-        parsed_age: Optional[int],
     ) -> tuple[Optional[str], Optional[Dict[str, Any]], UserProfile]:
         return await self.preparation_service.maybe_build_pre_generation_short_circuit_payload(
             account_id=account_id,
@@ -4295,7 +4330,6 @@ class ChatService:
             turn_decision=turn_decision,
             turn_understanding=turn_understanding,
             message_count=message_count,
-            parsed_age=parsed_age,
         )
 
     async def maybe_build_already_ended_payload(
@@ -5748,88 +5782,14 @@ class ChatService:
         return any(marker in message for marker in contact_retry_markers)
 
     def _extract_basic_fields_from_message(self, user_message: str) -> Dict[str, Any]:
-        """AI 不可用时，用轻量规则兜底提取常见基础字段。"""
+        """AI 不可用时，复用统一理解侧的基础提取逻辑，避免多套规则漂移。"""
         if not user_message:
             return {}
-
-        extracted: Dict[str, Any] = {}
-        compact_message = re.sub(r"[，,、。！？!?~～\s]+", "", user_message)
-
-        if '我是女生' in user_message or '本人女' in user_message:
-            extracted['sex'] = '女'
-        elif '我是男生' in user_message or '本人男' in user_message:
-            extracted['sex'] = '男'
-        else:
-            sex_match = re.search(r"(?:^|[，,、\s])(?:(?:我是)?(男生|男的|女生|女的))(?:呢|呀|哈|哦|啊)?(?=$|[，,、。！？!?])", user_message)
-            if sex_match:
-                extracted['sex'] = '男' if '男' in sex_match.group(1) else '女'
-
-        age_match = re.search(r'(\d{2})后', user_message)
-        if age_match:
-            suffix = int(age_match.group(1))
-            birth_year = 2000 + suffix if suffix <= datetime.now().year % 100 else 1900 + suffix
-            extracted['age'] = datetime.now().year - birth_year
-            extracted['age_label'] = f"{age_match.group(1)}后"
-        else:
-            birth_year_full = re.search(r'(19\d{2}|20\d{2})年(?:出生)?', user_message)
-            birth_year_short = re.search(r'(?<!\d)(\d{2})年(?:的)?(?:出生)?', user_message)
-            if birth_year_full:
-                birth_year = int(birth_year_full.group(1))
-                extracted['age'] = datetime.now().year - birth_year
-                extracted['age_label'] = f"{birth_year}年"
-            elif birth_year_short:
-                suffix = int(birth_year_short.group(1))
-                birth_year = 2000 + suffix if suffix <= datetime.now().year % 100 else 1900 + suffix
-                extracted['age'] = datetime.now().year - birth_year
-                extracted['age_label'] = f"{birth_year_short.group(1)}年"
-            else:
-                explicit_age = re.search(r'(\d{2})岁', user_message)
-                if explicit_age:
-                    extracted['age'] = int(explicit_age.group(1))
-
-        # 支持“我是女生，90后，深圳，本科”这类紧凑输入中的城市片段，同时避免把“在骗我”误提取为地点。
-        city_candidates = {"深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港"}
-        preference_context = bool(re.search(r"(喜欢|想找|找).*(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)", user_message))
-        if not preference_context:
-            for city in city_candidates:
-                if re.search(rf"(?:在|来自|住在)\s*{city}", user_message) or re.search(rf"(?:^|[，,、\s]){city}(?:$|[，,、\s])", user_message):
-                    extracted["location"] = city
-                    break
-                if len(compact_message) <= 8 and re.fullmatch(rf"(?:我是|我在|我来自|我住在|我)?{city}(?:人|的|这边)?", compact_message):
-                    extracted["location"] = city
-                    break
-            if not extracted.get("location"):
-                location_match = re.search(
-                    r'(?:在|来自|住在)\s*([\u4e00-\u9fa5]{2,8}(?:市|省|县|区|州|特别行政区))',
-                    user_message,
-                )
-                if location_match:
-                    extracted["location"] = location_match.group(1)
-
-        for edu in ['博士', '硕士', '研究生', '本科', '大专', '中专', '高中']:
-            if edu in user_message:
-                extracted['education'] = edu
-                break
-
-        for marital in ['单身', '离异', '未婚', '已婚']:
-            if marital in user_message:
-                extracted['marital_status'] = marital
-                break
-
-        segments = re.split(r'[，,、\s]+', user_message)
-        education_tokens = {'博士', '硕士', '研究生', '本科', '大专', '中专', '高中'}
-        marital_tokens = {'单身', '离异', '未婚', '已婚'}
-        ignored_tokens = {'我是女生', '我是男生', '女生', '男生'}
-        for index, segment in enumerate(segments):
-            token = segment.strip()
-            if not token:
-                continue
-            if token in education_tokens and index + 1 < len(segments):
-                candidate = segments[index + 1].strip()
-                if candidate and candidate not in marital_tokens and candidate not in ignored_tokens and not candidate.startswith('想找'):
-                    extracted['occupation'] = candidate
-                    break
-
+        extracted = dict(self.turn_understanding_service._extract_deterministic_profile_fields(user_message))  # noqa: SLF001
+        extracted = self.turn_understanding_service._apply_extraction_guards(  # noqa: SLF001
+            extracted,
+            user_message,
+        )
         return extracted
 
     def _build_shadow_profile_for_decision(
@@ -5849,6 +5809,9 @@ class ChatService:
         """
         shadow_profile = user_profile.model_copy(deep=True)
         extracted = dict((understanding_result.resolved_slots if understanding_result else {}) or {})
+        if understanding_result and getattr(understanding_result, "field_derivations", None):
+            for field_name, field_value in dict(understanding_result.field_derivations or {}).items():
+                extracted.setdefault(field_name, field_value)
         if not extracted:
             extracted = dict(self.turn_understanding_service._extract_deterministic_profile_fields(user_message))  # noqa: SLF001
             extracted = self.turn_understanding_service._apply_extraction_guards(  # noqa: SLF001
@@ -5908,7 +5871,24 @@ class ChatService:
             compact_message,
         )
 
+        values_with_pos: list[tuple[int, str]] = []
+        numeric_height_preference = TurnUnderstandingService._extract_numeric_height_preference(compact_message)  # noqa: SLF001
+        if numeric_height_preference:
+            height_pos = compact_message.find(re.sub(r"身高", "", numeric_height_preference).replace("cm", ""))
+            values_with_pos.append((height_pos if height_pos >= 0 else len(compact_message), numeric_height_preference))
+
         patterns = [
+            r"(接受\d{1,2}岁上下年龄差)",
+            r"(能接受\d{1,2}岁上下年龄差)",
+            r"(接受上下\d{1,2}岁年龄差)",
+            r"(上下\d{1,2}岁年龄差)",
+            r"(上下\d{1,2}岁)",
+            r"(卡身高\d{2,3}\+)",
+            r"(身高\d{2,3}\+)",
+            r"(身高至少\d{2,3})",
+            r"(身高不低于\d{2,3})",
+            r"(爱笑)",
+            r"(喜欢笑)",
             r"(温柔(?:一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?)",
             r"(温柔就行(?:了)?(?:吧|呀|呢)?)",
             r"(性格好就行(?:了)?(?:吧|呀|呢)?)",
@@ -5920,26 +5900,43 @@ class ChatService:
             r"(同城优先)",
             r"(不要超过\d{2}岁)",
             r"(不超过\d{2}岁)",
+            r"(不要同[^，。！？!?]{1,12}行业)",
+            r"(别同[^，。！？!?]{1,12}行业)",
+            r"(最好不要同[^，。！？!?]{1,12}行业)",
+            r"(倾向于稳定行业)",
+            r"(倾向稳定行业)",
+            r"(稳定行业)",
             r"(成熟稳重)",
             r"(三观合拍)",
             r"(喜欢[^\s，,。]{1,10}(?:男生|女生|男的|女的|男|女))",
             r"(想找[^\s，,。]{1,10}(?:男生|女生|男的|女的|男|女))",
             r"(找[^\s，,。]{1,10}(?:男生|女生|男的|女的|男|女))",
         ]
-        values = []
         for pattern in patterns:
-            match = re.search(pattern, compact_message)
-            if match:
-                values.append(match.group(1).strip())
-        if values:
+            for match in re.finditer(pattern, compact_message):
+                values_with_pos.append((match.start(1), match.group(1).strip()))
+        if values_with_pos:
             normalized = []
-            for value in dict.fromkeys(values):
+            for _, value in sorted(values_with_pos, key=lambda item: item[0]):
+                if value in normalized:
+                    continue
+                value = re.sub(r"^(?:接受|能接受)上下(\d{1,2})岁年龄差$", r"年龄上下\1岁", value)
+                value = re.sub(r"^(?:接受|能接受)(\d{1,2})岁上下年龄差$", r"年龄上下\1岁", value)
+                value = re.sub(r"^上下(\d{1,2})岁年龄差$", r"年龄上下\1岁", value)
+                value = re.sub(r"^上下(\d{1,2})岁$", r"年龄上下\1岁", value)
+                value = re.sub(r"^(?:卡身高|身高)(\d{2,3})\+$", r"身高至少\1", value)
+                value = re.sub(r"^喜欢笑$", "爱笑", value)
                 value = re.sub(r"(温柔)(一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?$", r"\1", value)
                 value = re.sub(r"^(温柔)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
                 value = re.sub(r"^(性格好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
                 value = re.sub(r"^(聊得来)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
                 value = re.sub(r"^(合适)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
                 value = re.sub(r"^(人好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+                value = re.sub(r"^(?:最好)?不要同", "不要同", value)
+                value = re.sub(r"^别同", "不要同", value)
+                value = re.sub(r"^倾向于稳定行业$", "稳定行业", value)
+                value = re.sub(r"^倾向稳定行业$", "稳定行业", value)
+                value = re.sub(r"稳定行业(?:男生|女生|男的|女的|男性|女性)$", "稳定行业", value)
                 normalized.append(value)
             normalized = list(dict.fromkeys(normalized))
             if len(normalized) == 1 and normalized[0] in {"男生", "女生"}:
@@ -6097,17 +6094,18 @@ class ChatService:
             )
             return random.choice(variants)
         if main_target == "occupation":
+            occupation_prompt = self.followup_prompt_service.build_soft_occupation_confirmation_prompt(user_profile)
             if gender_label:
                 variants = (
-                    f"你现在主要做哪方面工作呀？顺着这个聊，除了偏{gender_label}这点，你对另一半还会更看重哪一点？",
-                    f"平时是做什么工作的？另外找{gender_label}这类之外，你更在意对方哪方面，也可以一起说说。",
-                    f"你现在主要做哪方面工作呀？说到这儿，除了{gender_label}这个方向，你会更看重对方什么？",
+                    f"{occupation_prompt} 顺着这个聊，除了偏{gender_label}这点，你对另一半还会更看重哪一点？",
+                    f"{occupation_prompt} 另外找{gender_label}这类之外，你更在意对方哪方面，也可以一起说说。",
+                    f"{occupation_prompt} 说到这儿，除了{gender_label}这个方向，你会更看重对方什么？",
                 )
                 return random.choice(variants)
             variants = (
-                "你现在主要做哪方面工作呀？顺着这个聊，你对另一半会更看重哪一点？",
-                "平时是做什么工作的？另外你找对象时更在意对方哪方面，也可以一起说说。",
-                "你现在主要做哪方面工作呀？说到这儿，你会更看重对方什么？",
+                f"{occupation_prompt} 顺着这个聊，你对另一半会更看重哪一点？",
+                f"{occupation_prompt} 另外你找对象时更在意对方哪方面，也可以一起说说。",
+                f"{occupation_prompt} 说到这儿，你会更看重对方什么？",
             )
             return random.choice(variants)
         return random.choice(PARTNER_REQUIREMENT_ASK_VARIANTS)
@@ -6133,17 +6131,18 @@ class ChatService:
     ) -> str:
         if main_target == "occupation":
             city = cls._extract_city_for_followup(user_message, user_profile)
+            occupation_prompt = ChatServiceFollowupPromptService.build_soft_occupation_confirmation_prompt(user_profile)
             if city:
                 occupation_variants = (
-                    f"那你在{city}主要做哪方面工作呀？",
-                    f"你现在在{city}这边主要做什么呀？",
-                    f"在{city}这边你现在主要做哪方面工作呀？",
+                    occupation_prompt,
+                    occupation_prompt,
+                    occupation_prompt,
                 )
                 return f"{random.choice(occupation_variants)} {random.choice(INCOME_ASK_VARIANTS)}"
             variants = (
-                "你现在主要做哪方面工作呀？收入这块大概在什么区间，也可以顺手说个大概。",
-                "平时是做什么工作的？你现在收入大概在哪个范围，也可以一起说说。",
-                "你现在主要做哪方面工作呀？如果方便的话，收入区间也说个大概就行。",
+                f"{occupation_prompt} 收入这块大概在什么区间，也可以顺手说个大概。",
+                f"{occupation_prompt} 你现在收入大概在哪个范围，也可以一起说说。",
+                f"{occupation_prompt} 如果方便的话，收入区间也说个大概就行。",
             )
             return random.choice(variants)
         return random.choice(INCOME_ASK_VARIANTS)
@@ -6362,6 +6361,50 @@ class ChatService:
                     asked_fields.add(field)
 
         return asked_fields
+
+    def _build_structured_question_state(
+        self,
+        *,
+        canonical_response: str,
+        asked_field: str,
+        side_asked_field: str | None,
+        turn_decision: Optional[TurnDecision],
+    ) -> Dict[str, Any]:
+        asked_fields = [field for field in [asked_field] if field]
+        side_fields = [field for field in [side_asked_field] if field]
+        expected_scope = "self"
+        question_intent = "unknown"
+        allow_mixed_answer = False
+
+        if asked_field in {"phone", "wechat", "contact"}:
+            question_intent = "contact_followup"
+            expected_scope = "contact"
+        elif asked_field == "partner_requirement" or side_asked_field == "partner_requirement":
+            question_intent = "preference_followup"
+            expected_scope = "partner"
+        elif asked_field or side_asked_field:
+            question_intent = "profile_followup"
+            expected_scope = "self"
+            allow_mixed_answer = bool(side_fields or asked_field in {"monthly_income", "occupation", "location", "education", "marital_status"})
+        elif turn_decision and getattr(turn_decision, "prioritize_user_question", False):
+            question_intent = "faq_response"
+            expected_scope = "mixed"
+        elif turn_decision and getattr(turn_decision, "followup_topic", None):
+            question_intent = str(getattr(turn_decision, "followup_topic") or "").strip() or "unknown"
+            expected_scope = "mixed"
+
+        if side_fields:
+            allow_mixed_answer = True
+
+        return {
+            "question_intent": question_intent,
+            "asked_fields": asked_fields,
+            "side_fields": side_fields,
+            "expected_scope": expected_scope,
+            "allow_mixed_answer": allow_mixed_answer,
+            "resume_target": str(getattr(turn_decision, "resume_target", "") or "").strip() or None,
+            "source_response": canonical_response[:120],
+        }
 
     @staticmethod
     def _extract_primary_question_segment(response: str) -> str:
@@ -6802,6 +6845,8 @@ class ChatService:
         ai_extracted: Dict[str, Any],
         rule_extracted: Dict[str, Any],
         user_message: str,
+        user_profile: UserProfile | None = None,
+        last_response: str = "",
         understanding_result: TurnUnderstandingResult | None = None,
     ) -> tuple[Dict[str, Any], Dict[str, Dict[str, Any]]]:
         """
@@ -6821,6 +6866,8 @@ class ChatService:
         rule_fields = self._canonicalize_extracted_fields(merged_rule_fields)
         fused: Dict[str, Any] = {}
         meta: Dict[str, Dict[str, Any]] = {}
+        evidence_map = dict((understanding_result.resolved_field_evidence if understanding_result else {}) or {})
+        derivations = dict((understanding_result.field_derivations if understanding_result else {}) or {})
 
         for field in set(ai_fields) | set(rule_fields):
             ai_value = ai_fields.get(field)
@@ -6852,11 +6899,13 @@ class ChatService:
 
             if rule_value is not None:
                 fused[field] = rule_value
-                meta[field] = {
-                    "source": "rule",
-                    "confidence": 0.88 if field in EXTRACTION_CRITICAL_FIELDS else 0.8,
-                    "source_text": user_message,
-                }
+                meta[field] = self._build_fused_field_meta(
+                    field=field,
+                    fallback_source="rule",
+                    fallback_confidence=0.88 if field in EXTRACTION_CRITICAL_FIELDS else 0.8,
+                    fallback_source_text=user_message,
+                    evidence_map=evidence_map,
+                )
                 continue
 
             if ai_value is not None:
@@ -6867,12 +6916,80 @@ class ChatService:
                     "source_text": str(ai_value),
                 }
 
+        for field, derived_value in derivations.items():
+            normalized_value = str(derived_value or "").strip()
+            if not normalized_value:
+                continue
+            fused.setdefault(field, normalized_value)
+            if field not in meta:
+                meta[field] = self._build_fused_field_meta(
+                    field=field,
+                    fallback_source="derived",
+                    fallback_confidence=0.92,
+                    fallback_source_text=normalized_value,
+                    evidence_map=evidence_map,
+                    derived_from=self._derive_field_parent(field),
+                )
+            meta[field]["derived_value"] = normalized_value
+
         self._normalize_partner_preference_fields_after_fusion(
             fused,
             meta,
             user_message=user_message,
         )
+        governed_fused = self.extraction_service.govern_role_consistent_fields(
+            extracted_fields=fused,
+            user_message=user_message,
+            user_profile=user_profile,
+            last_response=last_response,
+            extraction_meta=meta,
+        )
+        removed_fields = set(fused) - set(governed_fused)
+        for field in removed_fields:
+            meta.pop(field, None)
+        fused = governed_fused
         return fused, meta
+
+    @staticmethod
+    def _derive_field_parent(field: str) -> str:
+        if field in {"age_label", "birth_year"}:
+            return "age"
+        return ""
+
+    def _build_fused_field_meta(
+        self,
+        *,
+        field: str,
+        fallback_source: str,
+        fallback_confidence: float,
+        fallback_source_text: str,
+        evidence_map: Dict[str, Any],
+        derived_from: str = "",
+    ) -> Dict[str, Any]:
+        evidence = evidence_map.get(field)
+        if evidence is None and derived_from:
+            evidence = evidence_map.get(derived_from)
+        meta = {
+            "source": fallback_source,
+            "confidence": fallback_confidence,
+            "source_text": fallback_source_text,
+        }
+        if evidence is None:
+            if derived_from:
+                meta["derived_from"] = derived_from
+            return meta
+        meta.update(
+            {
+                "source": str(getattr(evidence, "source_type", "") or fallback_source),
+                "confidence": float(getattr(evidence, "confidence", fallback_confidence) or fallback_confidence),
+                "source_text": str(getattr(evidence, "source_text", "") or fallback_source_text),
+                "source_span": str(getattr(evidence, "source_span", "") or ""),
+                "scope": str(getattr(evidence, "scope", "") or "mixed"),
+            }
+        )
+        if derived_from:
+            meta["derived_from"] = derived_from
+        return meta
 
     def _normalize_partner_preference_fields_after_fusion(
         self,
@@ -6894,6 +7011,22 @@ class ChatService:
             elif re.search(r"(女朋友|女生|女性|女孩子)", raw_requirement):
                 inferred_gender_preference = "女"
         normalized_requirement = self._extract_simple_partner_requirement(raw_requirement)
+        normalized_keeps_rich_content = bool(
+            normalized_requirement
+            and self.extraction_service._looks_like_partner_requirement_content(normalized_requirement)  # noqa: SLF001
+        )
+        raw_has_rich_content = bool(
+            self.extraction_service._looks_like_partner_requirement_content(raw_requirement)  # noqa: SLF001
+        )
+        raw_has_distinct_requirement_markers = any(
+            marker in raw_requirement
+            for marker in ("接受", "对方", "倾向", "以上", "男生", "女生", "男性", "女性", "深圳", "广州", "杭州", "上海", "北京")
+        )
+        normalized_dropped_too_much_detail = bool(
+            normalized_requirement
+            and raw_has_distinct_requirement_markers
+            and len(normalized_requirement) + 6 < len(raw_requirement)
+        )
 
         if inferred_gender_preference and not fused.get("partner_gender_preference"):
             fused["partner_gender_preference"] = inferred_gender_preference
@@ -6903,12 +7036,24 @@ class ChatService:
                 "source_text": raw_requirement,
             }
 
-        if normalized_requirement:
+        if normalized_requirement and not normalized_dropped_too_much_detail and (
+            normalized_keeps_rich_content or not raw_has_rich_content
+        ):
             fused["partner_requirement"] = normalized_requirement
             if "partner_requirement" in meta:
                 meta["partner_requirement"] = {
                     **meta["partner_requirement"],
                     "source": "normalized_partner_requirement",
+                    "source_text": raw_requirement,
+                }
+            return
+
+        if raw_has_rich_content:
+            fused["partner_requirement"] = raw_requirement
+            if "partner_requirement" in meta:
+                meta["partner_requirement"] = {
+                    **meta["partner_requirement"],
+                    "source": "rich_partner_requirement_preserved",
                     "source_text": raw_requirement,
                 }
             return
@@ -6943,8 +7088,20 @@ class ChatService:
         # 增加消息计数
         await self.dialogue_manager.increment_message_count(account_id)
 
+        faq_resume_context = bool(
+            turn_decision
+            and (
+                getattr(turn_decision, "response_channel", "") == "quick_faq"
+                or getattr(turn_decision, "prioritize_user_question", False)
+            )
+        )
+
         # 智能追问机制：追踪AI询问的字段
-        if track_asked_fields and ChatServiceResponseCleanupService.is_delivery_viable(canonical_response):
+        if (
+            track_asked_fields
+            and not faq_resume_context
+            and ChatServiceResponseCleanupService.is_delivery_viable(canonical_response)
+        ):
             await self.ask_tracking_service.track_ai_asked_fields(account_id, canonical_response)
 
         # Phase 2: 记录本轮追问的字段（用于短答槽位绑定）
@@ -6953,13 +7110,6 @@ class ChatService:
         message_count = await self.dialogue_manager.get_message_count(account_id)
         detected_asked_fields = self._detect_asked_fields_in_response(canonical_response)
         planned_ask_field = str(getattr(turn_decision, "ask_field", "") or "").strip()
-        faq_resume_context = bool(
-            turn_decision
-            and (
-                getattr(turn_decision, "response_channel", "") == "quick_faq"
-                or getattr(turn_decision, "prioritize_user_question", False)
-            )
-        )
         if faq_resume_context:
             asked_field = ""
         elif planned_ask_field and planned_ask_field in detected_asked_fields:
@@ -6990,6 +7140,14 @@ class ChatService:
             profile_changed = True
         if asked_field:
             user_profile.set_last_asked_field(asked_field, message_count, side_field=side_asked_field)
+            user_profile.set_last_question_state(
+                self._build_structured_question_state(
+                    canonical_response=canonical_response,
+                    asked_field=asked_field,
+                    side_asked_field=side_asked_field,
+                    turn_decision=turn_decision,
+                )
+            )
             if side_asked_field:
                 logger.debug(
                     f"[短答槽位绑定] 记录本轮追问字段: {asked_field}, side={side_asked_field}, turn_index: {message_count}"
@@ -7021,9 +7179,20 @@ class ChatService:
                     user_profile.last_asked_field,
                     "faq_resume_context",
                 )
+                if not getattr(user_profile, "last_question_state", None):
+                    user_profile.set_last_question_state(
+                        self._build_structured_question_state(
+                            canonical_response=canonical_response,
+                            asked_field=str(getattr(user_profile, "last_asked_field", "") or "").strip(),
+                            side_asked_field=str(getattr(user_profile, "last_asked_side_field", "") or "").strip() or None,
+                            turn_decision=turn_decision,
+                        )
+                    )
+                    profile_changed = True
             else:
                 # 如果本轮没有追问，清除上一轮记录
                 user_profile.clear_last_asked_field()
+                user_profile.clear_last_question_state()
                 profile_changed = True
         if profile_changed:
             await self.user_service.save_user_profile(account_id, user_profile)
@@ -7078,6 +7247,46 @@ class ChatService:
         def get_contact_display() -> str:
             return self.contact_service.get_status_display(user_profile)
 
+        def get_occupation_display() -> str:
+            occupation = str(getattr(user_profile, "occupation", "") or "").strip()
+            if occupation:
+                return occupation
+            if str(getattr(user_profile, "occupation_inference_candidate", "") or "").strip():
+                return "未确认"
+            return get_field_display("occupation", None)
+
+        def get_occupation_inference_display() -> str:
+            if str(getattr(user_profile, "occupation", "") or "").strip():
+                return "无"
+            candidate = str(getattr(user_profile, "occupation_inference_candidate", "") or "").strip()
+            if not candidate:
+                return "无"
+            evidence = dict(getattr(user_profile, "extraction_evidence", {}) or {}).get("occupation_inference_candidate") or {}
+            confidence = evidence.get("confidence")
+            reason = str(evidence.get("reason") or "").strip()
+            reason_label_map = {
+                "explicit_self_industry": "自述行业",
+                "same_industry_exclusion": "同行反推",
+                "same_work_alignment": "同行表述",
+                "industry_context_fallback": "语境弱推断",
+            }
+            reason_label = reason_label_map.get(reason, reason)
+            try:
+                confidence_value = float(confidence)
+            except (TypeError, ValueError):
+                confidence_value = None
+            if confidence_value is None:
+                return f"[推断] {candidate} ({reason_label})" if reason_label else f"[推断] {candidate}"
+            confidence_label = (
+                "高置信" if confidence_value >= 0.85
+                else "中置信" if confidence_value >= 0.70
+                else "低置信"
+            )
+            suffix_parts = [f"{confidence_value:.2f}", confidence_label]
+            if reason_label:
+                suffix_parts.append(reason_label)
+            return f"[推断] {candidate} ({', '.join(suffix_parts)})"
+
         raw_partner_requirement = str(getattr(user_profile, "partner_requirement", "") or "").strip()
         inferred_partner_gender_from_requirement = self.turn_understanding_service._extract_partner_gender_preference(  # noqa: SLF001
             raw_partner_requirement
@@ -7105,7 +7314,8 @@ class ChatService:
             "education": get_field_display("education", user_profile.education),
             "marital_status": get_field_display("marital_status", user_profile.marital_status),
             "monthly_income": get_field_display("monthly_income", user_profile.monthly_income),
-            "occupation": get_field_display("occupation", user_profile.occupation),
+            "occupation": get_occupation_display(),
+            "occupation_inference_candidate": get_occupation_inference_display(),
             "contact": get_contact_display(),
             "partner_gender_preference": get_field_display(
                 "partner_gender_preference",

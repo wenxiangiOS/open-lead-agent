@@ -24,6 +24,8 @@ class SlotCandidate:
     confidence: float
     source: str
     source_text: str
+    scope: str = "mixed"
+    source_span: str = ""
 
 
 @dataclass
@@ -32,6 +34,18 @@ class BlockedSlot:
     reason: str
     source: str
     source_text: str
+
+
+@dataclass
+class ResolvedFieldEvidence:
+    field: str
+    value: str
+    scope: str
+    source_span: str
+    source_text: str
+    confidence: float
+    source_type: str
+    derived_from: Optional[str] = None
 
 
 @dataclass
@@ -63,6 +77,8 @@ class TurnUnderstandingResult:
     risk_flags: List[str] = field(default_factory=list)
     slot_candidates: Dict[str, SlotCandidate] = field(default_factory=dict)
     resolved_slots: Dict[str, str] = field(default_factory=dict)
+    resolved_field_evidence: Dict[str, ResolvedFieldEvidence] = field(default_factory=dict)
+    field_derivations: Dict[str, str] = field(default_factory=dict)
     blocked_slots: Dict[str, BlockedSlot] = field(default_factory=dict)
     answer_first: bool = False
     resume_hint: Optional[str] = None
@@ -156,6 +172,8 @@ class TurnUnderstandingResult:
             "risk_flags": list(self.risk_flags),
             "slot_candidates": _serialize_slot_map(self.slot_candidates),
             "resolved_slots": dict(self.resolved_slots),
+            "resolved_field_evidence": _serialize_slot_map(self.resolved_field_evidence),
+            "field_derivations": dict(self.field_derivations),
             "blocked_slots": _serialize_slot_map(self.blocked_slots),
             "answer_first": self.answer_first,
             "resume_hint": self.resume_hint,

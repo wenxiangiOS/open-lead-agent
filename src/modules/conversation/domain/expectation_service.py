@@ -32,12 +32,22 @@ class ExpectationService:
         if not value:
             return None
 
-        text = str(value).strip().lower().replace('月薪', '').replace('月收入', '').replace('收入', '')
+        raw_text = str(value).strip().lower()
+        text = raw_text.replace('月薪', '').replace('月收入', '').replace('收入', '')
         match = re.search(r'(\d+(?:\.\d+)?)', text)
         if not match:
             return None
 
         amount = float(match.group(1))
+        if any(marker in raw_text for marker in ('年薪', '年收入', '年包')):
+            if 'k' in raw_text:
+                return amount * 1000 / 12
+            if 'w' in raw_text or '万' in raw_text:
+                return amount * 10000 / 12
+            # 口语里“年薪20左右”通常省略“万”，按 20 万年薪处理。
+            if amount <= 100:
+                return amount * 10000 / 12
+            return amount / 12
         if 'w' in text or '万' in text:
             return amount * 10000
         if 'k' in text or '千' in text:

@@ -67,8 +67,12 @@ SELF_HARM_GUARD_PATTERNS = (
 MEDICAL_GUARD_PATTERNS = (
     r"抑郁",
     r"吃什么药",
-    r"医疗",
     r"诊断",
+    r"怎么用药",
+    r"开什么药",
+    r"药怎么吃",
+    r"是不是.*病",
+    r"要不要看医生",
 )
 LEGAL_GUARD_PATTERNS = (
     r"法律",
@@ -338,23 +342,111 @@ class TurnUnderstandingService:
     _OCCUPATION_ALIASES = {
         "it": "IT",
         "ui": "UI",
+        "ui设计": "UI",
+        "ui设计师": "UI",
         "hr": "HR",
+        "hrbp": "HR",
         "qa": "QA",
+        "qa测试工程师": "QA",
+        "admin": "行政",
+        "行政前台": "行政",
+        "行政人事": "行政",
+        "人事行政": "行政",
         "产品": "产品",
+        "产品经理": "产品",
         "运营": "运营",
+        "运营助理": "运营",
+        "产品运营": "产品运营",
+        "电商运营": "电商运营",
         "设计": "设计",
         "开发": "开发",
+        "前端开发": "前端开发",
+        "前端工程师": "前端开发",
+        "后端开发": "后端开发",
+        "后端工程师": "后端开发",
         "程序员": "程序员",
         "销售": "销售",
         "老师": "老师",
         "医生": "医生",
+        "护士": "护士",
         "公务员": "公务员",
+        "财会": "财务",
+        "财务": "财务",
+        "医护": "医护",
         "美容": "美容",
         "美容师": "美容师",
         "美业": "美业",
         "医美": "医美",
     }
     _OCCUPATION_FALLBACK_CHARS = {"恶", "呃", "额", "嗯", "啊", "哈", "哎"}
+    _NON_OCCUPATION_PHRASES = {
+        "不方便说",
+        "不想说",
+        "先不说",
+        "不留",
+        "不留了",
+        "先不留",
+        "不方便留",
+        "不给了",
+        "先不给",
+        "不方便给",
+        "电话不留",
+        "微信就行",
+        "微信就可以",
+        "微信可以",
+        "微信联系",
+        "留微信",
+        "就留微信",
+        "先了解下",
+        "先这样",
+        "先这样吧",
+        "不知道",
+        "保密",
+        "电话不方便",
+        "就是电话",
+        "你好",
+        "你们好",
+        "你们好的",
+        "你好呀",
+        "这些信息干嘛",
+        "我想找对象",
+        "没有学历",
+        "没学历",
+        "无学历",
+        "自己本科",
+        "好的",
+        "好",
+        "可以",
+        "可以啊",
+        "可以呀",
+        "可以哦",
+        "是的",
+        "对的",
+        "知道了",
+        "行的",
+        "行啊",
+        "男的",
+        "女的",
+        "离过",
+        "是女生",
+        "是男生",
+    }
+    _EDUCATION_TYPO_ALIASES = {
+        "本可": "本科",
+        "夲科": "本科",
+        "木科": "本科",
+        "硕土": "硕士",
+        "博土": "博士",
+        "专科": "大专",
+        "研一": "研究生",
+        "研二": "研究生",
+        "研三": "研究生",
+        "在读硕士": "硕士",
+        "博后": "博士",
+        "博士后": "博士",
+        "在读博": "博士",
+        "专升本": "本科",
+    }
     """统一单轮理解：分类、信号、槽位解析。
 
     只负责识别这轮发生了什么，不负责最终文案，也不负责
@@ -470,7 +562,31 @@ class TurnUnderstandingService:
             soft_retry_field=soft_retry_field,
             confidence=confidence,
         )
-        logger.info("[turn_understanding] %s", result.to_dict())
+        result_log = result.to_dict()
+        partner_requirement_text = str(
+            (result.resolved_slots or {}).get("partner_requirement")
+            or self._extract_simple_partner_requirement(message)
+            or ""
+        ).strip()
+        inferred_occupation_candidate = ""
+        inferred_occupation_confidence = 0.0
+        extraction_service = getattr(self.chat_service, "extraction_service", None)
+        if extraction_service is not None and hasattr(extraction_service, "_infer_occupation_candidate_from_partner_requirement"):
+            (
+                inferred_occupation_candidate,
+                inferred_occupation_confidence,
+                _,
+            ) = extraction_service._infer_occupation_candidate_from_partner_requirement(  # noqa: SLF001
+                partner_requirement_text
+            )
+        else:
+            inferred_occupation_candidate = self._extract_occupation_inference_candidate_from_partner_requirement(
+                partner_requirement_text
+            )
+        if inferred_occupation_candidate:
+            result_log["occupation_inference_candidate"] = inferred_occupation_candidate
+            result_log["occupation_inference_confidence"] = round(float(inferred_occupation_confidence or 0.66), 3)
+        logger.info("[turn_understanding] %s", result_log)
         return result
 
     def _resolve_slots(
@@ -516,6 +632,10 @@ class TurnUnderstandingService:
             raw_fields["sex"] = "男"
         elif "sex" not in raw_fields and re.search(r"(^|[，,、])(?:女生|女的|女)(?=$|[，,、])", compact_message):
             raw_fields["sex"] = "女"
+        elif "sex" not in raw_fields and re.search(r"(?:男生|男的|男)(?=找|想找|喜欢|偏向|偏好)", compact_message):
+            raw_fields["sex"] = "男"
+        elif "sex" not in raw_fields and re.search(r"(?:女生|女的|女)(?=找|想找|喜欢|偏向|偏好)", compact_message):
+            raw_fields["sex"] = "女"
 
         if (
             "education" in raw_fields
@@ -523,6 +643,11 @@ class TurnUnderstandingService:
             and not re.search(r"(另一半|对方|择偶|想找|希望|要求|看重)", message)
         ):
             raw_fields["partner_requirement"] = str(raw_fields["education"]).strip()
+        raw_fields = self._apply_contextual_field_role_governance(
+            raw_fields=raw_fields,
+            message=message,
+            turn_input=turn_input,
+        )
 
         contact_candidate = self._extract_contact_candidate(message)
         if not contact_candidate and bool(getattr(turn_input, "in_contact_flow", False)):
@@ -582,16 +707,7 @@ class TurnUnderstandingService:
         ):
             raw_fields[pending_contact_field] = pending_contact_candidate
 
-        for field_name, value in raw_fields.items():
-            normalized_value = "" if value is None else str(value).strip()
-            if not normalized_value:
-                continue
-            candidates[field_name] = SlotCandidate(
-                value=normalized_value,
-                confidence=0.9,
-                source="rule",
-                source_text=message,
-            )
+        candidates = self._build_slot_candidates(raw_fields=raw_fields, source_text=message)
 
         if "partner_requirement" in candidates and "education" in candidates:
             pref_value = candidates["partner_requirement"].value
@@ -605,9 +721,140 @@ class TurnUnderstandingService:
                 )
                 candidates.pop("partner_requirement", None)
 
+        resolved, blocked = self._resolve_slot_candidates(
+            turn_input=turn_input,
+            candidates=candidates,
+            blocked=blocked,
+        )
+
+        return candidates, resolved, blocked
+
+    @staticmethod
+    def _build_slot_candidates(*, raw_fields: Dict[str, str], source_text: str) -> Dict[str, SlotCandidate]:
+        candidates: Dict[str, SlotCandidate] = {}
+        for field_name, value in raw_fields.items():
+            normalized_value = "" if value is None else str(value).strip()
+            if not normalized_value:
+                continue
+            candidates[field_name] = SlotCandidate(
+                value=normalized_value,
+                confidence=0.9,
+                source="rule",
+                source_text=source_text,
+                scope=TurnUnderstandingService._infer_field_scope(field_name),
+                source_span=normalized_value,
+            )
+        return candidates
+
+    def _is_low_quality_self_candidate(
+        self,
+        *,
+        field_name: str,
+        candidate: SlotCandidate,
+        user_message: str,
+    ) -> bool:
+        if field_name not in {"occupation", "location", "education"}:
+            return False
+        if candidate.scope not in {"self", "mixed", ""}:
+            return True
+
+        extraction_service = getattr(self.chat_service, "extraction_service", None)
+        if extraction_service is not None and hasattr(extraction_service, "_is_low_quality_self_field_value"):
+            return bool(
+                extraction_service._is_low_quality_self_field_value(  # noqa: SLF001
+                    field_name,
+                    candidate.value,
+                    user_message=user_message,
+                    scope=candidate.scope,
+                )
+            )
+        compact_value = re.sub(r"\s+", "", str(candidate.value or ""))
+        compact_message = re.sub(r"\s+", "", str(user_message or ""))
+
+        if not compact_value:
+            return True
+
+        if field_name == "education":
+            return compact_value not in {"博士", "硕士", "研究生", "本科", "大专", "中专", "高中", "没学历", "没有学历", "无学历"}
+
+        generic_tokens = {
+            "可以",
+            "可以啊",
+            "可以呀",
+            "可以哦",
+            "好",
+            "好的",
+            "行",
+            "行啊",
+            "嗯",
+            "嗯嗯",
+            "哦",
+            "是吗",
+            "有不",
+            "行不",
+            "都可以",
+        }
+        question_markers = ("机构是吗", "资源怎么样", "靠谱吗", "靠不靠谱", "香港有不", "有不", "行不", "怎么样", "是吗")
+        if compact_value in generic_tokens:
+            return True
+        if any(marker in compact_value for marker in question_markers):
+            return True
+        if any(marker in compact_message for marker in question_markers) and field_name != "education":
+            return True
+        return False
+
+    def _has_explicit_self_signal_for_field(self, field_name: str, user_message: str) -> bool:
+        extraction_service = getattr(self.chat_service, "extraction_service", None)
+        if extraction_service is not None and hasattr(extraction_service, "_has_explicit_self_update_signal"):
+            return bool(extraction_service._has_explicit_self_update_signal(field_name, user_message))  # noqa: SLF001
+        return False
+
+    @staticmethod
+    def _infer_field_scope(field_name: str) -> str:
+        if field_name in {"phone", "wechat", "contact"}:
+            return "contact"
+        if field_name in {"partner_requirement", "partner_gender_preference"}:
+            return "partner"
+        return "self"
+
+    def _resolve_slot_candidates(
+        self,
+        *,
+        turn_input: TurnUnderstandingInput,
+        candidates: Dict[str, SlotCandidate],
+        blocked: Dict[str, BlockedSlot],
+    ) -> tuple[Dict[str, str], Dict[str, BlockedSlot]]:
+        resolved: Dict[str, str] = {}
+        merged_blocked = dict(blocked)
+
         for field_name, candidate in candidates.items():
+            if self._is_low_quality_self_candidate(
+                field_name=field_name,
+                candidate=candidate,
+                user_message=turn_input.user_message,
+            ):
+                merged_blocked[field_name] = BlockedSlot(
+                    value=candidate.value,
+                    reason="low_quality_self_candidate",
+                    source=candidate.source,
+                    source_text=candidate.source_text,
+                )
+                continue
+            if (
+                self._has_faq_priority_signal(turn_input.user_message)
+                and candidate.scope == "self"
+                and field_name in {"occupation", "location", "education"}
+                and not self._has_explicit_self_signal_for_field(field_name, turn_input.user_message)
+            ):
+                merged_blocked[field_name] = BlockedSlot(
+                    value=candidate.value,
+                    reason="faq_context_blocks_self_field",
+                    source=candidate.source,
+                    source_text=candidate.source_text,
+                )
+                continue
             if field_name == "sex" and self._looks_like_preference_only(turn_input.user_message):
-                blocked[field_name] = BlockedSlot(
+                merged_blocked[field_name] = BlockedSlot(
                     value=candidate.value,
                     reason="preference_should_not_overwrite_sex",
                     source=candidate.source,
@@ -615,7 +862,7 @@ class TurnUnderstandingService:
                 )
                 continue
             if field_name in {"phone", "wechat"} and self._looks_like_contaminated_contact(turn_input.user_message, candidate.value):
-                blocked[field_name] = BlockedSlot(
+                merged_blocked[field_name] = BlockedSlot(
                     value=candidate.value,
                     reason="contaminated_contact_input",
                     source=candidate.source,
@@ -624,14 +871,14 @@ class TurnUnderstandingService:
                 continue
             resolved[field_name] = candidate.value
 
-        return candidates, resolved, blocked
+        return resolved, merged_blocked
 
     @staticmethod
     def _extract_extra_contextual_fields(message: str) -> Dict[str, str]:
         extracted: Dict[str, str] = {}
         if re.search(r"(已经结婚了|我已婚|已婚了?)", message):
             extracted["marital_status"] = "已婚"
-        elif re.search(r"(离过婚|已经离婚|我是离异|离异了?)", message):
+        elif re.search(r"(离过婚|离过|已经离婚|我是离异|离异了?)", message):
             extracted["marital_status"] = "离异"
         elif re.search(r"(我是单身|目前单身|现在单身)", message):
             extracted["marital_status"] = "单身"
@@ -642,10 +889,153 @@ class TurnUnderstandingService:
             extracted["age"] = age_match.group(1)
 
         for city in ("深圳", "广州", "杭州", "上海", "北京", "成都", "武汉", "苏州", "香港"):
-            if re.search(rf"(我在|人在|住在|目前在|现在在)?{city}", message):
+            if re.search(rf"(?:我在|人在|住在|目前在|现在在|来自)\s*{city}", message):
+                extracted.setdefault("location", city)
+                break
+            if re.fullmatch(rf"\s*{city}\s*(?:呢|呀|哦|哈|啊|啦)?\s*", message):
                 extracted.setdefault("location", city)
                 break
         return extracted
+
+    @staticmethod
+    def _has_explicit_self_education_signal(message: str) -> bool:
+        text = str(message or "")
+        return bool(
+            re.search(
+                r"(?:我|自己|本人)(?:的)?(?:是|就|目前|现在)?(?:学历)?\s*(博士|硕士|研究生|本科|大专|中专|高中)"
+                r"|(?:博士|硕士|研究生|本科|大专|中专|高中)(?:毕业|学历)(?!.*(?:找|想找|希望|要求|倾向|卡学历))",
+                text,
+            )
+        )
+
+    @staticmethod
+    def _looks_like_partner_preference_education_context(message: str) -> bool:
+        compact = re.sub(r"\s+", "", str(message or ""))
+        has_education_phrase = bool(
+            re.search(r"(本科|大专|硕士|博士|研究生)(?:或者以上|及以上|以上)?", compact)
+        )
+        if not has_education_phrase:
+            return False
+        return bool(
+            re.search(
+                r"(卡学历|学历身高|"
+                r"(?:找|想找|希望|倾向|偏向|要求).{0,12}(?:本科|大专|硕士|博士|研究生)|"
+                r"(?:本科|大专|硕士|博士|研究生)(?:或者以上|及以上|以上))",
+                compact,
+            )
+        )
+
+    @staticmethod
+    def _looks_like_profile_led_self_intro_with_education(message: str) -> bool:
+        text = str(message or "").strip()
+        compact = re.sub(r"\s+", "", text)
+        if not compact:
+            return False
+        has_self_intro = bool(
+            re.search(r"(女生|男生|男的|女的)", text)
+            and (
+                re.search(r"(19\d{2}|20\d{2}|\d{2}年|\d{2}后|\d{1,2}岁)", text)
+                or re.search(r"(未婚|离异|已婚|单身)", text)
+                or re.search(r"(自己也是做|自己做|我是做|从事|互联网|程序员|开发|运营|产品|设计)", text)
+            )
+        )
+        has_education = bool(re.search(r"(本科|大专|硕士|博士|研究生)", compact))
+        has_strong_preference_education = bool(
+            re.search(
+                r"(卡学历|学历要求|本科起步|本科及以上|本科以上|本科或者以上|最好本科|"
+                r"(?:找|想找|希望|倾向|偏向|要求).{0,8}(?:本科|大专|硕士|博士|研究生))",
+                compact,
+            )
+        )
+        return has_self_intro and has_education and not has_strong_preference_education
+
+    @staticmethod
+    def _has_explicit_self_location_signal(message: str) -> bool:
+        text = str(message or "")
+        if re.search(r"(?:我在|来自|人在|目前在|现在在|住在)\s*[^\s，。！？!?]{2,8}", text):
+            return True
+        return bool(
+            re.match(
+                r"^\s*(深圳|广州|杭州|上海|北京|成都|武汉|苏州|南京|天津|重庆|西安|长沙|郑州|青岛|厦门|宁波|无锡|东莞|佛山)"
+                r"(?:(?:男生|女生|男的|女的)|[\u4e00-\u9fa5]{1,4}(?:呢|呀|哦|哈|啊|啦|，|,|、|$))",
+                text,
+            )
+        )
+
+    @staticmethod
+    def _looks_like_partner_preference_location_context(message: str) -> bool:
+        compact = re.sub(r"\s+", "", str(message or ""))
+        return bool(
+            re.search(
+                r"(?:找|想找|喜欢|偏向|更想找).{0,8}(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)"
+                r"|(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)的(?:男生|女生|男朋友|女朋友|另一半|对象)",
+                compact,
+            )
+        )
+
+    @staticmethod
+    def _has_explicit_self_occupation_signal(message: str) -> bool:
+        text = str(message or "")
+        return bool(
+            re.search(
+                r"(?:我|自己|本人)(?:也|是|就是|目前|现在)?(?:做|从事)\s*[A-Za-z\u4e00-\u9fa5]{2,12}"
+                r"|(?:我|自己|本人)(?:也|是|就是|目前|现在)?\s*(互联网|程序员|开发|运营|产品|设计|销售|财务|金融|教师|医生|公务员|体制内)"
+                r"|(?:我是|做的是|从事)\s*[A-Za-z\u4e00-\u9fa5]{2,12}",
+                text,
+            )
+        )
+
+    @staticmethod
+    def _looks_like_partner_preference_occupation_context(message: str) -> bool:
+        compact = re.sub(r"\s+", "", str(message or ""))
+        return bool(
+            re.search(
+                r"(?:倾向|偏向|希望|想找|找).{0,12}(程序员|互联网|教师|医生|公务员|体制内|财务|金融|销售|运营|产品|开发)"
+                r"|(?:程序员|互联网|教师|医生|公务员|体制内|财务|金融|销售|运营|产品|开发)(?:最好|优先)",
+                compact,
+            )
+        )
+
+    @staticmethod
+    def _looks_like_partner_preference_income_context(message: str) -> bool:
+        compact = re.sub(r"\s+", "", str(message or ""))
+        return bool(
+            re.search(
+                r"(?:看重|希望|想找|找|喜欢|偏向|偏好|要求).{0,12}(多金|有钱|条件好|经济条件好|收入高|收入不错|会赚钱|赚钱能力强)"
+                r"|(?:多金|有钱|条件好|经济条件好|收入高|收入不错|会赚钱|赚钱能力强)(?:最好|优先|一点|些|就行|就好|吧|呀|咯)?",
+                compact,
+            )
+        )
+
+    @staticmethod
+    def _has_explicit_self_marital_signal(message: str) -> bool:
+        text = str(message or "")
+        compact = re.sub(r"\s+", "", text)
+        if re.search(
+            r"(?:我|自己|本人|现在|目前).{0,6}(单身|未婚|离异|已婚)"
+            r"|(?:\d{2}年|\d{2}后|\b\d{2}\b).{0,4}(单身|未婚|离异|已婚)",
+            text,
+        ):
+            return True
+
+        for match in re.finditer(r"\d{2}(?:年|后)?(?:单身|未婚|离异|已婚)", compact):
+            prefix = compact[max(0, match.start() - 4):match.start()]
+            if re.search(r"(?:想找|找|希望|要求|对方|另一半)$", prefix):
+                continue
+            return True
+
+        return False
+
+    @staticmethod
+    def _looks_like_partner_preference_marital_context(message: str) -> bool:
+        compact = re.sub(r"\s+", "", str(message or ""))
+        return bool(
+            re.search(
+                r"(?:找|想找|希望|要求|对方|另一半).{0,8}(未婚|单身|离异|已婚)"
+                r"|(?:未婚找未婚|找未婚|找单身)",
+                compact,
+            )
+        )
 
     def _classify_turn_type(
         self,
@@ -698,7 +1088,7 @@ class TurnUnderstandingService:
         if turn_input.in_contact_flow and not resolved_slots:
             return "contact_answer", contact_subtype, 0.93
 
-        if self._looks_like_confirmation(message, turn_input):
+        if self._looks_like_confirmation(message, turn_input) or self._looks_like_short_ack_after_context(message, turn_input):
             return "confirmation", "weak_confirmation", 0.85
 
         if opening_signals.get("matchmaking_intent"):
@@ -874,6 +1264,27 @@ class TurnUnderstandingService:
                 return previous_field
         return ""
 
+    def _resolve_active_asked_fields(self, turn_input: TurnUnderstandingInput) -> set[str]:
+        fields: set[str] = set()
+        previous_field = self._resolve_previous_asked_field(turn_input)
+        if previous_field:
+            fields.add(previous_field)
+
+        side_field = str(getattr(turn_input.user_profile, "last_asked_side_field", "") or "").strip()
+        if side_field:
+            fields.add(side_field)
+
+        response_candidates = [str(turn_input.last_response or "").strip()]
+        recent_responses = turn_input.conversation_context.get("recent_responses") or []
+        response_candidates.extend(
+            str(candidate or "").strip()
+            for candidate in reversed(recent_responses)
+            if str(candidate or "").strip()
+        )
+        for candidate in response_candidates:
+            fields |= self._detect_asked_fields_from_context(candidate)
+        return {field for field in fields if field}
+
     def _derive_complaint_reason(
         self,
         turn_input: TurnUnderstandingInput,
@@ -904,6 +1315,12 @@ class TurnUnderstandingService:
             intent = user_question_service.detect_quick_faq_intent(text)  # noqa: SLF001
             if intent:
                 return intent
+        compact = re.sub(r"\s+", "", text)
+        if re.search(
+            r"(机构是吗|你们是机构吗|你们是机构|资源怎么样|资源咋样|资源多吗|资源多不多|资源如何|靠谱不靠谱)",
+            compact,
+        ):
+            return "service_confirmation_mid"
         expectation_service = getattr(self.chat_service, "expectation_service", None)
         if expectation_service is not None and expectation_service.is_matching_timeline_question(text):  # noqa: SLF001
             return "timeline"
@@ -1012,19 +1429,177 @@ class TurnUnderstandingService:
         compact_message = re.sub(r"\s+", "", str(message or "").strip())
         if not compact_message:
             return None
-        if any(token in compact_message for token in ("没有要求", "没要求", "没有别的", "没有其他", "没别的", "都可以", "都行", "无所谓")):
+        has_preference_context = bool(re.search(r"(找|想找|喜欢|偏向|偏好|希望|对象|另一半)", compact_message))
+        mixed_self_intro_with_birth_year = bool(
+            re.search(r"(男生|女生|男的|女的)", compact_message)
+            and re.search(r"(19\d{2}|20\d{2}|\d{2})年", compact_message)
+            and re.search(r"(找|想找|男朋友|女朋友|男生|女生)", compact_message)
+        )
+        partner_age_bucket_match = re.search(
+            r"(?:想找|找|希望|偏向|喜欢).{0,6}((?:90后|80后|00后|95后|85后|19\d{2}年|20\d{2}年|\d{2}年)(?:都可以|都行)?)",
+            compact_message,
+        )
+        income_context_only = self._looks_like_income_context_message(compact_message) and not has_preference_context
+        no_requirement_signals = {
+            "没有要求", "没要求", "没有别的", "没有其他", "没别的",
+            "都可以", "都行", "无所谓", "无特别要求", "没特别要求",
+        }
+        if compact_message in no_requirement_signals:
             return "无特别要求"
+        if partner_age_bucket_match and not mixed_self_intro_with_birth_year:
+            return partner_age_bucket_match.group(1)
         if any(token in compact_message for token in ("随缘", "看感觉", "看眼缘", "看缘分", "顺其自然")):
             return "看感觉/随缘"
-        numeric_height_preference = self._extract_numeric_height_preference(compact_message)
-        if numeric_height_preference:
-            return numeric_height_preference
         compact_message = re.sub(
             r"(^|[，,])我(?=(温柔|性格好|聊得来|合适|人好|高挑|高一点|同城优先|成熟稳重|三观合拍))",
             r"\1",
             compact_message,
         )
+        values_with_pos: list[tuple[int, str]] = []
+        values_with_pos.extend(self._extract_structured_numeric_partner_preferences(compact_message))
+
+        numeric_height_preference = self._extract_numeric_height_preference(compact_message)
+        if numeric_height_preference:
+            height_pos = compact_message.find(re.sub(r"身高", "", numeric_height_preference).replace("cm", ""))
+            values_with_pos.append((height_pos if height_pos >= 0 else len(compact_message), numeric_height_preference))
+
         patterns = [
+            r"(找未婚)",
+            r"(未婚找未婚)",
+            r"(本科起步)",
+            r"(本科或者以上)",
+            r"(本科及以上)",
+            r"(大专或者以上)",
+            r"(大专及以上)",
+            r"(硕士或者以上)",
+            r"(硕士及以上)",
+            r"(博士或者以上)",
+            r"(博士及以上)",
+            r"(程序员最好)",
+            r"(大厂程序员)",
+            r"(港男)",
+            r"(接受\d{1,2}岁上下年龄差)",
+            r"(能接受\d{1,2}岁上下年龄差)",
+            r"(接受上下\d{1,2}岁年龄差)",
+            r"(上下\d{1,2}岁年龄差)",
+            r"(上下\d{1,2}岁)",
+            r"((?<!\d)\d{1,2}左右)",
+            r"(三十出头)",
+            r"(30出头)",
+            r"(三十来岁)",
+            r"(三十郎当岁)",
+            r"(三十上下)",
+            r"(三十多点)",
+            r"(三十好几)",
+            r"(三十冒头)",
+            r"(三十左右都可)",
+            r"(30上下都行)",
+            r"(30来岁也行)",
+            r"(30来岁都成)",
+            r"(30来岁左右)",
+            r"(30来岁上下)",
+            r"(30来岁上下都行)",
+            r"(30来岁上下都可)",
+            r"(30来岁上下都成)",
+            r"(30来岁上下也成)",
+            r"(30来岁也都行)",
+            r"(30来岁也可以)",
+            r"(30来岁差不多)",
+            r"(30来岁上下差不多)",
+            r"(30来岁还行)",
+            r"(30来岁还成)",
+            r"(30来岁说得过去)",
+            r"(30来岁问题不大)",
+            r"(30来岁没啥问题)",
+            r"(30来岁还过得去)",
+            r"(30来岁马马虎虎)",
+            r"(30来岁也还行)",
+            r"(30来岁不赖)",
+            r"(30来岁将就)",
+            r"(30来岁还凑合)",
+            r"(30来岁也凑合)",
+            r"(30左右上下)",
+            r"(卡身高\d{2,3}\+)",
+            r"(身高\d{2,3}\+)",
+            r"(身高至少\d{2,3})",
+            r"(身高不低于\d{2,3})",
+            r"(\d{3}往上)",
+            r"(一米七五以上)",
+            r"(一米七五朝上)",
+            r"(一米七五打底)",
+            r"(一米七五左右)",
+            r"(一米七五上下都行)",
+            r"(身高差不多175)",
+            r"(身高175左右都成)",
+            r"(175左右都可以)",
+            r"(175附近)",
+            r"(175前后)",
+            r"(175上下差不多)",
+            r"(175上下都可)",
+            r"(175上下都成)",
+            r"(175上下都OK)",
+            r"(175上下都ok啦)",
+            r"(175上下都ok的)",
+            r"(175上下也行)",
+            r"(175上下都还行)",
+            r"(175上下差不太多)",
+            r"(175上下大差不差)",
+            r"(175上下凑合)",
+            r"(175上下过得去)",
+            r"(175上下说得过去)",
+            r"(175上下没毛病)",
+            r"(175上下没啥问题)",
+            r"(175上下还过得去)",
+            r"(175上下马马虎虎)",
+            r"(175上下也还行)",
+            r"(175上下不赖)",
+            r"(175上下将就)",
+            r"(175上下还凑合)",
+            r"(175上下也凑合)",
+            r"(175差不离)",
+            r"(175差不多)",
+            r"(175上下)",
+            r"(175上下浮动)",
+            r"(爱笑)",
+            r"(喜欢笑)",
+            r"(月入别太低)",
+            r"(收入别太低)",
+            r"(收入别太拉垮)",
+            r"(收入别太低就行)",
+            r"(收入过得去就行)",
+            r"(收入差不多就行)",
+            r"(收入别太寒碜)",
+            r"(收入别太难看)",
+            r"(收入看得过去就行)",
+            r"(收入说得过去就行)",
+            r"(收入能看就行)",
+            r"(收入过得去就成)",
+            r"(收入过得去就好)",
+            r"(收入说得过去就好)",
+            r"(收入别太说不过去)",
+            r"(收入别太拿不出手)",
+            r"(收入别太掉价)",
+            r"(收入别太上不了台面)",
+            r"(收入别太寒酸)",
+            r"(收入别太捉襟见肘)",
+            r"(收入别太拮据)",
+            r"(收入别太紧巴)",
+            r"(收入别太磕巴)",
+            r"(收入别太寒碜吧)",
+            r"(收入别太磕碜吧)",
+            r"(收入别太掉面儿)",
+            r"(收入别太上不得台面)",
+            r"(收入别太寒掺)",
+            r"(收入别太没法看)",
+            r"(收入别太磕搀)",
+            r"(收入别太寒碜着)",
+            r"(收入别太跌份)",
+            r"(收入别太寒伧)",
+            r"(收入差不离就行)",
+            r"(收入别太磕碜)",
+            r"(收入别太埋汰)",
+            r"(收入别太拉胯)",
+            r"(收入别太埋汰)",
             r"(温柔(?:一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?)",
             r"(温柔就行(?:了)?(?:吧|呀|呢)?)",
             r"(性格好就行(?:了)?(?:吧|呀|呢)?)",
@@ -1036,36 +1611,411 @@ class TurnUnderstandingService:
             r"(同城优先)",
             r"(不要超过\d{2}岁)",
             r"(不超过\d{2}岁)",
+            r"(不要同[^，。！？!?]{1,12}行业)",
+            r"(别同[^，。！？!?]{1,12}行业)",
+            r"(最好不要同[^，。！？!?]{1,12}行业)",
+            r"(倾向于稳定行业)",
+            r"(倾向稳定行业)",
+            r"(稳定行业)",
             r"(成熟稳重)",
             r"(三观合拍)",
             r"(深二代)",
             r"(富二代)",
             r"(拆二代)",
+            r"(多金(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(有钱(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(条件好(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(经济条件好(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(收入高(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(收入不错(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(会赚钱(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(赚钱能力强(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
             r"(喜欢[^\s，,。]{0,10}(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的|男|女))",
             r"(想找[^\s，,。]{0,10}(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的|男|女))",
             r"(找[^\s，,。]{0,10}(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的|男|女))",
         ]
-        values = []
         for pattern in patterns:
-            match = re.search(pattern, compact_message)
-            if match:
-                values.append(match.group(1).strip())
-        if not values:
+            for match in re.finditer(pattern, compact_message):
+                if income_context_only and match.group(1) == "20左右":
+                    continue
+                values_with_pos.append((match.start(1), match.group(1).strip()))
+        if not values_with_pos:
             return None
         normalized = []
-        for value in dict.fromkeys(values):
+        for _, value in sorted(values_with_pos, key=lambda item: item[0]):
+            if value in normalized:
+                continue
+            raw_value = value
+            value = re.sub(r"^(?:未婚找未婚|找未婚)$", "未婚", value)
+            value = re.sub(r"^本科起步$", r"学历本科及以上", value)
+            value = re.sub(r"^(本科|大专|硕士|博士)(?:或者|及)以上$", r"学历\1及以上", value)
+            value = re.sub(r"^程序员最好$", r"程序员", value)
+            value = re.sub(r"^港男$", r"香港", value)
+            value = re.sub(r"^(?:接受|能接受)上下(\d{1,2})岁年龄差$", r"年龄上下\1岁", value)
+            value = re.sub(r"^(?:接受|能接受)(\d{1,2})岁上下年龄差$", r"年龄上下\1岁", value)
+            value = re.sub(r"^上下(\d{1,2})岁年龄差$", r"年龄上下\1岁", value)
+            value = re.sub(r"^上下(\d{1,2})岁$", r"年龄上下\1岁", value)
+            structured_numeric_alias = self._normalize_structured_numeric_partner_preference_alias(value)
+            if structured_numeric_alias:
+                value = structured_numeric_alias
+                if re.fullmatch(r"(?:卡身高|身高)(\d{2,3})\+", raw_value):
+                    value = re.sub(r"^身高(\d{2,3})cm以上$", r"身高至少\1", value)
+            value = re.sub(r"^(\d{1,2})左右$", r"年龄\1左右", value)
+            value = re.sub(r"^三十出头$", "年龄30左右", value)
+            value = re.sub(r"^30出头$", "年龄30左右", value)
+            value = re.sub(r"^三十来岁$", "年龄30左右", value)
+            value = re.sub(r"^三十上下$", "年龄30左右", value)
+            value = re.sub(r"^三十多点$", "年龄30左右", value)
+            value = re.sub(r"^三十郎当岁$", "年龄30左右", value)
+            value = re.sub(r"^三十好几$", "年龄30左右", value)
+            value = re.sub(r"^三十冒头$", "年龄30左右", value)
+            value = re.sub(r"^三十左右都可$", "年龄30左右", value)
+            value = re.sub(r"^30上下都行$", "年龄30左右", value)
+            value = re.sub(r"^30来岁也行$", "年龄30左右", value)
+            value = re.sub(r"^30来岁都成$", "年龄30左右", value)
+            value = re.sub(r"^30来岁左右$", "年龄30左右", value)
+            value = re.sub(r"^30来岁上下$", "年龄30左右", value)
+            value = re.sub(r"^30来岁上下都行$", "年龄30左右", value)
+            value = re.sub(r"^30来岁上下都可$", "年龄30左右", value)
+            value = re.sub(r"^30来岁上下都成$", "年龄30左右", value)
+            value = re.sub(r"^30来岁上下也成$", "年龄30左右", value)
+            value = re.sub(r"^30来岁也都行$", "年龄30左右", value)
+            value = re.sub(r"^30来岁也可以$", "年龄30左右", value)
+            value = re.sub(r"^30来岁差不多$", "年龄30左右", value)
+            value = re.sub(r"^30来岁上下差不多$", "年龄30左右", value)
+            value = re.sub(r"^30来岁还行$", "年龄30左右", value)
+            value = re.sub(r"^30来岁还成$", "年龄30左右", value)
+            value = re.sub(r"^30来岁说得过去$", "年龄30左右", value)
+            value = re.sub(r"^30来岁问题不大$", "年龄30左右", value)
+            value = re.sub(r"^30来岁没啥问题$", "年龄30左右", value)
+            value = re.sub(r"^30来岁还过得去$", "年龄30左右", value)
+            value = re.sub(r"^30来岁马马虎虎$", "年龄30左右", value)
+            value = re.sub(r"^30来岁也还行$", "年龄30左右", value)
+            value = re.sub(r"^30来岁不赖$", "年龄30左右", value)
+            value = re.sub(r"^30来岁将就$", "年龄30左右", value)
+            value = re.sub(r"^30来岁还凑合$", "年龄30左右", value)
+            value = re.sub(r"^30来岁也凑合$", "年龄30左右", value)
+            value = re.sub(r"^30左右上下$", "年龄30左右", value)
+            value = re.sub(r"^(?:卡身高|身高)(\d{2,3})\+$", r"身高至少\1", value)
+            value = re.sub(r"^(\d{3})往上$", r"身高\1cm以上", value)
+            value = re.sub(r"^一米七五以上$", "身高175cm以上", value)
+            value = re.sub(r"^一米七五朝上$", "身高175cm以上", value)
+            value = re.sub(r"^一米七五打底$", "身高175cm以上", value)
+            value = re.sub(r"^一米七五左右$", "身高175cm左右", value)
+            value = re.sub(r"^一米七五上下都行$", "身高175cm左右", value)
+            value = re.sub(r"^身高差不多175$", "身高175cm左右", value)
+            value = re.sub(r"^身高175左右都成$", "身高175cm左右", value)
+            value = re.sub(r"^175左右都可以$", "身高175cm左右", value)
+            value = re.sub(r"^175附近$", "身高175cm左右", value)
+            value = re.sub(r"^175前后$", "身高175cm左右", value)
+            value = re.sub(r"^175上下差不多$", "身高175cm左右", value)
+            value = re.sub(r"^175上下都可$", "身高175cm左右", value)
+            value = re.sub(r"^175上下都成$", "身高175cm左右", value)
+            value = re.sub(r"^175上下都OK$", "身高175cm左右", value)
+            value = re.sub(r"^175上下都ok啦$", "身高175cm左右", value)
+            value = re.sub(r"^175上下都ok的$", "身高175cm左右", value)
+            value = re.sub(r"^175上下也行$", "身高175cm左右", value)
+            value = re.sub(r"^175上下都还行$", "身高175cm左右", value)
+            value = re.sub(r"^175上下差不太多$", "身高175cm左右", value)
+            value = re.sub(r"^175上下大差不差$", "身高175cm左右", value)
+            value = re.sub(r"^175上下凑合$", "身高175cm左右", value)
+            value = re.sub(r"^175上下过得去$", "身高175cm左右", value)
+            value = re.sub(r"^175上下说得过去$", "身高175cm左右", value)
+            value = re.sub(r"^175上下没毛病$", "身高175cm左右", value)
+            value = re.sub(r"^175上下没啥问题$", "身高175cm左右", value)
+            value = re.sub(r"^175上下还过得去$", "身高175cm左右", value)
+            value = re.sub(r"^175上下马马虎虎$", "身高175cm左右", value)
+            value = re.sub(r"^175上下也还行$", "身高175cm左右", value)
+            value = re.sub(r"^175上下不赖$", "身高175cm左右", value)
+            value = re.sub(r"^175上下将就$", "身高175cm左右", value)
+            value = re.sub(r"^175上下还凑合$", "身高175cm左右", value)
+            value = re.sub(r"^175上下也凑合$", "身高175cm左右", value)
+            value = re.sub(r"^175差不离$", "身高175cm左右", value)
+            value = re.sub(r"^175差不多$", "身高175cm左右", value)
+            value = re.sub(r"^175上下$", "身高175cm左右", value)
+            value = re.sub(r"^175上下浮动$", "身高175cm左右", value)
+            value = re.sub(r"^喜欢笑$", "爱笑", value)
+            value = re.sub(r"^月入别太低$", "收入别太低", value)
+            value = re.sub(r"^收入别太低$", "收入别太低", value)
+            value = re.sub(r"^收入别太拉垮$", "收入别太低", value)
+            value = re.sub(r"^收入别太低就行$", "收入别太低", value)
+            value = re.sub(r"^收入过得去就行$", "收入别太低", value)
+            value = re.sub(r"^收入差不多就行$", "收入别太低", value)
+            value = re.sub(r"^收入别太寒碜$", "收入别太低", value)
+            value = re.sub(r"^收入别太难看$", "收入别太低", value)
+            value = re.sub(r"^收入看得过去就行$", "收入别太低", value)
+            value = re.sub(r"^收入说得过去就行$", "收入别太低", value)
+            value = re.sub(r"^收入能看就行$", "收入别太低", value)
+            value = re.sub(r"^收入过得去就成$", "收入别太低", value)
+            value = re.sub(r"^收入过得去就好$", "收入别太低", value)
+            value = re.sub(r"^收入说得过去就好$", "收入别太低", value)
+            value = re.sub(r"^收入别太说不过去$", "收入别太低", value)
+            value = re.sub(r"^收入别太拿不出手$", "收入别太低", value)
+            value = re.sub(r"^收入别太掉价$", "收入别太低", value)
+            value = re.sub(r"^收入别太上不了台面$", "收入别太低", value)
+            value = re.sub(r"^收入别太寒酸$", "收入别太低", value)
+            value = re.sub(r"^收入别太捉襟见肘$", "收入别太低", value)
+            value = re.sub(r"^收入别太拮据$", "收入别太低", value)
+            value = re.sub(r"^收入别太紧巴$", "收入别太低", value)
+            value = re.sub(r"^收入别太磕巴$", "收入别太低", value)
+            value = re.sub(r"^收入别太寒碜吧$", "收入别太低", value)
+            value = re.sub(r"^收入别太磕碜吧$", "收入别太低", value)
+            value = re.sub(r"^收入别太掉面儿$", "收入别太低", value)
+            value = re.sub(r"^收入别太上不得台面$", "收入别太低", value)
+            value = re.sub(r"^收入别太寒掺$", "收入别太低", value)
+            value = re.sub(r"^收入别太没法看$", "收入别太低", value)
+            value = re.sub(r"^收入别太磕搀$", "收入别太低", value)
+            value = re.sub(r"^收入别太寒碜着$", "收入别太低", value)
+            value = re.sub(r"^收入别太跌份$", "收入别太低", value)
+            value = re.sub(r"^收入别太寒伧$", "收入别太低", value)
+            value = re.sub(r"^收入差不离就行$", "收入别太低", value)
+            value = re.sub(r"^收入别太磕碜$", "收入别太低", value)
+            value = re.sub(r"^收入别太埋汰$", "收入别太低", value)
+            value = re.sub(r"^收入别太拉胯$", "收入别太低", value)
+            value = re.sub(r"^收入别太埋汰$", "收入别太低", value)
             value = re.sub(r"(温柔)(一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?$", r"\1", value)
             value = re.sub(r"^(温柔)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(性格好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(聊得来)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(合适)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(人好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+            value = re.sub(r"^(?:最好)?不要同", "不要同", value)
+            value = re.sub(r"^别同", "不要同", value)
+            value = re.sub(r"^倾向于稳定行业$", "稳定行业", value)
+            value = re.sub(r"^倾向稳定行业$", "稳定行业", value)
+            value = re.sub(r"稳定行业(?:男生|女生|男性|女性|男孩子|女孩子)$", "稳定行业", value)
+            value = re.sub(r"^(多金)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(有钱)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(条件好)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(经济条件好)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(收入高)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(收入不错)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(会赚钱)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(赚钱能力强)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
             value = self._normalize_partner_requirement_value(value)
+            if not value:
+                continue
             normalized.append(value)
-        normalized = list(dict.fromkeys(normalized))
+        canonical_seen: set[str] = set()
+        deduped_normalized: list[str] = []
+        for value in normalized:
+            canonical_value = re.sub(r"^身高(\d{2,3})cm以上$", r"身高至少\1", value)
+            if canonical_value in canonical_seen:
+                continue
+            canonical_seen.add(canonical_value)
+            deduped_normalized.append(value)
+        normalized = deduped_normalized
+        normalized = [
+            value
+            for value in normalized
+            if not re.fullmatch(
+                r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好)?(?:男朋友|男盆友|男生|男性|男孩子|男的|男|港男|女朋友|女盆友|女生|女性|女孩子|女的|女|港女)",
+                value,
+            )
+        ]
         if len(normalized) == 1 and normalized[0] in {"男生", "女生"}:
             return None
         return "，".join(normalized) if normalized else None
+
+    @staticmethod
+    def _extract_structured_numeric_partner_preferences(message: str) -> list[tuple[int, str]]:
+        semantics = TurnUnderstandingService._extract_structured_numeric_partner_preference_semantics(message)
+        return [
+            (item["pos"], TurnUnderstandingService._render_structured_numeric_partner_preference(item))
+            for item in semantics
+        ]
+
+    @staticmethod
+    def _normalize_structured_numeric_partner_preference_alias(value: str) -> str | None:
+        compact = re.sub(r"\s+", "", str(value or "").strip())
+        if not compact:
+            return None
+        semantics = TurnUnderstandingService._extract_structured_numeric_partner_preference_semantics(f"想找{compact}")
+        if len(semantics) != 1:
+            return None
+        return TurnUnderstandingService._render_structured_numeric_partner_preference(semantics[0]) or None
+
+    @staticmethod
+    def _extract_structured_numeric_partner_preference_semantics(message: str) -> list[dict[str, object]]:
+        text = str(message or "").strip()
+        compact = re.sub(r"\s+", "", text)
+        if not compact:
+            return []
+        semantics: list[dict[str, object]] = []
+        preference_prefix_pattern = r"(找|想找|喜欢|偏向|偏好|希望|就想找|更想找|对象|另一半)"
+        has_preference_context = bool(re.search(preference_prefix_pattern, compact))
+        optional_preference_tail_pattern = (
+            r"(?:的)?(?:(?:都|也)?(?:可以|可|行|成|ok|OK)(?:啦|的)?|就行|就好)?"
+        )
+
+        def _normalize_income_amount(raw: str) -> str:
+            amount = str(raw or "").strip()
+            amount = amount.replace("W", "w")
+            if re.fullmatch(r"\d+(?:\.\d+)?w", amount):
+                return f"{amount[:-1]}万"
+            return amount
+
+        def _append(pos: int, field: str, operator: str, value: str) -> None:
+            rendered = TurnUnderstandingService._render_structured_numeric_partner_preference(
+                {"field": field, "operator": operator, "value": value}
+            )
+            for existing in semantics:
+                if TurnUnderstandingService._render_structured_numeric_partner_preference(existing) == rendered:
+                    return
+            semantics.append({"pos": pos, "field": field, "operator": operator, "value": value})
+
+        colloquial_height_around_pattern = re.compile(
+            rf"(?<!\d)(1[5-9]\d)(?:左右|上下|前后|附近|差不多){optional_preference_tail_pattern}"
+        )
+        for match in colloquial_height_around_pattern.finditer(compact):
+            prefix = compact[max(0, match.start() - 10):match.start()]
+            current_span = compact[match.start():match.end()]
+            suffix = compact[match.end():match.end() + 2]
+            nearby = prefix + current_span + suffix
+            if re.search(r"(收入|月入|月薪|工资|年薪|年龄|岁)", nearby):
+                continue
+            if re.search(preference_prefix_pattern, prefix) or has_preference_context:
+                _append(match.start(), "height", "around", match.group(1))
+
+        colloquial_age_around_zh_pattern = re.compile(
+            rf"(三十来岁|三十出头|三十上下|三十左右){optional_preference_tail_pattern}"
+        )
+        for match in colloquial_age_around_zh_pattern.finditer(compact):
+            if has_preference_context:
+                _append(match.start(), "age", "around", "30")
+
+        colloquial_income_soft_floor_pattern = re.compile(
+            r"(?:月入|收入)(?:别太低|过得去|差不多|说得过去)(?:就行|就好|都行|都可以|都可|也行|也可以)?|收入别太寒碜(?:吧)?"
+        )
+        for match in colloquial_income_soft_floor_pattern.finditer(compact):
+            if has_preference_context:
+                _append(match.start(), "income", "not_too_low", "")
+
+        bare_height_lower_bound_pattern = re.compile(
+            rf"(?<!\d)(1[5-9]\d)\+{optional_preference_tail_pattern}"
+        )
+        for match in bare_height_lower_bound_pattern.finditer(compact):
+            prefix = compact[max(0, match.start() - 10):match.start()]
+            suffix = compact[match.end():match.end() + 6]
+            nearby = prefix + suffix
+            if re.search(r"(收入|月入|月薪|工资|年薪|年龄|岁)", nearby):
+                continue
+            if re.search(preference_prefix_pattern, prefix):
+                _append(match.start(), "height", "lower_bound", match.group(1))
+
+        bare_height_above_pattern = re.compile(
+            rf"(?<!\d)(1[5-9]\d)(?:以上|往上){optional_preference_tail_pattern}"
+        )
+        for match in bare_height_above_pattern.finditer(compact):
+            prefix = compact[max(0, match.start() - 10):match.start()]
+            suffix = compact[match.end():match.end() + 6]
+            nearby = prefix + suffix
+            if re.search(r"(收入|月入|月薪|工资|年薪|年龄|岁)", nearby):
+                continue
+            if re.search(preference_prefix_pattern, prefix):
+                _append(match.start(), "height", "lower_bound", match.group(1))
+
+        bare_age_lower_bound_pattern = re.compile(
+            rf"(?<!\d)([2-5]\d)\+{optional_preference_tail_pattern}"
+        )
+        for match in bare_age_lower_bound_pattern.finditer(compact):
+            prefix = compact[max(0, match.start() - 10):match.start()]
+            suffix = compact[match.end():match.end() + 8]
+            nearby = prefix + suffix
+            if re.search(r"(身高|cm|CM|一米)", nearby):
+                continue
+            if re.search(preference_prefix_pattern, prefix) or has_preference_context:
+                _append(match.start(), "age", "lower_bound", match.group(1))
+
+        bare_age_around_pattern = re.compile(
+            rf"(?<!\d)([2-5]\d)左右{optional_preference_tail_pattern}"
+        )
+        for match in bare_age_around_pattern.finditer(compact):
+            prefix = compact[max(0, match.start() - 10):match.start()]
+            suffix = compact[match.end():match.end() + 8]
+            nearby = prefix + suffix
+            if re.search(r"(身高|cm|CM|一米)", nearby):
+                continue
+            if re.search(preference_prefix_pattern, prefix) or has_preference_context:
+                _append(match.start(), "age", "around", match.group(1))
+
+        bare_age_around_range_pattern = re.compile(
+            rf"(?<!\d)([2-5]\d)(?:上下|前后){optional_preference_tail_pattern}"
+        )
+        for match in bare_age_around_range_pattern.finditer(compact):
+            prefix = compact[max(0, match.start() - 10):match.start()]
+            suffix = compact[match.end():match.end() + 8]
+            nearby = prefix + suffix
+            if re.search(r"(身高|cm|CM|一米)", nearby):
+                continue
+            if re.search(preference_prefix_pattern, prefix) or has_preference_context:
+                _append(match.start(), "age", "around", match.group(1))
+
+        income_lower_bound_pattern = re.compile(r"(?:月入|收入)(\d+(?:\.\d+)?(?:w|W|万))\+")
+        for match in income_lower_bound_pattern.finditer(compact):
+            _append(match.start(), "income", "lower_bound", _normalize_income_amount(match.group(1)))
+
+        income_over_ten_thousand_pattern = re.compile(r"(?:月入|收入)过万")
+        for match in income_over_ten_thousand_pattern.finditer(compact):
+            _append(match.start(), "income", "lower_bound", "1万")
+
+        explicit_height_lower_bound_pattern = re.compile(
+            rf"(?:想找|找|喜欢|偏向|偏好|希望|就想找|更想找)(?:一个|个)?(1[5-9]\d)往上{optional_preference_tail_pattern}"
+        )
+        for match in explicit_height_lower_bound_pattern.finditer(compact):
+            _append(match.start(1), "height", "lower_bound", match.group(1))
+
+        explicit_height_around_pattern = re.compile(
+            rf"(?:想找|找|喜欢|偏向|偏好|希望|就想找|更想找)(?:一个|个)?(1[5-9]\d)(?:左右|上下|前后){optional_preference_tail_pattern}"
+        )
+        for match in explicit_height_around_pattern.finditer(compact):
+            _append(match.start(1), "height", "around", match.group(1))
+
+        explicit_age_around_pattern = re.compile(
+            rf"(?:想找|找|喜欢|偏向|偏好|希望|就想找|更想找)(?:一个|个)?([2-5]\d)左右{optional_preference_tail_pattern}"
+        )
+        for match in explicit_age_around_pattern.finditer(compact):
+            _append(match.start(1), "age", "around", match.group(1))
+
+        explicit_age_around_range_pattern = re.compile(
+            rf"(?:想找|找|喜欢|偏向|偏好|希望|就想找|更想找)(?:一个|个)?([2-5]\d)(?:上下|前后){optional_preference_tail_pattern}"
+        )
+        for match in explicit_age_around_range_pattern.finditer(compact):
+            _append(match.start(1), "age", "around", match.group(1))
+
+        explicit_income_over_ten_thousand_pattern = re.compile(r"(?:想找|找|喜欢|偏向|偏好|希望|就想找|更想找).{0,8}?(?:月入|收入)过万(?:的)?")
+        for match in explicit_income_over_ten_thousand_pattern.finditer(compact):
+            _append(match.start(), "income", "lower_bound", "1万")
+
+        explicit_income_lower_bound_pattern = re.compile(r"(?:想找|找|喜欢|偏向|偏好|希望|就想找|更想找).{0,8}?(?:月入|收入)(\d+(?:\.\d+)?(?:w|W|万))以上(?:的)?")
+        for match in explicit_income_lower_bound_pattern.finditer(compact):
+            _append(match.start(1), "income", "lower_bound", _normalize_income_amount(match.group(1)))
+
+        bare_income_lower_bound_pattern = re.compile(r"(?:月入|收入)(\d+(?:\.\d+)?(?:w|W|万))以上(?:的)?")
+        for match in bare_income_lower_bound_pattern.finditer(compact):
+            if has_preference_context:
+                _append(match.start(1), "income", "lower_bound", _normalize_income_amount(match.group(1)))
+
+        return sorted(semantics, key=lambda item: int(item["pos"]))
+
+    @staticmethod
+    def _render_structured_numeric_partner_preference(item: dict[str, object]) -> str:
+        field = str(item.get("field") or "").strip()
+        operator = str(item.get("operator") or "").strip()
+        value = str(item.get("value") or "").strip()
+        if field == "height" and operator == "lower_bound":
+            return f"身高{value}cm以上"
+        if field == "height" and operator == "around":
+            return f"身高{value}cm左右"
+        if field == "age" and operator == "lower_bound":
+            return f"年龄{value}以上"
+        if field == "age" and operator == "around":
+            return f"年龄{value}左右"
+        if field == "income" and operator == "lower_bound":
+            return f"收入{value}以上"
+        if field == "income" and operator == "not_too_low":
+            return "收入别太低"
+        return ""
 
     @staticmethod
     def _extract_numeric_height_preference(message: str) -> str | None:
@@ -1092,10 +2042,27 @@ class TurnUnderstandingService:
         text = str(value or "").strip()
         if not text:
             return text
-        if re.search(r"(男朋友|男生|男孩子|男的|找个男|想找男|喜欢男)", text):
-            return "男生"
-        if re.search(r"(女朋友|女生|女孩子|女的|找个女|想找女|喜欢女)", text):
-            return "女生"
+        if re.fullmatch(r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好)?(?:港男|港女)", text):
+            return ""
+        short_region_gender = re.fullmatch(r"(港男|港女)", text)
+        if short_region_gender:
+            return "香港"
+        wrapped_gender_preference = re.fullmatch(
+            r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好|想要|希望|就想找|更想找)(.+?)(?:的)?"
+            r"(?:男朋友|男盆友|男生|男性|男孩子|男的|男|港男|女朋友|女盆友|女生|女性|女孩子|女的|女|港女)",
+            text,
+        )
+        if wrapped_gender_preference:
+            inner = str(wrapped_gender_preference.group(1) or "").strip("，,、 ")
+            inner = re.sub(r"的$", "", inner).strip()
+            if re.fullmatch(r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)", inner):
+                return inner
+            if re.search(r"(未婚|离异|已婚|本科|大专|硕士|博士|学历|身高|年龄|程序员|大厂|稳定行业|深二代|富二代|拆二代)", inner):
+                return ""
+        if re.fullmatch(r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好)?(?:男朋友|男盆友|男生|男性|男孩子|男的|男)", text):
+            return ""
+        if re.fullmatch(r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好)?(?:女朋友|女盆友|女生|女性|女孩子|女的|女)", text):
+            return ""
         return text
 
     @staticmethod
@@ -1105,19 +2072,28 @@ class TurnUnderstandingService:
             return None
         if re.search(r"(?:我是|本人|我)\s*(?:男生|女生|男的|女的|男|女)", text):
             return None
+        gender_preference_pattern = (
+            r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好|想要|希望|就想找|更想找)"
+            r"[^，,。！？!?]{0,16}?"
+            r"(?:男朋友|男盆友|男生|男孩子|男的|男性|男|港男)"
+        )
         if re.search(
-            r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好|想要|希望|就想找|更想找).{0,8}(?:男朋友|男生|男孩子|男的|男性|男)",
+            gender_preference_pattern,
             text,
-        ) or re.search(r"(?:男朋友)", text):
+        ) or re.search(r"(?:男朋友|男盆友|港男)", text):
             return "男"
         if re.search(
-            r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好|想要|希望|就想找|更想找).{0,8}(?:女朋友|女生|女孩子|女的|女性|女)",
+            r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好|想要|希望|就想找|更想找)"
+            r"[^，,。！？!?]{0,16}?"
+            r"(?:女朋友|女盆友|女生|女孩子|女的|女性|女|港女)",
             text,
-        ) or re.search(r"(?:女朋友)", text):
+        ) or re.search(r"(?:女朋友|女盆友|港女)", text):
             return "女"
         return None
 
     def _extract_profile_fields(self, message: str, *, last_response: str) -> Dict[str, str]:
+        if self._looks_like_short_ack_message(message) and last_response:
+            return {}
         raw_fields = self._extract_deterministic_profile_fields(message)
         return self._apply_extraction_guards(raw_fields, message, last_response=last_response)
 
@@ -1175,6 +2151,17 @@ class TurnUnderstandingService:
 
         extracted = self._extract_basic_fields_from_message(message)
         extracted = self._normalize_bucket_age_fields(extracted)
+        self_tokens, preference_tokens = self._split_compact_intro_tokens(message)
+        compact_preference = self._extract_compact_partner_requirement_from_tokens(preference_tokens)
+        current_year = datetime.now().year
+
+        if ("age" not in extracted and "age_label" not in extracted) and self_tokens:
+            lead_token = str(self_tokens[0] or "").strip()
+            if re.fullmatch(r"\d{2}", lead_token):
+                year_suffix = int(lead_token)
+                birth_year = 2000 + year_suffix if year_suffix <= current_year % 100 else 1900 + year_suffix
+                extracted["age"] = str(current_year - birth_year)
+                extracted["age_label"] = f"{lead_token}后"
 
         sex_patterns = {
             "男": r"^\s*(男生|男的|男)\s*(呀|呢|哈|哦|啊)?\s*$",
@@ -1184,8 +2171,17 @@ class TurnUnderstandingService:
             if re.search(pattern, message):
                 extracted["sex"] = value
                 break
+        if "sex" not in extracted:
+            mixed_intro_sex = re.search(
+                r"(?:^|[，,、\s])"
+                r"(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)?"
+                r"\s*(男生|女生|男的|女的)\s*[，,、]",
+                message,
+            )
+            if mixed_intro_sex:
+                raw = mixed_intro_sex.group(1)
+                extracted["sex"] = "男" if "男" in raw else "女"
 
-        current_year = datetime.now().year
         if re.search(r"^\s*90后\s*$", message):
             extracted["age"] = str(current_year - 1990)
             extracted["age_label"] = "90后"
@@ -1197,12 +2193,23 @@ class TurnUnderstandingService:
             extracted["age_label"] = "85后"
 
         compact_message = re.sub(r"[，,、。！？!?~～\s]+", "", message)
+        faq_probe_message = self._looks_like_faq_probe_fragment(compact_message)
+        explicit_self_location = self._has_explicit_self_location_signal(message)
+        explicit_self_education = self._has_explicit_self_education_signal(message)
+        preference_location_context = self._looks_like_partner_preference_location_context(message)
+        preference_education_context = self._looks_like_partner_preference_education_context(message)
+        profile_led_self_education = self._looks_like_profile_led_self_intro_with_education(message)
+
         location_text = self._extract_location_like_text(message, compact_message=compact_message)
-        if location_text:
+        if location_text and (explicit_self_location or not (faq_probe_message or preference_location_context)):
             extracted["location"] = location_text
 
         for edu in ["博士", "硕士", "研究生", "本科", "大专", "中专", "高中"]:
-            if message == edu:
+            if message == edu or (
+                edu in message
+                and (explicit_self_education or profile_led_self_education)
+                and not (faq_probe_message or preference_education_context)
+            ):
                 extracted["education"] = edu
                 break
 
@@ -1217,14 +2224,71 @@ class TurnUnderstandingService:
         )
         if occupation_match:
             candidate = self._normalize_occupation_candidate(occupation_match.group(1))
-            if candidate and candidate not in {"男", "女", "单身", "未婚", "离异", "已婚"}:
+            if candidate and not self._is_low_quality_occupation_text(candidate):
                 extracted["occupation"] = candidate
 
         if not extracted.get("occupation"):
+            short_self_occupation = re.search(
+                r"(?:我|自己|本人)\s*(互联网|程序员|开发|运营|产品|设计|财务|教师|医生|销售|行政|客服)(?:\b|$|[，,、。！？!?])",
+                message,
+            )
+            if short_self_occupation:
+                candidate = self._normalize_occupation_candidate(short_self_occupation.group(1))
+                if candidate and not self._is_low_quality_occupation_text(candidate):
+                    extracted["occupation"] = candidate
+
+        if not extracted.get("occupation"):
+            for token in self_tokens:
+                normalized = self._normalize_occupation_candidate(token)
+                if (
+                    normalized
+                    and normalized in self._OCCUPATION_ALIASES.values()
+                    and not self._is_low_quality_occupation_text(normalized)
+                    and not re.fullmatch(r"\d{2,4}", str(token or "").strip())
+                ):
+                    extracted["occupation"] = normalized
+                    break
+
+        if not extracted.get("occupation") and self_tokens:
+            income_like_tokens = {
+                str(token or "").strip()
+                for token in self_tokens
+                if self._extract_simple_monthly_income(str(token or "").strip())
+            }
+            education_like_tokens = {"博士", "硕士", "研究生", "本科", "大专", "中专", "高中", "没学历", "没有学历", "无学历"}
+            for token in self_tokens:
+                token_text = str(token or "").strip()
+                if (
+                    not token_text
+                    or token_text in income_like_tokens
+                    or token_text in education_like_tokens
+                    or re.fullmatch(r"\d{2,4}", token_text)
+                    or token_text in self._NON_OCCUPATION_PHRASES
+                ):
+                    continue
+                if token_text.startswith(("找", "想找", "希望", "偏向", "喜欢")):
+                    continue
+                if self._is_low_quality_occupation_text(token_text):
+                    continue
+                if not re.fullmatch(r"[\u4e00-\u9fffA-Za-z]{2,8}", token_text):
+                    continue
+                if (
+                    self._extract_simple_monthly_income(token_text)
+                    or self._extract_location_like_text(token_text, compact_message=token_text)
+                    or self._extract_simple_partner_requirement(token_text)
+                ):
+                    continue
+                extracted["occupation"] = token_text
+                break
+
+        if not extracted.get("occupation"):
             normalized = self._normalize_occupation_candidate(message)
-            if normalized in self._OCCUPATION_ALIASES.values():
+            if normalized in self._OCCUPATION_ALIASES.values() and not self._is_low_quality_occupation_text(normalized):
                 extracted["occupation"] = normalized
 
+        if not extracted.get("partner_requirement"):
+            if compact_preference:
+                extracted["partner_requirement"] = compact_preference
         if not extracted.get("partner_requirement"):
             pref = self._extract_simple_partner_requirement(message)
             if pref:
@@ -1240,14 +2304,72 @@ class TurnUnderstandingService:
 
         return extracted
 
+    @staticmethod
+    def _split_compact_intro_tokens(message: str) -> tuple[list[str], list[str]]:
+        tokens = [token.strip() for token in re.split(r"[，,、。！？!?~～\s]+", str(message or "").strip()) if token.strip()]
+        if not tokens:
+            return [], []
+        preference_markers = (
+            "找", "想找", "希望", "喜欢", "偏向", "倾向", "最好", "同城", "本地", "同在", "比自己", "比我", "大一点", "小一点",
+        )
+        start_index = len(tokens)
+        for index, token in enumerate(tokens):
+            if token.startswith(preference_markers) or re.search(r"(同城|本地|同在.+发展|比自己[大小]|比我[大小])", token):
+                start_index = index
+                break
+        return tokens[:start_index], tokens[start_index:]
+
+    @staticmethod
+    def _extract_compact_partner_requirement_from_tokens(tokens: list[str]) -> str | None:
+        if not tokens:
+            return None
+        text = "".join(str(token or "").strip() for token in tokens)
+        if not text:
+            return None
+        parts: list[str] = []
+
+        same_system = re.search(r"(同[^，,。！？!?]{1,8}(?:体系|行业|圈子))", text)
+        if same_system:
+            parts.append(same_system.group(1))
+
+        city_match = re.search(r"(同在(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)发展)", text)
+        if city_match:
+            parts.append(city_match.group(1))
+        elif "同城" in text:
+            parts.append("同城优先")
+
+        if re.search(r"(最好本地|本地优先|最好同城|本地)", text):
+            parts.append("本地优先")
+
+        age_relation = re.search(r"(比自己大|比自己小|比我大|比我小|年纪大点|年龄大点|大一点都可以|小一点都可以)", text)
+        if age_relation:
+            relation = age_relation.group(1)
+            relation = relation.replace("都可以", "")
+            parts.append(relation)
+
+        unique_parts: list[str] = []
+        for part in parts:
+            clean_part = str(part or "").strip("，, ")
+            if clean_part and clean_part not in unique_parts:
+                unique_parts.append(clean_part)
+        return "，".join(unique_parts) if unique_parts else None
+
     @classmethod
     def _normalize_occupation_candidate(cls, value: str) -> str:
         text = str(value or "").strip()
         if not text:
             return ""
         text = re.sub(r"[，,、。！？!?~～\s]+", "", text)
+        if text in cls._NON_OCCUPATION_PHRASES:
+            return ""
         text = re.sub(r"(吧|呀|呢|哈|哦|啊)+$", "", text)
-        text = re.sub(r"^(做|做的|做的是|我是|从事)\s*", "", text)
+        if text in cls._NON_OCCUPATION_PHRASES:
+            return ""
+        text = re.sub(r"^(做|做的|做的是|我是|从事|搞|干)\s*", "", text)
+        text = re.sub(r"(相关|方向|行业|这块|这行|的)$", "", text)
+        text = re.sub(r"(测试)$", "", text)
+        if text in cls._NON_OCCUPATION_PHRASES:
+            return ""
         normalized = text.lower()
         if normalized in cls._OCCUPATION_ALIASES:
             return cls._OCCUPATION_ALIASES[normalized]
@@ -1262,6 +2384,126 @@ class TurnUnderstandingService:
                     if not residue or set(residue) <= cls._OCCUPATION_FALLBACK_CHARS:
                         return stem
         return cls._OCCUPATION_ALIASES.get(normalized, text)
+
+    @classmethod
+    def _is_low_quality_occupation_text(cls, value: str) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return True
+        compact = re.sub(r"[，,、。！？!?~～\s]+", "", text)
+        if not compact:
+            return True
+        if compact in cls._NON_OCCUPATION_PHRASES:
+            return True
+        if compact in {"男", "女", "男生", "女生", "男的", "女的", "单身", "未婚", "离异", "已婚"}:
+            return True
+        if compact in {"博士", "硕士", "研究生", "本科", "大专", "中专", "高中", "没学历", "没有学历", "无学历"}:
+            return True
+        if cls._looks_like_faq_probe_fragment(compact):
+            return True
+        if compact.startswith(("是女生", "是男生", "我是女生", "我是男生")):
+            return True
+        if any(token in compact for token in ("结婚", "离婚", "离过", "离异", "未婚", "单身", "已婚")):
+            return True
+        if any(token in compact for token in ("本科", "大专", "硕士", "博士", "研究生", "学历")):
+            return True
+        if any(token in compact for token in ("找对象", "电话", "微信", "信息干嘛", "多久联系", "介绍对象", "资源怎么样")):
+            return True
+        if any(token in compact for token in ("看重", "成熟稳重", "对方成熟", "对方稳重")):
+            return True
+        if any(token in compact for token in ("多金", "有钱", "条件好", "经济条件好", "收入高", "收入不错", "会赚钱", "赚钱能力强")):
+            return True
+        if any(token in compact for token in ("不留", "先不留", "不给", "先不给", "不方便留", "不方便给", "联系就行")):
+            return True
+        if compact.startswith(("我想", "想找", "找", "先", "这", "那")):
+            return True
+        return False
+
+    @staticmethod
+    def _looks_like_short_ack_message(message: str) -> bool:
+        compact = re.sub(r"[，,、。！？!?~～\s]+", "", str(message or ""))
+        if not compact:
+            return False
+        return compact in {
+            "好",
+            "好的",
+            "好的呢",
+            "好呀",
+            "好哒",
+            "行",
+            "行的",
+            "可以",
+            "可以的",
+            "嗯",
+            "嗯嗯",
+            "对",
+            "对的",
+            "是的",
+            "没错",
+            "收到",
+            "知道了",
+            "明白了",
+            "了解了",
+            "你们好",
+            "你们好的",
+        }
+
+    def _looks_like_short_ack_after_context(self, message: str, turn_input: TurnUnderstandingInput) -> bool:
+        if not self._looks_like_short_ack_message(message):
+            return False
+        return bool(
+            str(turn_input.last_response or "").strip()
+            or turn_input.pending_confirmation_field
+            or turn_input.conversation_context.get("recent_responses")
+        )
+
+    @staticmethod
+    def _looks_like_contact_preference_or_refusal_message(message: str, *, last_response: str = "") -> bool:
+        compact = re.sub(r"\s+", "", str(message or ""))
+        if not compact:
+            return False
+        contact_marker = bool(re.search(r"(微信|wx|weixin|电话|手机|手机号|号码|联系)", compact, re.IGNORECASE))
+        refusal_or_preference = bool(
+            re.search(
+                r"(不留了|不留|先不留|不方便留|不给了|先不给|不方便给|就可以|就行|就好|就够了|就微信|留微信|微信联系)",
+                compact,
+                re.IGNORECASE,
+            )
+        )
+        if contact_marker and refusal_or_preference:
+            return True
+        if re.search(r"(微信就可以|微信就行|微信联系就行|留微信就好|不留电话|电话不留)", compact, re.IGNORECASE):
+            return True
+        response_compact = re.sub(r"\s+", "", str(last_response or ""))
+        asked_contact_last_turn = bool(re.search(r"(电话|手机|手机号|号码|微信|微信号)", response_compact, re.IGNORECASE))
+        return asked_contact_last_turn and refusal_or_preference
+
+    @staticmethod
+    def _looks_like_faq_probe_fragment(value: str) -> bool:
+        compact = re.sub(r"[，,、。！？!?~～\s]+", "", str(value or ""))
+        if not compact:
+            return False
+        question_markers = (
+            "机构是吗",
+            "资源怎么样",
+            "资源咋样",
+            "靠谱吗",
+            "靠不靠谱",
+            "香港有不",
+            "有不",
+            "行不",
+            "怎么样",
+            "咋样",
+            "是吗",
+        )
+        if any(marker in compact for marker in question_markers):
+            return True
+        return bool(
+            re.search(
+                r"(香港|澳门|台湾|深圳|广州|杭州|上海|北京|成都|武汉|苏州|南京|本科|大专|硕士|博士|研究生).{0,4}(有吗|有没有|有不|多吗|多不多)$",
+                compact,
+            )
+        )
 
     @staticmethod
     def _normalize_bucket_age_fields(extracted: Dict[str, str]) -> Dict[str, str]:
@@ -1305,39 +2547,87 @@ class TurnUnderstandingService:
                 extracted["sex"] = "男" if "男" in sex_match.group(1) else "女"
 
         if not contact_like_message:
-            age_match = re.search(r"(\d{2})后", user_message)
-            if age_match:
-                suffix = int(age_match.group(1))
-                birth_year = 2000 + suffix if suffix <= datetime.now().year % 100 else 1900 + suffix
-                extracted["age"] = str(datetime.now().year - birth_year)
-                extracted["age_label"] = f"{age_match.group(1)}后"
-            else:
-                birth_year_full = re.search(r"(19\d{2}|20\d{2})年(?:出生)?", user_message)
-                birth_year_short = re.search(r"(?<!\d)(\d{2})年(?:的)?(?:出生)?", user_message)
-                if birth_year_full:
-                    birth_year = int(birth_year_full.group(1))
-                    extracted["age"] = str(datetime.now().year - birth_year)
-                    extracted["age_label"] = f"{birth_year}年"
-                elif birth_year_short:
-                    suffix = int(birth_year_short.group(1))
-                    birth_year = 2000 + suffix if suffix <= datetime.now().year % 100 else 1900 + suffix
-                    extracted["age"] = str(datetime.now().year - birth_year)
-                    extracted["age_label"] = f"{birth_year_short.group(1)}年"
+            current_year = datetime.now().year
+            leading_birth_year = re.search(
+                r"^\s*(?P<year>(?:19\d{2}|20\d{2}|\d{2}))(?=(?:想找|找|都可以|都行|也可以|的啊|的呀|的呢))",
+                user_message,
+            )
+            preference_age_context = bool(
+                re.search(
+                    r"(?:想找|找|希望|偏向|喜欢|另一半|对象).{0,12}(?:90后|80后|00后|95后|85后|19\d{2}年|20\d{2}年|\d{2}年)"
+                    r"|(?:90后|80后|00后|95后|85后|19\d{2}年|20\d{2}年|\d{2}年).{0,10}(?:都可以|都行|有不|行不)",
+                    user_message,
+                )
+            )
+            explicit_self_birth_year = bool(
+                re.search(r"(?:我|本人|自己).{0,4}(?:是|今年|现在)?\s*(?:19\d{2}|20\d{2}|\d{2})年", user_message)
+            )
+            mixed_self_intro_birth_year = bool(
+                re.search(r"(男生|女生|男的|女的)", user_message)
+                and re.search(r"(19\d{2}|20\d{2}|\d{2})年", user_message)
+                and re.search(r"(找|想找|男朋友|女朋友|男生|女生)", user_message)
+            )
+            if leading_birth_year:
+                raw_year = leading_birth_year.group("year")
+                birth_year = int(raw_year) if len(raw_year) == 4 else (2000 + int(raw_year) if int(raw_year) <= current_year % 100 else 1900 + int(raw_year))
+                extracted["age"] = str(current_year - birth_year)
+                extracted["age_label"] = f"{raw_year[-2:]}年" if len(raw_year) == 4 else f"{raw_year}年"
+            elif not preference_age_context or explicit_self_birth_year or mixed_self_intro_birth_year:
+                age_match = re.search(r"(\d{2})后", user_message)
+                if age_match:
+                    suffix = int(age_match.group(1))
+                    birth_year = 2000 + suffix if suffix <= current_year % 100 else 1900 + suffix
+                    extracted["age"] = str(current_year - birth_year)
+                    extracted["age_label"] = f"{age_match.group(1)}后"
                 else:
-                    explicit_age = re.search(r"(?:我今年|今年|我现在|现在)?\s*(\d{2})岁?", user_message)
-                    if explicit_age:
-                        extracted["age"] = explicit_age.group(1)
+                    birth_year_full = re.search(r"(19\d{2}|20\d{2})年(?:出生)?", user_message)
+                    birth_year_short = re.search(r"(?<!\d)(\d{2})年(?:的)?(?:出生)?", user_message)
+                    if birth_year_full:
+                        birth_year = int(birth_year_full.group(1))
+                        extracted["age"] = str(current_year - birth_year)
+                        extracted["age_label"] = f"{birth_year}年"
+                    elif birth_year_short:
+                        suffix = int(birth_year_short.group(1))
+                        birth_year = 2000 + suffix if suffix <= current_year % 100 else 1900 + suffix
+                        extracted["age"] = str(current_year - birth_year)
+                        extracted["age_label"] = f"{birth_year_short.group(1)}年"
+                    else:
+                        explicit_age = re.search(
+                            r"(?:我今年|今年|我现在|现在|年龄(?:是|有)?|本人(?:今年|现在)?(?:是|有)?)(\d{2})岁?"
+                            r"|^\s*(\d{2})\s*岁\s*$",
+                            user_message,
+                        )
+                        if explicit_age:
+                            extracted["age"] = explicit_age.group(1) or explicit_age.group(2)
 
+        faq_probe_message = self._looks_like_faq_probe_fragment(compact_message)
+        explicit_self_location = self._has_explicit_self_location_signal(user_message)
         preference_context = bool(re.search(r"(喜欢|想找|找).*(?:在|来自|住在|深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|台湾|澳门)", user_message))
-        if not preference_context:
+        if not preference_context or explicit_self_location:
             location_text = self._extract_location_like_text(user_message, compact_message=compact_message)
-            if location_text:
+            if location_text and (explicit_self_location or not faq_probe_message):
                 extracted["location"] = location_text
 
-        if re.search(r"(没有学历|没学历|无学历)", user_message):
+        explicit_self_education = self._has_explicit_self_education_signal(user_message)
+        preference_education_context = self._looks_like_partner_preference_education_context(user_message)
+        profile_led_self_education = self._looks_like_profile_led_self_intro_with_education(user_message)
+        if re.search(r"(没有学历|没学历|无学历)", user_message) and not (faq_probe_message or preference_education_context):
             extracted["education"] = "没学历"
+        for typo, canonical in self._EDUCATION_TYPO_ALIASES.items():
+            if (
+                typo in user_message
+                and (explicit_self_education or profile_led_self_education)
+                and not (faq_probe_message or preference_education_context)
+            ):
+                extracted["education"] = canonical
+                break
+
         for edu in ["博士", "硕士", "研究生", "本科", "大专", "中专", "高中"]:
-            if edu in user_message:
+            if edu in user_message and (
+                explicit_self_education
+                or profile_led_self_education
+                or not (faq_probe_message or preference_education_context)
+            ):
                 extracted["education"] = edu
                 break
 
@@ -1345,7 +2635,7 @@ class TurnUnderstandingService:
             if marital in user_message:
                 extracted["marital_status"] = marital
                 break
-        if not extracted.get("marital_status") and re.search(r"(离婚|离过婚|已经离婚|离异)", user_message):
+        if not extracted.get("marital_status") and re.search(r"(离婚|离过婚|离过|已经离婚|离异)", user_message):
             extracted["marital_status"] = "离异"
 
         segments = re.split(r"[，,、\s]+", user_message)
@@ -1356,6 +2646,18 @@ class TurnUnderstandingService:
             token = segment.strip()
             if not token:
                 continue
+            normalized_token_occupation = self._normalize_occupation_candidate(token)
+            if (
+                normalized_token_occupation
+                and normalized_token_occupation in self._OCCUPATION_ALIASES.values()
+                and not self._is_low_quality_occupation_text(normalized_token_occupation)
+                and not re.fullmatch(r"\d{2,4}", token)
+                and token not in education_tokens
+                and token not in marital_tokens
+                and not token.startswith(("找", "想找", "希望", "偏向", "喜欢"))
+            ):
+                extracted["occupation"] = normalized_token_occupation
+                break
             if token in education_tokens and index + 1 < len(segments):
                 candidate = segments[index + 1].strip()
                 if (
@@ -1363,10 +2665,30 @@ class TurnUnderstandingService:
                     and candidate not in marital_tokens
                     and candidate not in ignored_tokens
                     and not candidate.startswith("想找")
+                    and not candidate.startswith("找")
                     and not self._looks_like_income_token(candidate)
+                    and not self._is_low_quality_occupation_text(candidate)
                 ):
                     extracted["occupation"] = candidate
                     break
+
+        if "occupation" not in extracted:
+            compact_token = re.sub(r"[，,。！？!?~～、\s]+", "", user_message)
+            if (
+                compact_token
+                and len(compact_token) <= 8
+                and re.fullmatch(r"[A-Za-z\u4e00-\u9fa5]{2,8}", compact_token)
+                and not re.search(r"(电话|微信|单身|未婚|离异|已婚|本科|大专|硕士|博士|深圳|广州|香港|\d)", compact_token)
+                and compact_token not in {"可以", "好的", "知道了", "行的", "是的"}
+                and compact_token not in self._NON_OCCUPATION_PHRASES
+            ):
+                normalized_compact_token = self._normalize_occupation_candidate(compact_token)
+                if (
+                    normalized_compact_token
+                    and normalized_compact_token not in self._NON_OCCUPATION_PHRASES
+                    and not self._is_low_quality_occupation_text(normalized_compact_token)
+                ):
+                    extracted["occupation"] = normalized_compact_token
 
         return extracted
 
@@ -1379,6 +2701,203 @@ class TurnUnderstandingService:
             re.fullmatch(r"(?:税前|税后)?\d+(?:\.\d+)?(?:k|w|万|千|元)?(?:左右|上下|出头|\+)?", text)
             or re.fullmatch(r"(?:一|二|两|三|四|五|六|七|八|九|十|\d)+(?:万|千|元)(?:左右|上下|出头)?", text)
         )
+
+    @staticmethod
+    def _message_has_explicit_age_semantics(user_message: str) -> bool:
+        return bool(re.search(r"(岁|年龄|今年|出生|哪年|90后|95后|85后)", str(user_message or "")))
+
+    @staticmethod
+    def _looks_like_income_context_message(value: str) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        return bool(re.search(r"(月薪|月[收搜]入|[收搜]入|工资|年薪|年[收搜]入|税前|税后|年包)", text))
+
+    @staticmethod
+    def _looks_like_partner_preference_income_context(message: str) -> bool:
+        compact = re.sub(r"\s+", "", str(message or ""))
+        if not compact:
+            return False
+        return bool(
+            re.search(
+                r"(?:找|想找|喜欢|偏向|偏好|希望|就想找|更想找).{0,10}(?:月入|月薪|收入|工资|年薪|年收入)"
+                r"|(?:月入|月薪|收入|工资|年薪|年收入).{0,8}(?:的男生|的女生|的对象|的另一半|就行|以上的)",
+                compact,
+            )
+        )
+
+    @staticmethod
+    def _has_explicit_self_income_signal(message: str) -> bool:
+        compact = re.sub(r"\s+", "", str(message or ""))
+        if not compact:
+            return False
+        return bool(
+            re.search(
+                r"(?:我|自己|本人)(?:现在|目前)?(?:的)?(?:月入|月薪|收入|工资|年薪|年收入|年包)"
+                r"|(?:我|自己|本人).{0,8}(?:月入|月薪|收入|工资|年薪|年收入|年包)",
+                compact,
+            )
+        )
+
+    def _apply_contextual_field_role_governance(
+        self,
+        *,
+        raw_fields: Dict[str, str],
+        message: str,
+        turn_input: TurnUnderstandingInput,
+    ) -> Dict[str, str]:
+        governed = dict(raw_fields or {})
+        extraction_service = getattr(self.chat_service, "extraction_service", None)
+        active_asked_fields = self._resolve_active_asked_fields(turn_input)
+        contact_only_context = bool(
+            getattr(turn_input, "in_contact_flow", False)
+            and self._looks_like_contact_preference_or_refusal_message(
+                message,
+                last_response=str(getattr(turn_input, "last_response", "") or ""),
+            )
+        )
+
+        def _asked(field_name: str) -> bool:
+            return field_name in active_asked_fields
+
+        def _extractor_bool(method_name: str, *args) -> bool:
+            if extraction_service is None:
+                return False
+            method = getattr(extraction_service, method_name, None)
+            if not callable(method):
+                return False
+            try:
+                return bool(method(*args))
+            except Exception:  # noqa: BLE001
+                return False
+
+        if contact_only_context:
+            suppressed_fields = {
+                "occupation",
+                "location",
+                "education",
+                "marital_status",
+                "monthly_income",
+                "age",
+                "age_label",
+            }
+            removed = sorted(field for field in suppressed_fields if field in governed)
+            for field in removed:
+                governed.pop(field, None)
+            if removed:
+                logger.info(
+                    "[提取保护] 联系方式语境命中 contact-only，移除字段=%s",
+                    ",".join(removed),
+                )
+
+        if "location" in governed:
+            explicit_self_location = (
+                _asked("location")
+                or self._has_explicit_self_location_signal(message)
+                or _extractor_bool("_has_explicit_self_update_signal", "location", message)
+            )
+            mixed_self_intro = (
+                _extractor_bool("_looks_like_mixed_self_intro_with_location_preference", message)
+                or (
+                    self._looks_like_partner_preference_location_context(message)
+                    and self._has_explicit_self_location_signal(message)
+                )
+            )
+            if (
+                not explicit_self_location
+                and self._looks_like_partner_preference_location_context(message)
+                and not mixed_self_intro
+            ):
+                governed.pop("location", None)
+                logger.info("[提取保护] 检测到择偶地区语境，移除 location 主档污染值")
+
+        if "education" in governed:
+            explicit_self_education = (
+                _asked("education")
+                or self._has_explicit_self_education_signal(message)
+                or _extractor_bool("_has_explicit_self_update_signal", "education", message)
+            )
+            mixed_self_intro = (
+                _extractor_bool("_looks_like_mixed_self_intro_with_education_preference", message)
+                or self._looks_like_profile_led_self_intro_with_education(message)
+            )
+            if (
+                not explicit_self_education
+                and self._looks_like_partner_preference_education_context(message)
+                and not mixed_self_intro
+            ):
+                governed.pop("education", None)
+                logger.info("[提取保护] 检测到择偶学历语境，移除 education 主档污染值")
+
+        if "occupation" in governed:
+            explicit_self_occupation = (
+                _asked("occupation")
+                or self._has_explicit_self_occupation_signal(message)
+                or _extractor_bool("_has_explicit_self_update_signal", "occupation", message)
+            )
+            mixed_self_intro = _extractor_bool("_looks_like_mixed_self_intro_with_occupation_preference", message)
+            if (
+                not explicit_self_occupation
+                and self._looks_like_partner_preference_occupation_context(message)
+                and not mixed_self_intro
+            ):
+                governed.pop("occupation", None)
+                logger.info("[提取保护] 检测到择偶职业语境，移除 occupation 主档污染值")
+
+        if "marital_status" in governed:
+            explicit_self_marital = (
+                _asked("marital_status")
+                or self._has_explicit_self_marital_signal(message)
+                or _extractor_bool("_has_explicit_self_update_signal", "marital_status", message)
+            )
+            mixed_self_intro = _extractor_bool("_looks_like_mixed_self_intro_with_marital_preference", message)
+            if (
+                not explicit_self_marital
+                and self._looks_like_partner_preference_marital_context(message)
+                and not mixed_self_intro
+            ):
+                governed.pop("marital_status", None)
+                logger.info("[提取保护] 检测到择偶婚况语境，移除 marital_status 主档污染值")
+
+        if "monthly_income" in governed:
+            explicit_self_income = (
+                _asked("monthly_income")
+                or self._has_explicit_self_income_signal(message)
+                or _extractor_bool("_has_explicit_self_income_signal", message)
+            )
+            mixed_self_intro = _extractor_bool("_looks_like_mixed_self_intro_with_income_preference", message)
+            if (
+                not explicit_self_income
+                and self._looks_like_partner_preference_income_context(message)
+                and not mixed_self_intro
+            ):
+                governed.pop("monthly_income", None)
+                logger.info("[提取保护] 检测到择偶收入语境，移除 monthly_income 主档污染值")
+
+        if "age" in governed:
+            explicit_self_age = (
+                _asked("age")
+                or _extractor_bool("_has_explicit_self_update_signal", "age", message)
+            )
+            analysis = None
+            if extraction_service is not None and hasattr(extraction_service, "analyze_numeric_semantics"):
+                try:
+                    analysis = extraction_service.analyze_numeric_semantics(message)
+                except Exception:  # noqa: BLE001
+                    analysis = None
+            has_partner_age_signal = bool(
+                (analysis or {}).get("partner_age_gap_candidates")
+                or (analysis or {}).get("partner_age_range_candidates")
+            )
+            if not has_partner_age_signal:
+                preference = self._extract_simple_partner_requirement(message) or ""
+                has_partner_age_signal = "年龄" in preference
+            if has_partner_age_signal and not explicit_self_age:
+                governed.pop("age", None)
+                governed.pop("age_label", None)
+                logger.info("[提取保护] 检测到择偶年龄语境，移除 age/age_label 主档污染值")
+
+        return governed
 
     @staticmethod
     def _extract_location_like_text(message: str, *, compact_message: str | None = None) -> str | None:
@@ -1432,8 +2951,16 @@ class TurnUnderstandingService:
         )
         if city_match:
             return str(city_match.group("loc") or "").strip()
+        leading_city_intro = re.match(
+            r"^\s*(?P<loc>" + "|".join(common_cities) + r")(?:(?=男生|女生|男的|女的|人|工作|上班|生活|定居|居住|，|,|、)|(?=[\u4e00-\u9fa5]{1,4}(?:呢|呀|哦|哈|啊|啦|，|,|、|$)))",
+            content,
+        )
+        if leading_city_intro:
+            return str(leading_city_intro.group("loc") or "").strip()
         phrase_patterns = [
-            r"(?:我在|我目前在|我现在在|我长期在|我一直在|我住在|我来自|我人在|目前在|现在在|长期在|一直在|住在|来自|在)\s*(?:一个)?(?P<loc>[\u4e00-\u9fa5]{2,12}(?:市|省|县|区|州|特别行政区|地区|小县城|小城市|县城)?|台湾|澳门|香港|国外|国内|老家|家里)(?:这边|这里|那边)?(?:呢|呀|哦|哈|啊|啦)?",
+            r"(?:我在|我目前在|我现在在|我长期在|我一直在|我住在|我来自|我人在|目前在|现在在|长期在|一直在|住在|来自)\s*(?:一个)?(?P<loc>[\u4e00-\u9fa5]{2,12}(?:市|省|县|区|州|特别行政区|地区|小县城|小城市|县城)?|台湾|澳门|香港|国外|国内|老家|家里)(?:这边|这里|那边)?(?:呢|呀|哦|哈|啊|啦)?",
+            r"(?:^|[，,、\s])在\s*(?:一个)?(?P<loc>深圳|广州|杭州|上海|北京|成都|武汉|苏州|南京|天津|重庆|西安|长沙|郑州|青岛|厦门|宁波|无锡|东莞|佛山|台湾|澳门|香港)(?:这边|这里|那边)?(?:呢|呀|哦|哈|啊|啦)?",
+            r"(?:^|[，,、\s])在\s*(?:一个)?(?P<loc>老家|家里|县城|小县城|小城市|老城区)(?:这边|这里|那边)?(?:呢|呀|哦|哈|啊|啦)?",
             r"^(?P<loc>台湾|澳门|香港|国外|国内|老家|家里|县城|小县城|小城市)(?:呢|呀|哦|哈|啊|啦)?$",
         ]
         for pattern in phrase_patterns:
@@ -1515,6 +3042,17 @@ class TurnUnderstandingService:
         message = str(user_message or "").strip()
         last_ai = str(last_response or "")
         asked_field = self._detect_which_field_is_asked(last_ai)
+        if asked_field == "monthly_income":
+            contextual_income = self._extract_simple_monthly_income(message)
+            if contextual_income:
+                guarded["monthly_income"] = contextual_income
+            if (contextual_income or self._looks_like_income_context_message(message)) and not self._message_has_explicit_age_semantics(message):
+                if "age" in guarded:
+                    guarded.pop("age", None)
+                if "age_label" in guarded:
+                    guarded.pop("age_label", None)
+                if re.fullmatch(r"年龄\d{1,2}(?:左右|上下|以上)", str(guarded.get("partner_requirement") or "").strip()):
+                    guarded.pop("partner_requirement", None)
 
         if last_ai and self._looks_like_refusal(message):
             refused_fields = self._detect_asked_fields_from_context(last_ai)
@@ -1637,6 +3175,31 @@ class TurnUnderstandingService:
                     guarded["age_label"] = age_label
                     logger.info("[提取保护] 出生年问答上下文命中，按 short answer 强制写入 age/age_label")
 
+        if "age" in guarded or "age_label" in guarded:
+            preference_age_context = bool(
+                re.search(
+                    r"(?:想找|找|希望|偏向|喜欢|另一半|对象).{0,12}(?:90后|80后|00后|95后|85后|19\d{2}年|20\d{2}年|\d{2}年)"
+                    r"|(?:90后|80后|00后|95后|85后|19\d{2}年|20\d{2}年|\d{2}年).{0,10}(?:都可以|都行|有不|行不)",
+                    message,
+                )
+            )
+            explicit_self_age = bool(
+                re.search(r"(?:我|本人|自己).{0,4}(?:是|今年|现在)?\s*(?:19\d{2}|20\d{2}|\d{2})年", message)
+                or re.search(r"^\s*(?:19\d{2}|20\d{2}|\d{2})(?=(?:想找|找|都可以|都行|也可以|的啊|的呀|的呢))", message)
+            )
+            mixed_self_intro_birth_year = bool(
+                re.search(r"(男生|女生|男的|女的)", message)
+                and re.search(r"(19\d{2}|20\d{2}|\d{2})年", message)
+                and re.search(r"(找|想找|男朋友|女朋友|男生|女生)", message)
+            )
+            if preference_age_context and not explicit_self_age and not mixed_self_intro_birth_year:
+                guarded.pop("age", None)
+                guarded.pop("age_label", None)
+                partner_preference = self._extract_simple_partner_requirement(message)
+                if partner_preference:
+                    guarded["partner_requirement"] = partner_preference
+                logger.info("[提取保护] 择偶年龄偏好短答命中，移除 age/age_label 自身污染")
+
         numeric_height_preference = self._extract_numeric_height_preference(message)
         if numeric_height_preference and ("age" in guarded or "age_label" in guarded):
             guarded["partner_requirement"] = str(guarded.get("partner_requirement") or numeric_height_preference).strip()
@@ -1665,6 +3228,7 @@ class TurnUnderstandingService:
                 compact_message
                 and len(compact_message) <= 8
                 and not self._looks_like_refusal(message)
+                and compact_message not in self._NON_OCCUPATION_PHRASES
                 and not re.search(r"(收费|多少钱|几万|几千|电话|微信|离婚|单身|未婚|离异|本科|大专|硕士|博士|\d)", compact_message)
                 and re.fullmatch(r"[A-Za-z\u4e00-\u9fa5]{2,8}", compact_message)
             ):
@@ -1676,10 +3240,23 @@ class TurnUnderstandingService:
 
         explicit_self_sex = re.search(r"(我是|本人|我)\s*(男生|女生|男的|女的|男|女)", message)
         preference_sex_hint = re.search(r"(找|想找|喜欢|偏好).{0,4}(男生|女生|男的|女的|男|女)", message)
+        mixed_self_intro_with_preference = bool(
+            re.search(
+                r"(?:^|[，,、\s])(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)?\s*(男生|女生|男的|女的)\s*[，,、]",
+                message,
+            )
+            or (
+            re.search(
+                r"(男生|女生|男的|女的|男|女).{0,4}(找|想找).{0,8}(男朋友|女朋友|男盆友|女盆友|男生|女生|男性|女性)",
+                message,
+            )
+            and any(field in guarded for field in ("age", "age_label", "location", "education", "marital_status", "occupation"))
+            )
+        )
         if explicit_self_sex and "partner_gender_preference" in guarded and not preference_sex_hint:
             guarded.pop("partner_gender_preference", None)
             logger.info("[提取保护] 检测到明确自述性别，移除本轮 partner_gender_preference 污染值")
-        if "sex" in guarded and not explicit_self_sex and preference_sex_hint:
+        if "sex" in guarded and not explicit_self_sex and preference_sex_hint and not mixed_self_intro_with_preference:
             guarded.pop("sex", None)
             logger.info("[提取保护] 检测到择偶偏好语境，忽略 sex 提取，避免误写用户性别")
 
@@ -1691,9 +3268,36 @@ class TurnUnderstandingService:
             r"(找|想找|喜欢|偏向|更想找).{0,6}(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)",
             message,
         )
-        if "location" in guarded and not explicit_self_location and preference_location_hint:
+        mixed_self_intro_with_location_preference = False
+        extraction_service = getattr(self.chat_service, "extraction_service", None)
+        if extraction_service is not None and hasattr(extraction_service, "_looks_like_mixed_self_intro_with_location_preference"):
+            mixed_self_intro_with_location_preference = bool(
+                extraction_service._looks_like_mixed_self_intro_with_location_preference(message)  # noqa: SLF001
+            )
+        if "location" in guarded and not explicit_self_location and preference_location_hint and not mixed_self_intro_with_location_preference:
             guarded.pop("location", None)
             logger.info("[提取保护] 检测到择偶偏好城市语境，忽略 location 提取，避免误写用户所在地")
+
+        if extraction_service is not None:
+            removed_numeric_fields: list[str] = []
+            for field in ("age", "height", "weight", "monthly_income", "phone", "wechat"):
+                if field not in guarded:
+                    continue
+                if extraction_service.should_accept_numeric_field(
+                    mapped_field=field,
+                    user_message=message,
+                    value=guarded.get(field),
+                ):
+                    continue
+                guarded.pop(field, None)
+                removed_numeric_fields.append(field)
+                if field == "age":
+                    guarded.pop("age_label", None)
+            if removed_numeric_fields:
+                logger.info(
+                    "[提取保护] 通用数字语义治理命中，移除字段=%s",
+                    ",".join(removed_numeric_fields),
+                )
 
         return guarded
 
@@ -1817,7 +3421,9 @@ class TurnUnderstandingService:
         sanitized_message = re.sub(r"\d+(?:\.\d+)?\s*(?:公斤|斤)\b", " ", sanitized_message, flags=re.IGNORECASE)
         patterns = [
             r"((?:税前|税后)?\s*\d+(?:\.\d+)?\s*(?:k|w|万)(?:\+|左右|上下)?)",
-            r"((?:月收入|月薪|收入|工资)[^，。；,\s]{0,6}\d+(?:\.\d+)?\s*(?:k|w|万|元)(?:\+|左右|上下)?)",
+            r"((?:年薪|年收入|年包)(?:税前|税后)?(?:大概|差不多|有|在)?\d+(?:\.\d+)?(?:k|w|万|千|元)?(?:\+|左右|上下|出头)?)",
+            r"((?:税前|税后)(?:年薪|年收入)?(?:大概|差不多|有|在)?\d+(?:\.\d+)?(?:k|w|万|千|元)?(?:\+|左右|上下|出头)?)",
+            r"((?:月[收搜]入|月薪|[收搜]入|工资)[^，。；,\s]{0,6}\d+(?:\.\d+)?\s*(?:k|w|万|元)(?:\+|左右|上下)?)",
             r"((?:一|二|两|三|四|五|六|七|八|九|十|\d)+(?:万|千)左右)",
             r"(年包\d+(?:\.\d+)?(?:w|万)?左右)",
             r"((?:一|二|两|三|四|五|六|七|八|九|十|\d)+(?:万|千)出头)",
@@ -1872,12 +3478,30 @@ class TurnUnderstandingService:
                 return ack
         return ""
 
+    @staticmethod
+    def _extract_occupation_inference_candidate_from_partner_requirement(value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        match = re.search(r"不要同([^，,、。！？!?]{1,12})行业", text)
+        if not match:
+            return ""
+        candidate = re.sub(r"(相关|方向|的)$", "", match.group(1).strip())
+        return candidate or ""
+
     def _build_opening_profile_ack(self, message: str) -> str:
         text = str(message or "").strip()
         if not text:
             return ""
         extracted = self._extract_profile_fields(text, last_response="")
+        if (
+            "education" in extracted
+            and self._looks_like_partner_preference_education_context(text)
+            and not self._has_explicit_self_education_signal(text)
+        ):
+            extracted.pop("education", None)
         preference = self._extract_simple_partner_requirement(text) or ""
+        inferred_occupation = self._extract_occupation_inference_candidate_from_partner_requirement(preference)
         partner_gender = str(extracted.get("partner_gender_preference") or self._extract_partner_gender_preference(text) or "").strip()
         if extracted.get("sex"):
             return "你这边是男生。" if "男" in str(extracted["sex"]) else "你这边是女生。"
@@ -1981,6 +3605,8 @@ class TurnUnderstandingService:
         asks_occupation = any(re.search(pattern, detection_text) for pattern in occupation_patterns)
         asks_income = any(re.search(pattern, detection_text) for pattern in income_patterns)
         if asks_occupation and asks_income:
+            return "occupation"
+        if asks_occupation:
             return "occupation"
 
         for pattern in income_patterns:

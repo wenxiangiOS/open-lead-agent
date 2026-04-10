@@ -167,6 +167,28 @@ class ContextualSlotGovernanceLayer:
                 ",".join(sorted(explicit_corrections)),
             )
 
+        extraction_service = self._get_extraction_service()
+        if extraction_service is not None:
+            removed_numeric_fields: list[str] = []
+            for field in ("age", "height", "weight", "monthly_income", "phone", "wechat"):
+                if field not in governed:
+                    continue
+                if extraction_service.should_accept_numeric_field(
+                    mapped_field=field,
+                    user_message=message,
+                    value=governed.get(field),
+                ):
+                    continue
+                governed.pop(field, None)
+                removed_numeric_fields.append(field)
+                if field == "age":
+                    governed.pop("age_label", None)
+            if removed_numeric_fields:
+                logger.info(
+                    "[提取保护] contextual governance 通用数字语义治理命中，移除字段=%s",
+                    ",".join(removed_numeric_fields),
+                )
+
         return governed, blocked
 
     @staticmethod
@@ -190,6 +212,10 @@ class ContextualSlotGovernanceLayer:
             deterministic_extractor=self.semantic_service._extract_deterministic_profile_fields,  # noqa: SLF001
             looks_like_correction=self.semantic_service._looks_like_correction,  # noqa: SLF001
         )
+
+    def _get_extraction_service(self):
+        chat_service = getattr(self.semantic_service, "chat_service", None)
+        return getattr(chat_service, "extraction_service", None)
 
     def _apply_contact_context_suppression(
         self,
@@ -268,6 +294,21 @@ class ContextualSlotGovernanceLayer:
                 "sex_confirmation_context_prefers_self_sex",
                 source_text,
             )
+
+        extraction_service = self._get_extraction_service()
+        if extraction_service is not None:
+            for field in ("age", "height", "weight", "monthly_income", "phone", "wechat"):
+                if field not in result.resolved_slots:
+                    continue
+                if extraction_service.should_accept_numeric_field(
+                    mapped_field=field,
+                    user_message=message,
+                    value=result.resolved_slots.get(field),
+                ):
+                    continue
+                self._block_field(result, field, "numeric_semantic_role_mismatch", source_text)
+                if field == "age":
+                    self._block_field(result, "age_label", "numeric_semantic_role_mismatch", source_text)
 
     def _block_field(
         self,

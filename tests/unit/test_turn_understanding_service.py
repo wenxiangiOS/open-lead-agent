@@ -6,10 +6,12 @@ from types import SimpleNamespace
 from src.models.user_profile import UserProfile
 from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingInput
 from src.modules.conversation.domain.turn_understanding_service import TurnUnderstandingService
+from src.modules.profile_collection.domain.extraction_service import ExtractionService
 
 
 class _StubChatService:
     def __init__(self):
+        self.extraction_service = ExtractionService(SimpleNamespace())
         self.user_question_service = SimpleNamespace(
             detect_quick_faq_intent=lambda message: (
                 "fee"
@@ -181,6 +183,7 @@ def test_contact_preference_switch_is_contact_answer():
     result = service.analyze(_make_input("电话不方便，微信可以", in_contact_flow=True))
     assert result.primary_turn_type == "contact_answer"
     assert result.subtype == "contact_preference_switch"
+    assert "occupation" not in result.resolved_slots
 
 
 def test_contact_context_reply_maps_wechat_to_phone_when_user_says_same_number():
@@ -195,6 +198,7 @@ def test_contact_context_reply_maps_wechat_to_phone_when_user_says_same_number()
 
     assert result.primary_turn_type == "contact_answer"
     assert result.resolved_slots["wechat"] == "17688987659"
+    assert "occupation" not in result.resolved_slots
 
 
 def test_education_like_preference_is_blocked():
@@ -216,7 +220,460 @@ def test_turn_understanding_extracts_age_from_natural_self_report():
     service = TurnUnderstandingService(_StubChatService())
     result = service.analyze(_make_input("我今年36"))
     assert result.primary_turn_type == "profile_answer"
-    assert result.resolved_slots["age"] == "36"
+
+
+def test_turn_understanding_keeps_self_sex_in_mixed_self_intro_with_partner_preference():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input("南山女生找男朋友，93年未婚，起码本科，自己也是做互联网的")
+    )
+
+    assert result.resolved_slots["sex"] == "女"
+    assert result.resolved_slots["partner_gender_preference"] == "男"
+    assert result.resolved_slots["education"] == "本科"
+    assert result.resolved_slots["marital_status"] == "未婚"
+    assert result.resolved_slots["age"] == "33"
+
+
+def test_turn_understanding_keeps_self_location_in_mixed_intro_with_location_preference():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input("深圳女生想找香港的男生，93年未婚，自己也是做互联网的")
+    )
+
+    assert result.resolved_slots["location"] == "深圳"
+    assert result.resolved_slots["partner_requirement"] == "香港"
+    assert result.resolved_slots["partner_gender_preference"] == "男"
+
+
+def test_turn_understanding_does_not_treat_hk_resource_question_as_self_location():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input("女生 香港有不", last_response="行呀，那我先简单问下哦，你是男生还是女生呀？", message_count=2)
+    )
+
+    assert result.resolved_slots["sex"] == "女"
+    assert "location" not in result.resolved_slots
+    assert "occupation" not in result.resolved_slots
+    assert "occupation" not in result.blocked_slots
+
+
+def test_turn_understanding_blocks_low_quality_occupation_candidate_in_faq_like_opening():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(_make_input("可以啊 机构是吗 资源怎么样啊"))
+
+    assert "occupation" not in result.resolved_slots
+    assert "occupation" not in result.blocked_slots
+
+
+def test_turn_understanding_does_not_treat_faq_location_probe_as_self_location():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(_make_input("香港的有吗"))
+
+    assert "location" not in result.resolved_slots
+    assert "location" not in result.blocked_slots
+    assert "occupation" not in result.resolved_slots
+    assert "occupation" not in result.blocked_slots
+
+
+def test_turn_understanding_does_not_treat_faq_education_probe_as_self_education():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(_make_input("本科以上的有吗"))
+
+    assert "education" not in result.resolved_slots
+    assert "education" not in result.blocked_slots
+    assert "occupation" not in result.resolved_slots
+    assert "occupation" not in result.blocked_slots
+
+
+def test_turn_understanding_does_not_extract_age_from_income_typo_message():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input("月搜入大概20k+", last_response="你现在月收入大概在哪个区间呀？", message_count=3)
+    )
+
+    assert result.resolved_slots["monthly_income"] == "20k+"
+    assert "age" not in result.resolved_slots
+
+
+def test_turn_understanding_keeps_rich_partner_requirement_in_mixed_self_intro():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input("南山女生找男盆友，就是93未婚找未婚，卡学历身高，起码本科或者以上，比较倾向于大厂程序员，自己也是从事互联网有不")
+    )
+
+    assert result.resolved_slots["sex"] == "女"
+    assert "education" not in result.resolved_slots
+    assert result.resolved_slots["marital_status"] == "未婚"
+    assert result.resolved_slots["partner_gender_preference"] == "男"
+    assert result.resolved_slots["partner_requirement"] == "未婚，学历本科及以上，大厂程序员"
+
+
+def test_turn_understanding_keeps_self_marital_status_and_education_in_mixed_intro():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input("深圳女生，93年未婚，自己本科，想找未婚、本科及以上的男生")
+    )
+
+    assert result.resolved_slots["sex"] == "女"
+    assert result.resolved_slots["marital_status"] == "未婚"
+    assert result.resolved_slots["education"] == "本科"
+    assert result.resolved_slots["partner_gender_preference"] == "男"
+    assert result.resolved_slots["partner_requirement"] == "未婚，学历本科及以上"
+
+
+def test_turn_understanding_does_not_write_self_marital_status_from_partner_only_requirement():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input("想找未婚的男生，本科及以上就行")
+    )
+
+    assert "marital_status" not in result.resolved_slots
+    assert result.resolved_slots["partner_gender_preference"] == "男"
+    assert result.resolved_slots["partner_requirement"] == "未婚，学历本科及以上"
+
+
+def test_turn_understanding_supports_colloquial_partner_requirement_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input("深圳女生，自己互联网，想找港男，本科起步，程序员最好")
+    )
+
+    assert result.resolved_slots["sex"] == "女"
+    assert result.resolved_slots["location"] == "深圳"
+    assert result.resolved_slots["occupation"] == "互联网"
+    assert result.resolved_slots["partner_requirement"] == "香港，学历本科及以上，程序员"
+
+
+def test_turn_understanding_supports_numeric_colloquial_partner_requirement_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175往上，30左右，月入别太低")  # noqa: SLF001
+
+    assert extracted == "身高175cm以上，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_looser_numeric_colloquial_partner_requirement_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("一米七五以上，三十出头，收入别太拉垮")  # noqa: SLF001
+
+    assert extracted == "身高175cm以上，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_even_looser_numeric_colloquial_partner_requirement_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("一米七五朝上，三十来岁，收入别太低就行")  # noqa: SLF001
+
+    assert extracted == "身高175cm以上，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_nonstandard_numeric_colloquial_partner_requirement_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("一米七五打底，三十上下，收入过得去就行")  # noqa: SLF001
+
+    assert extracted == "身高175cm以上，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_even_more_scattered_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("一米七五左右，三十多点，收入差不多就行")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_spoken_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("身高差不多175，30出头，收入别太寒碜")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175差不多，三十郎当岁，收入别太难看")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_extra_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下，三十好几，收入看得过去就行")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_more_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下浮动，三十冒头，收入说得过去就行")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_soft_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("一米七五上下都行，三十左右都可，收入能看就行")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_more_soft_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("身高175左右都成，30上下都行，收入过得去就成")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_variant_more_soft_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175左右都可以，30左右都行，收入差不离就行")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_extra_variant_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175附近，30来岁也行，收入别太磕碜")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_latest_extra_variant_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下差不多，30来岁左右，收入别太埋汰")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_latest_slang_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175差不离，30左右上下，收入别太拉胯")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_more_extra_variant_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175前后，30来岁都成，收入别太埋汰")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下都可，30来岁上下，收入过得去就好")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下都成，30来岁上下都行，收入说得过去就好")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_latest_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下都OK，30来岁上下都可，收入别太说不过去")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_more_latest_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下都ok啦，30来岁上下都成，收入别太拿不出手")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_next_more_latest_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下都ok的，30来岁上下也成，收入别太掉价")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_followup_latest_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下也行，30来岁也都行，收入别太上不了台面")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_latest_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下都还行，30来岁也可以，收入别太寒酸")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_next_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下差不太多，30来岁差不多，收入别太捉襟见肘")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_another_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下大差不差，30来岁上下差不多，收入别太拮据")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_more_another_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下凑合，30来岁还行，收入别太紧巴")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_more_more_another_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下过得去，30来岁还成，收入别太磕巴")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_next_more_more_another_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下说得过去，30来岁说得过去，收入别太寒碜吧")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_final_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下没毛病，30来岁问题不大，收入别太磕碜吧")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_post_final_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下没啥问题，30来岁没啥问题，收入别太掉面儿")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_after_post_final_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下还过得去，30来岁还过得去，收入别太上不得台面")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_last_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下马马虎虎，30来岁马马虎虎，收入别太寒掺")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_really_last_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下也还行，30来岁也还行，收入别太没法看")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_true_last_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下不赖，30来岁不赖，收入别太磕搀")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_actual_last_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下将就，30来岁将就，收入别太寒碜着")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_actual_real_last_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下还凑合，30来岁还凑合，收入别太跌份")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_next_actual_real_last_followup_even_newer_fragmented_numeric_colloquial_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("175上下也凑合，30来岁也凑合，收入别太寒伧")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_structured_numeric_partner_preference_for_bare_height_plus():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("想找一个175+的，30左右，收入别太低")  # noqa: SLF001
+
+    assert extracted == "身高175cm以上，年龄30左右，收入别太低"
+
+
+def test_turn_understanding_supports_structured_numeric_partner_preference_for_bare_numeric_operands():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("想找175以上的，30+的，月入2w+的")  # noqa: SLF001
+
+    assert extracted == "身高175cm以上，年龄30以上，收入2万以上"
+
+
+def test_turn_understanding_supports_structured_numeric_partner_preference_for_explicit_operand_phrases():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("想找175往上的，30左右的，收入过万的")  # noqa: SLF001
+
+    assert extracted == "身高175cm以上，年龄30左右，收入1万以上"
+
+
+def test_turn_understanding_supports_structured_numeric_partner_preference_for_explicit_around_and_income_bound_phrases():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement("想找175左右的，30上下的，收入2万以上的")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入2万以上"
+
+
+def test_turn_understanding_extracts_structured_numeric_partner_preference_semantics():
+    semantics = TurnUnderstandingService._extract_structured_numeric_partner_preference_semantics(  # noqa: SLF001
+        "想找175以上的，30+的，月入2w+的"
+    )
+
+    assert semantics == [
+        {"pos": 2, "field": "height", "operator": "lower_bound", "value": "175"},
+        {"pos": 9, "field": "age", "operator": "lower_bound", "value": "30"},
+        {"pos": 14, "field": "income", "operator": "lower_bound", "value": "2万"},
+    ]
+
+
+def test_turn_understanding_extracts_structured_numeric_partner_preference_semantics_from_colloquial_aliases():
+    semantics = TurnUnderstandingService._extract_structured_numeric_partner_preference_semantics(  # noqa: SLF001
+        "想找175差不多的，三十来岁的，收入过得去就行"
+    )
+
+    assert semantics == [
+        {"pos": 2, "field": "height", "operator": "around", "value": "175"},
+        {"pos": 10, "field": "age", "operator": "around", "value": "30"},
+        {"pos": 16, "field": "income", "operator": "not_too_low", "value": ""},
+    ]
+
+
+def test_turn_understanding_extracts_structured_numeric_partner_preference_semantics_with_conversational_tails():
+    semantics = TurnUnderstandingService._extract_structured_numeric_partner_preference_semantics(  # noqa: SLF001
+        "想找175左右都可以，30上下都行，收入过得去就好"
+    )
+
+    assert semantics == [
+        {"pos": 2, "field": "height", "operator": "around", "value": "175"},
+        {"pos": 11, "field": "age", "operator": "around", "value": "30"},
+        {"pos": 18, "field": "income", "operator": "not_too_low", "value": ""},
+    ]
+
+
+def test_turn_understanding_simple_partner_requirement_uses_structured_numeric_alias_bridge():
+    service = TurnUnderstandingService(_StubChatService())
+
+    extracted = service._extract_simple_partner_requirement("175上下都OK，三十出头，收入过得去就行")  # noqa: SLF001
+
+    assert extracted == "身高175cm左右，年龄30左右，收入别太低"
 
 
 def test_turn_understanding_treats_no_education_as_valid_education_answer():
@@ -258,6 +715,7 @@ def test_turn_understanding_opening_matchmaking_with_explicit_age_keeps_actual_a
     assert result.primary_turn_type == "opening"
     assert result.subtype == "matchmaking_intent"
     assert result.resolved_slots["age"] == "26"
+    assert "occupation" not in result.resolved_slots
 
 
 def test_turn_understanding_extracts_married_status_from_natural_phrase():
@@ -265,6 +723,7 @@ def test_turn_understanding_extracts_married_status_from_natural_phrase():
     result = service.analyze(_make_input("我已经结婚了"))
     assert result.primary_turn_type == "profile_answer"
     assert result.resolved_slots["marital_status"] == "已婚"
+    assert "occupation" not in result.resolved_slots
 
 
 def test_turn_understanding_classifies_opening_service_confirmation():
@@ -310,6 +769,7 @@ def test_turn_understanding_marks_post_answer_reentry_for_info_collection_explan
         )
     )
     assert result.post_answer_reentry is True
+    assert "occupation" not in result.resolved_slots
 
 
 def test_turn_understanding_marks_post_answer_reentry_for_precise_matching_explanation():
@@ -322,6 +782,7 @@ def test_turn_understanding_marks_post_answer_reentry_for_precise_matching_expla
         )
     )
     assert result.post_answer_reentry is True
+    assert "occupation" not in result.resolved_slots
 
 
 def test_turn_understanding_detects_contextual_info_collection_concern():
@@ -340,6 +801,7 @@ def test_turn_understanding_detects_contextual_info_collection_concern():
 
     assert result.primary_turn_type == "faq_concern"
     assert result.subtype == "info_collection_why"
+    assert "occupation" not in result.resolved_slots
 
 
 def test_turn_understanding_exposes_looks_like_greeting_helper():
@@ -368,6 +830,16 @@ def test_turn_understanding_exposes_opening_field_ack_separately_from_payload():
 
     assert result.context_ack_type == "opening_profile_ack"
     assert result.context_ack_field_ack == "你现在主要在深圳。"
+    assert "occupation" not in result.resolved_slots
+
+
+def test_turn_understanding_does_not_treat_self_education_phrase_as_occupation():
+    service = TurnUnderstandingService(_StubChatService())
+
+    result = service.analyze(_make_input("深圳女生，93年未婚，自己本科，想找未婚、本科及以上的男生"))
+
+    assert result.resolved_slots["education"] == "本科"
+    assert "occupation" not in result.resolved_slots
 
 
 def test_turn_understanding_detects_asked_field_prefers_last_question_over_ack_text():
@@ -414,6 +886,14 @@ def test_turn_understanding_builds_opening_profile_ack():
     service = TurnUnderstandingService(_StubChatService())
     assert service._build_opening_profile_ack("我在深圳") == "你现在主要在深圳。"  # noqa: SLF001
     assert service._build_opening_profile_ack("本科") == "本科是吧。"  # noqa: SLF001
+    assert service._build_opening_profile_ack("不要同财务行业，想找稳定行业男生") == "你是想找男生这类。"  # noqa: SLF001
+
+
+def test_turn_understanding_builds_opening_profile_ack_ignores_partner_preference_education():
+    service = TurnUnderstandingService(_StubChatService())
+    ack = service._build_opening_profile_ack("93未婚找未婚，卡学历身高，起码本科或者以上，比较倾向于大厂程序员")  # noqa: SLF001
+    assert "本科是吧" not in ack
+    assert "学历这块是本科" not in ack
 
 
 def test_turn_understanding_builds_lightweight_field_ack_for_location():
@@ -449,6 +929,39 @@ def test_turn_understanding_extracts_short_profile_answers():
     extracted = service._extract_deterministic_profile_fields("it")  # noqa: SLF001
     assert extracted["occupation"] == "IT"
 
+    extracted = service._extract_deterministic_profile_fields("admin")  # noqa: SLF001
+    assert extracted["occupation"] == "行政"
+
+    extracted = service._extract_deterministic_profile_fields("本可")  # noqa: SLF001
+    assert extracted["education"] == "本科"
+
+    extracted = service._extract_deterministic_profile_fields("硕土")  # noqa: SLF001
+    assert extracted["education"] == "硕士"
+
+    extracted = service._extract_deterministic_profile_fields("专科")  # noqa: SLF001
+    assert extracted["education"] == "大专"
+
+    extracted = service._extract_deterministic_profile_fields("研一")  # noqa: SLF001
+    assert extracted["education"] == "研究生"
+
+    extracted = service._extract_deterministic_profile_fields("研二")  # noqa: SLF001
+    assert extracted["education"] == "研究生"
+
+    extracted = service._extract_deterministic_profile_fields("在读硕士")  # noqa: SLF001
+    assert extracted["education"] == "硕士"
+
+    extracted = service._extract_deterministic_profile_fields("博后")  # noqa: SLF001
+    assert extracted["education"] == "博士"
+
+    extracted = service._extract_deterministic_profile_fields("博士后")  # noqa: SLF001
+    assert extracted["education"] == "博士"
+
+    extracted = service._extract_deterministic_profile_fields("在读博")  # noqa: SLF001
+    assert extracted["education"] == "博士"
+
+    extracted = service._extract_deterministic_profile_fields("专升本")  # noqa: SLF001
+    assert extracted["education"] == "本科"
+
 
 def test_turn_understanding_extracts_occupation_and_preference_from_compound_reply():
     service = TurnUnderstandingService(_StubChatService())
@@ -477,6 +990,76 @@ def test_turn_understanding_normalizes_noisy_beauty_occupation_prefix():
     assert extracted["monthly_income"] == "7万左右"
 
 
+def test_turn_understanding_normalizes_occupation_suffix_variants():
+    service = TurnUnderstandingService(_StubChatService())
+
+    extracted = service._extract_deterministic_profile_fields("做it的")  # noqa: SLF001
+    assert extracted["occupation"] == "IT"
+
+    extracted = service._extract_deterministic_profile_fields("产品这块")  # noqa: SLF001
+    assert extracted["occupation"] == "产品"
+
+    extracted = service._extract_deterministic_profile_fields("搞运营的")  # noqa: SLF001
+    assert extracted["occupation"] == "运营"
+
+    extracted = service._extract_deterministic_profile_fields("做医美这行")  # noqa: SLF001
+    assert extracted["occupation"] == "医美"
+
+    extracted = service._extract_deterministic_profile_fields("干hr")  # noqa: SLF001
+    assert extracted["occupation"] == "HR"
+
+    extracted = service._extract_deterministic_profile_fields("做qa测试")  # noqa: SLF001
+    assert extracted["occupation"] == "QA"
+
+    extracted = service._extract_deterministic_profile_fields("行政前台")  # noqa: SLF001
+    assert extracted["occupation"] == "行政"
+
+    extracted = service._extract_deterministic_profile_fields("hrbp")  # noqa: SLF001
+    assert extracted["occupation"] == "HR"
+
+    extracted = service._extract_deterministic_profile_fields("产品运营")  # noqa: SLF001
+    assert extracted["occupation"] == "产品运营"
+
+    extracted = service._extract_deterministic_profile_fields("电商运营")  # noqa: SLF001
+    assert extracted["occupation"] == "电商运营"
+
+    extracted = service._extract_deterministic_profile_fields("做ui设计")  # noqa: SLF001
+    assert extracted["occupation"] == "UI"
+
+    extracted = service._extract_deterministic_profile_fields("UI设计师")  # noqa: SLF001
+    assert extracted["occupation"] == "UI"
+
+    extracted = service._extract_deterministic_profile_fields("做qa测试工程师")  # noqa: SLF001
+    assert extracted["occupation"] == "QA"
+
+    extracted = service._extract_deterministic_profile_fields("行政人事")  # noqa: SLF001
+    assert extracted["occupation"] == "行政"
+
+    extracted = service._extract_deterministic_profile_fields("产品经理")  # noqa: SLF001
+    assert extracted["occupation"] == "产品"
+
+    extracted = service._extract_deterministic_profile_fields("运营助理")  # noqa: SLF001
+    assert extracted["occupation"] == "运营"
+
+    extracted = service._extract_deterministic_profile_fields("前端开发")  # noqa: SLF001
+    assert extracted["occupation"] == "前端开发"
+
+    extracted = service._extract_deterministic_profile_fields("前端工程师")  # noqa: SLF001
+    assert extracted["occupation"] == "前端开发"
+
+    extracted = service._extract_deterministic_profile_fields("后端开发")  # noqa: SLF001
+    assert extracted["occupation"] == "后端开发"
+
+    extracted = service._extract_deterministic_profile_fields("后端工程师")  # noqa: SLF001
+    assert extracted["occupation"] == "后端开发"
+
+    extracted = service._extract_deterministic_profile_fields("财会")  # noqa: SLF001
+    assert extracted["occupation"] == "财务"
+
+    extracted = service._extract_deterministic_profile_fields("医护")  # noqa: SLF001
+    assert extracted["occupation"] == "医护"
+
+
 def test_turn_understanding_extracts_short_occupation_answer_in_occupation_context():
     service = TurnUnderstandingService(_StubChatService())
     profile = UserProfile(account_id="u_short_occupation")
@@ -501,6 +1084,15 @@ def test_turn_understanding_extracts_non_whitelist_location_terms():
 
     assert service._extract_deterministic_profile_fields("在台湾呢")["location"] == "台湾"  # noqa: SLF001
     assert service._extract_deterministic_profile_fields("在老家呢")["location"] == "老家"  # noqa: SLF001
+
+
+def test_turn_understanding_extracts_colloquial_divorce_variant():
+    service = TurnUnderstandingService(_StubChatService())
+
+    result = service.analyze(_make_input("离过"))
+
+    assert result.resolved_slots["marital_status"] == "离异"
+    assert "occupation" not in result.resolved_slots
 
 
 def test_turn_understanding_does_not_treat_income_token_after_education_as_occupation():
@@ -603,7 +1195,7 @@ def test_turn_understanding_blocks_marital_status_like_occupation_in_compound_re
     assert result.resolved_slots["education"] == "本科"
     assert result.resolved_slots["marital_status"] == "单身"
     assert "occupation" not in result.resolved_slots
-    assert result.blocked_slots["occupation"].reason == "looks_like_marital_status_not_occupation"
+    assert "occupation" not in result.blocked_slots
 
 
 def test_turn_understanding_explicit_correction_overrides_contact_context():
@@ -621,6 +1213,7 @@ def test_turn_understanding_explicit_correction_overrides_contact_context():
 
     assert result.primary_turn_type == "correction"
     assert result.resolved_slots["education"] == "大专"
+    assert "occupation" not in result.resolved_slots
 
 
 def test_turn_understanding_blocks_partner_gender_preference_in_sex_confirmation_context():
@@ -637,6 +1230,7 @@ def test_turn_understanding_blocks_partner_gender_preference_in_sex_confirmation
 
     assert result.resolved_slots["sex"] == "女"
     assert "partner_gender_preference" not in result.resolved_slots
+    assert "occupation" not in result.resolved_slots
 
 
 def test_turn_understanding_extracts_simple_monthly_income_variants():
@@ -644,6 +1238,7 @@ def test_turn_understanding_extracts_simple_monthly_income_variants():
     assert service._extract_simple_monthly_income("我现在税前15k左右") == "税前15k左右"  # noqa: SLF001
     assert service._extract_simple_monthly_income("月薪 1.2w+") == "1.2w+"  # noqa: SLF001
     assert service._extract_simple_monthly_income("年包30左右") == "年包30左右"  # noqa: SLF001
+    assert service._extract_simple_monthly_income("现在年薪税后大概20左右") == "年薪税后大概20左右"  # noqa: SLF001
     assert service._extract_simple_monthly_income("一万出头") == "一万出头"  # noqa: SLF001
     assert service._extract_simple_monthly_income("两万上下") == "两万上下"  # noqa: SLF001
 
@@ -652,6 +1247,68 @@ def test_turn_understanding_extracts_simple_monthly_income_without_weight_pollut
     service = TurnUnderstandingService(_StubChatService())
     assert service._extract_simple_monthly_income("单身，90kg，身高198") is None  # noqa: SLF001
     assert service._extract_simple_monthly_income("体重90kg，月薪3万") == "3万"  # noqa: SLF001
+
+
+def test_turn_understanding_prefers_monthly_income_context_over_age_like_number():
+    service = TurnUnderstandingService(_StubChatService())
+    profile = UserProfile(account_id="u_income_ctx")
+    profile.last_asked_field = "monthly_income"
+
+    result = service.analyze(
+        _make_input(
+            "深圳南山呢，现在年薪税后大概20左右",
+            last_response="那你现在常住在哪座城市呀？方便的话也可以说下大概的月收入哦。",
+            user_profile=profile,
+        )
+    )
+
+    assert result.resolved_slots["location"] == "深圳"
+    assert result.resolved_slots["monthly_income"] == "年薪税后大概20左右"
+    assert "age" not in result.resolved_slots
+    assert "partner_requirement" not in result.resolved_slots
+
+
+def test_turn_understanding_binds_short_compound_reply_to_location_and_income_when_both_were_asked():
+    service = TurnUnderstandingService(_StubChatService())
+    profile = UserProfile(account_id="u_location_income_ctx")
+    profile.last_asked_field = "location"
+    profile.last_asked_side_field = "monthly_income"
+
+    result = service.analyze(
+        _make_input(
+            "深圳，20k+",
+            last_response="那你现在常住在哪座城市呀？方便的话也可以说下大概的月收入哦。",
+            user_profile=profile,
+            message_count=3,
+        )
+    )
+
+    assert result.resolved_slots["location"] == "深圳"
+    assert result.resolved_slots["monthly_income"] == "20k+"
+
+
+def test_turn_understanding_does_not_write_partner_income_requirement_to_self_income():
+    service = TurnUnderstandingService(_StubChatService())
+
+    result = service.analyze(
+        _make_input("想找月入2w+的男生", message_count=2)
+    )
+
+    assert "monthly_income" not in result.resolved_slots
+    assert result.resolved_slots["partner_gender_preference"] == "男"
+    assert result.resolved_slots["partner_requirement"] == "收入2万以上"
+
+
+def test_turn_understanding_keeps_self_income_in_mixed_intro_with_partner_income_preference():
+    service = TurnUnderstandingService(_StubChatService())
+
+    result = service.analyze(
+        _make_input("我月入20k+，想找月入2w+的男生", message_count=2)
+    )
+
+    assert result.resolved_slots["monthly_income"] == "20k+"
+    assert result.resolved_slots["partner_gender_preference"] == "男"
+    assert result.resolved_slots["partner_requirement"] == "收入2万以上"
 
 
 def test_turn_understanding_extracts_simple_partner_requirement_from_oral_reply():
@@ -675,6 +1332,15 @@ def test_turn_understanding_extracts_simple_partner_requirement_from_polluted_sh
     assert service._extract_simple_partner_requirement("本科，我温柔 点") == "温柔"  # noqa: SLF001
 
 
+def test_turn_understanding_extracts_composite_partner_requirement_from_matchmaking_opening():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_simple_partner_requirement(
+        "深圳有不 想了解看看96年能接受4岁上下年龄差，喜欢笑就更好了卡身高174+最好不要同财务行业 自己跟跟倾向于稳定行业男生可以匹配不"
+    )  # noqa: SLF001
+
+    assert extracted == "年龄上下4岁，爱笑，身高至少174，不要同财务行业，稳定行业"
+
+
 def test_turn_understanding_guard_blocks_age_pollution_in_partner_requirement_height_context():
     service = TurnUnderstandingService(_StubChatService())
     guarded = service._apply_extraction_guards(  # noqa: SLF001
@@ -685,6 +1351,26 @@ def test_turn_understanding_guard_blocks_age_pollution_in_partner_requirement_he
     assert guarded["partner_requirement"] == "身高180cm"
     assert "age" not in guarded
     assert "age_label" not in guarded
+
+
+def test_turn_understanding_guard_blocks_age_pollution_in_income_context():
+    service = TurnUnderstandingService(_StubChatService())
+    guarded = service._apply_extraction_guards(  # noqa: SLF001
+        {"age": "20"},
+        "我月薪20万",
+        last_response="你现在月收入大概在哪个区间呀？",
+    )
+    assert "age" not in guarded
+
+
+def test_turn_understanding_guard_keeps_income_in_income_context():
+    service = TurnUnderstandingService(_StubChatService())
+    guarded = service._apply_extraction_guards(  # noqa: SLF001
+        {"monthly_income": "2万"},
+        "我月薪2万",
+        last_response="你现在月收入大概在哪个区间呀？",
+    )
+    assert guarded["monthly_income"] == "2万"
 
 
 def test_turn_understanding_analyze_treats_numeric_height_reply_as_partner_requirement_not_age():
@@ -781,6 +1467,72 @@ def test_turn_understanding_guard_resolves_birth_year_and_marital_status_compoun
     )
     assert guarded["age_label"] == "98年"
     assert guarded["marital_status"] == "离异"
+
+
+def test_turn_understanding_prefers_self_birth_year_and_partner_age_preference_in_same_message():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(_make_input("95想找90后都可以有不", message_count=3))
+
+    assert result.resolved_slots["age_label"] == "95年"
+    assert result.resolved_slots["age"].isdigit()
+    assert "90后" in str(result.resolved_slots.get("partner_requirement") or "")
+
+
+def test_turn_understanding_occupation_short_answer_under_context_accepts_clean_industry_token():
+    service = TurnUnderstandingService(_StubChatService())
+    guarded = service._apply_extraction_guards(  # noqa: SLF001
+        {},
+        "新能源",
+        last_response="原来是本科呀，那你现在做什么工作的呀？",
+    )
+
+    assert guarded["occupation"] == "新能源"
+
+
+def test_turn_understanding_extracts_occupation_and_income_from_compound_followup_answer():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input(
+            "新能源，年薪大概20+",
+            message_count=3,
+            last_response="有的哦，我们平台也有不少在香港工作生活的优质单身资源~ 对啦，你现在是做哪方面工作的呀，大概收入在什么区间呢？",
+        )
+    )
+
+    assert result.resolved_slots["occupation"] == "新能源"
+    assert "20" in str(result.resolved_slots["monthly_income"])
+    assert result.subtype == "multi_slot_compound"
+
+
+def test_turn_understanding_does_not_treat_medical_industry_intro_as_risk_guard():
+    service = TurnUnderstandingService(_StubChatService())
+    result = service.analyze(
+        _make_input("90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地", message_count=1)
+    )
+
+    assert result.primary_turn_type == "profile_answer"
+    assert result.subtype in {"multi_slot_compound", "single_slot_answer"}
+
+
+def test_turn_understanding_extracts_nurse_as_occupation_in_compact_self_intro():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_deterministic_profile_fields(  # noqa: SLF001
+        "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地"
+    )
+
+    assert extracted["occupation"] == "护士"
+    assert extracted["age_label"] == "90后"
+    assert extracted["partner_requirement"] == "同医疗体系，同在深圳发展，本地优先，比自己大"
+
+
+def test_turn_understanding_generalizes_compact_self_intro_with_preference_variants():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_deterministic_profile_fields(  # noqa: SLF001
+        "91 老师 硕士 想找体制内本地 年纪大点也行"
+    )
+
+    assert extracted["occupation"] == "老师"
+    assert extracted["age_label"] == "91后"
 
 
 def test_turn_understanding_guard_skips_birth_year_extraction_when_user_refuses_specific_year():

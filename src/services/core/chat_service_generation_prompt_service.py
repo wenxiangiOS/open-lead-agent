@@ -200,21 +200,63 @@ class ChatServiceGenerationPromptService:
         ).strip()
         return inferred_preference in {"男", "女"}
 
-    @staticmethod
-    def _detect_suspicious_profile_value(user_message: str) -> tuple[str, str]:
+    def _detect_suspicious_profile_value(self, user_message: str) -> tuple[str, str]:
         text = str(user_message or "").strip()
         if not text:
             return "", ""
 
-        age_match = re.search(r"(?:今年|我今年|年龄|岁数)?\s*(\d{1,4})\s*岁", text)
-        if age_match:
-            age_text = age_match.group(1)
+        extraction_service = getattr(self.host, "extraction_service", None)
+        numeric_analysis = {}
+        stable_self_age = None
+        if extraction_service is not None:
             try:
-                age_value = int(age_text)
-            except ValueError:
-                age_value = 0
-            if age_value <= 10 or age_value >= 120:
-                return "age", f"{age_text}岁"
+                numeric_analysis = extraction_service.analyze_numeric_semantics(text)
+                stable_self_age, _ = extraction_service.resolve_stable_self_age(
+                    user_message=text,
+                    resolved_age=None,
+                )
+            except Exception:
+                numeric_analysis = {}
+                stable_self_age = None
+
+        has_partner_age_role = bool(
+            (numeric_analysis.get("partner_age_gap_candidates") or [])
+            or (numeric_analysis.get("partner_age_range_candidates") or [])
+        )
+        if stable_self_age is not None and (stable_self_age <= 10 or stable_self_age >= 120):
+            return "age", f"{stable_self_age}岁"
+        if stable_self_age is None and not has_partner_age_role:
+            age_match = re.search(r"(?:今年|我今年|年龄|岁数)?\s*(\d{1,4})\s*岁", text)
+            if age_match:
+                age_text = age_match.group(1)
+                try:
+                    age_value = int(age_text)
+                except ValueError:
+                    age_value = 0
+                if age_value <= 10 or age_value >= 120:
+                    return "age", f"{age_text}岁"
+
+        for raw_height in numeric_analysis.get("height_candidates") or []:
+            raw_height_text = str(raw_height or "").strip()
+            if not raw_height_text:
+                continue
+            meter_match = re.match(r"^(\d(?:\.\d+)?)\s*米$", raw_height_text)
+            if meter_match:
+                try:
+                    meter_value = float(meter_match.group(1))
+                except ValueError:
+                    meter_value = 0.0
+                if meter_value <= 0.8 or meter_value >= 2.6:
+                    return "height", raw_height_text
+                continue
+            cm_match = re.match(r"^(\d{2,3})\s*(?:cm|厘米)?$", raw_height_text, re.IGNORECASE)
+            if cm_match:
+                try:
+                    height_value = int(cm_match.group(1))
+                except ValueError:
+                    height_value = 0
+                if height_value <= 80 or height_value >= 260:
+                    return "height", f"{cm_match.group(1)}cm"
 
         height_meter_match = re.search(r"(?:身高|高)\s*(\d(?:\.\d+)?)\s*米", text)
         if height_meter_match:
@@ -277,19 +319,19 @@ class ChatServiceGenerationPromptService:
             "第一次生成的话术就是最终展示话术，后续不会再改写。\n"
             "这轮必须满足：\n"
             "1. 先顺着当前上下文轻接一句，再自然追问，不要只做承接不提问。\n"
-            "2. 主问题只能围绕当前字段，不能问偏，不能改问别的主字段。\n"
+            "2. 主问题只能围绕当前字段，不能问偏，不能改问别的核心主字段。\n"
             "3. 问法要自然口语化，像真人顺着聊，不要模板腔，不要客服腔。\n"
             "4. 不要空话、废话，不要只说‘我记下了’就停住。\n"
             "5. 如果不是解释型重问，就不要硬塞一大段解释；解释只在确实需要时轻轻带一句。\n"
-            "6. 默认只完成这一轮该做的追问，不要超量追问。\n"
+            "6. 默认只完成这一轮该做的追问：最多1个核心问题；如果有相近中等字段需要带出，也只能自然拼接。\n"
         )
         if side_label:
             instruction += (
-                f"7. 这轮允许把“{side_label}”作为顺带字段自然融合，但主线仍然必须是“{main_label}”。\n"
-                "8. 如果顺带字段不够自然，就不要硬拼；总问题数最多两个，而且必须有明显衔接。\n"
+                f"7. 这轮允许把“{side_label}”作为相近顺带字段自然融合，但主线仍然必须是“{main_label}”。\n"
+                "8. 如果顺带字段不够自然，就不要硬拼；最多只保留1个核心问题，顺带字段必须和主线有明显衔接。\n"
             )
         else:
-            instruction += "7. 这轮只问当前主字段，不要额外再补第二个无关问题。\n"
+            instruction += "7. 这轮只问当前核心主字段，不要额外再补第二个无关问题。\n"
         return instruction
 
     @staticmethod

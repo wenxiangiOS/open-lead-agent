@@ -121,6 +121,7 @@ class ContactCollectionService:
         "留微信可以吗", "微信可以", "微信方便", "留微信行吗", "给微信可以吗",
         "我先给微信", "先给微信吧", "留微信吧",
         "用微信联系", "加微信", "微信联系", "用微信", "留个微信",
+        "微信可以不", "微信行不", "微信可不可以",
     ]
 
     # 电话拒绝偏好关键词（用户说电话不方便想用微信）
@@ -267,10 +268,23 @@ class ContactCollectionService:
 
         # === 优先级0: 用户主动提出联系方式偏好 ===
         if self.prefers_wechat_over_phone(user_message, profile):
+            profile.pending_contact_field = "phone"
+            profile.pending_contact_hint = "channel_switch"
             logger.info("[联系方式偏好] 用户拒绝电话但愿意留微信，切换到微信流程")
             return NextAction.ASK_WECHAT
 
         is_hk = self.is_hongkong_user(profile)
+
+        # 场景1.5: 电话流程中用户切到微信，微信已收后优先恢复电话
+        if (
+            not is_hk
+            and profile.wechat_collected
+            and not profile.phone_collected
+            and not profile.rejected_phone
+            and str(getattr(profile, "pending_contact_field", "") or "").strip() == "phone"
+            and str(getattr(profile, "pending_contact_hint", "") or "").strip() == "channel_switch"
+        ):
+            return NextAction.ASK_PHONE
 
         # 场景2: 微信被最终拒绝，尝试争取电话
         if profile.rejected_wechat and not profile.rejected_phone and not profile.phone_collected:
@@ -326,6 +340,11 @@ class ContactCollectionService:
 
             # === 优先级1.5: 微信已收集后，询问/争取电话 ===
             if profile.wechat_collected and not profile.phone_collected and not profile.rejected_phone:
+                if (
+                    str(getattr(profile, "pending_contact_field", "") or "").strip() == "phone"
+                    and str(getattr(profile, "pending_contact_hint", "") or "").strip() == "channel_switch"
+                ):
+                    return NextAction.ASK_PHONE
                 if profile.phone_ask_count == 0:
                     return NextAction.ASK_PHONE
                 elif profile.phone_ask_count < 2:
@@ -474,9 +493,18 @@ class ContactCollectionService:
             return False
 
         wants_wechat = any(keyword in user_message for keyword in self.WECHAT_INTENT_KEYWORDS)
+        if not wants_wechat:
+            return False
+
         explicit_contact_preference = any(keyword in user_message for keyword in self.CONTACT_PREFERENCE_KEYWORDS)
         refuses_phone = self._message_indicates_phone_refusal_preference(user_message)
-        return wants_wechat and (refuses_phone or explicit_contact_preference)
+        in_phone_flow = (
+            profile.phone_ask_count >= 1
+            and not profile.phone_collected
+            and not profile.rejected_phone
+            and not profile.wechat_collected
+        )
+        return refuses_phone or explicit_contact_preference or in_phone_flow
 
     def _is_soft_ack_without_contact(self, user_message: str) -> bool:
         message = (user_message or "").strip().lower()
@@ -583,16 +611,10 @@ class ContactCollectionService:
         - 用户主动提供某联系方式，导致上一轮预问的另一联系方式应视为未兑现
         """
         if contact_type == 'phone':
-            profile.phone_ask_count = max(0, int(profile.phone_ask_count or 0) - 1)
-            current_effective = int(getattr(profile, "phone_effective_ask_count", profile.phone_ask_count) or profile.phone_ask_count or 0)
-            profile.phone_effective_ask_count = max(0, current_effective - 1)
             if str(getattr(profile, "last_contact_request_type", "") or "").strip() == "phone":
                 profile.last_contact_request_type = None
             return
 
-        profile.wechat_ask_count = max(0, int(profile.wechat_ask_count or 0) - 1)
-        current_effective = int(getattr(profile, "wechat_effective_ask_count", profile.wechat_ask_count) or profile.wechat_ask_count or 0)
-        profile.wechat_effective_ask_count = max(0, current_effective - 1)
         if str(getattr(profile, "last_contact_request_type", "") or "").strip() == "wechat":
             profile.last_contact_request_type = None
 
@@ -621,9 +643,17 @@ class ContactCollectionService:
         if contact_type == 'phone':
             profile.phone_invalid_input_retry_count = 0
             profile.phone_invalid_input_closed = False
+            if str(getattr(profile, "pending_contact_field", "") or "").strip() == "phone":
+                profile.pending_contact_field = None
+                if str(getattr(profile, "pending_contact_hint", "") or "").strip() == "channel_switch":
+                    profile.pending_contact_hint = None
             return
         profile.wechat_invalid_input_retry_count = 0
         profile.wechat_invalid_input_closed = False
+        if str(getattr(profile, "pending_contact_field", "") or "").strip() == "wechat":
+            profile.pending_contact_field = None
+            if str(getattr(profile, "pending_contact_hint", "") or "").strip() == "channel_switch":
+                profile.pending_contact_hint = None
 
     # ==================== 拒绝检测方法 ====================
 
@@ -679,6 +709,8 @@ class ContactCollectionService:
         last_requested_type = str(getattr(profile, "last_contact_request_type", "") or "").strip()
         current_action = self.get_next_action(profile, "")
         action_value = getattr(current_action, "value", str(current_action))
+        current_phone_context = last_requested_type == "phone" or is_about_phone or action_value in {NextAction.ASK_PHONE.value, NextAction.PERSUADE_PHONE.value}
+        current_wechat_context = last_requested_type == "wechat" or is_about_wechat or action_value in {NextAction.ASK_WECHAT.value, NextAction.PERSUADE_WECHAT.value}
         has_active_contact_request_context = bool(
             last_requested_type in {"phone", "wechat"}
             or is_about_phone
@@ -686,6 +718,48 @@ class ContactCollectionService:
             or int(getattr(profile, "phone_ask_count", 0) or 0) > 0
             or int(getattr(profile, "wechat_ask_count", 0) or 0) > 0
         )
+
+        # 用户在电话语境里说“已经留了微信了/有微信了”，本质是在拒绝继续留电话，
+        # 不是在拒绝已提供的微信。
+        if (
+            general_refusal
+            and user_mentions_wechat
+            and wechat_collected
+            and not phone_collected
+            and current_phone_context
+            and any(marker in message_lower for marker in ("已经留了微信", "已经有微信", "都留微信", "留了微信", "有微信了"))
+        ):
+            wechat_refusal = False
+            phone_refusal = True
+
+        # 用户在电话语境里说“微信就可以/微信就行/留微信就好”，
+        # 本质也是拒绝继续留电话，而不是拒绝微信。
+        if (
+            user_mentions_wechat
+            and wechat_collected
+            and not phone_collected
+            and current_phone_context
+            and (
+                general_refusal
+                or any(
+                    marker in message_lower
+                    for marker in (
+                        "微信就可以",
+                        "微信就行",
+                        "微信就好",
+                        "微信可以",
+                        "留微信就好",
+                        "留微信就行",
+                        "微信联系就行",
+                        "微信联系就好",
+                        "微信就可以了",
+                        "微信就行了",
+                    )
+                )
+            )
+        ):
+            wechat_refusal = False
+            phone_refusal = True
 
         if phone_refusal:
             logger.info("[拒绝检测] 检测到显式电话拒绝")
@@ -716,10 +790,10 @@ class ContactCollectionService:
             elif user_mentions_phone:
                 logger.debug("[拒绝检测] 通用拒绝 + 明确提及电话，按电话拒绝处理")
                 result = self._handle_refusal(profile, 'phone', False)
-            elif last_requested_type == 'phone':
+            elif current_phone_context:
                 logger.debug("[拒绝检测] 使用最近一次真实展示的电话请求类型优先归因")
                 result = self._handle_refusal(profile, 'phone', False)
-            elif last_requested_type == 'wechat':
+            elif current_wechat_context:
                 logger.debug("[拒绝检测] 使用最近一次真实展示的微信请求类型优先归因")
                 result = self._handle_refusal(profile, 'wechat', False)
             elif has_active_contact_request_context and action_value in {NextAction.ASK_PHONE.value, NextAction.PERSUADE_PHONE.value}:

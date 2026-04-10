@@ -9,6 +9,22 @@ class ChatServiceFollowupPromptService:
     def __init__(self, host: Any) -> None:
         self.host = host
 
+    @staticmethod
+    def build_soft_occupation_ack_prefix(user_profile=None) -> str:
+        return ""
+
+    @staticmethod
+    def build_soft_occupation_confirmation_prompt(user_profile=None) -> str:
+        candidate = str(getattr(user_profile, "occupation_inference_candidate", "") or "").strip()
+        if not candidate or str(getattr(user_profile, "occupation", "") or "").strip():
+            return "我再确认一下，你现在主要做哪方面工作呀？"
+        variants = (
+            "你现在主要做哪方面工作的呀？",
+            "你平时主要是做哪块工作的呀？",
+            "你这边现在主要从事什么方向的工作呀？",
+        )
+        return variants[0]
+
     def build_local_field_fallback_prompt(
         self,
         field: Optional[str],
@@ -29,6 +45,8 @@ class ChatServiceFollowupPromptService:
             )
             if soft_confirmation:
                 return soft_confirmation
+        if field == "occupation":
+            return self.build_soft_occupation_confirmation_prompt(user_profile)
         return self.host.dialogue_expression_service.render_field_question(
             field,
             profile=user_profile,
@@ -108,7 +126,7 @@ class ChatServiceFollowupPromptService:
             "sex": "我再确认一下，你这边是男生还是女生呀？",
             "location": "我再确认一下，你现在主要在哪个城市生活呀？",
             "education": "我再确认一下，你大概是什么学历呀？",
-            "occupation": "我再确认一下，你现在主要做哪方面工作呀？",
+            "occupation": self.build_soft_occupation_confirmation_prompt(user_profile),
             "marital_status": "我再确认一下，你现在的感情状态方便说个大概吗？",
             "monthly_income": "我再轻问一句，你月收入大概在哪个区间？",
         }

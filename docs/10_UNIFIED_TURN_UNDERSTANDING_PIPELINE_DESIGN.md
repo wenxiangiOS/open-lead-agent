@@ -7,23 +7,23 @@
 1. `词库信号层`
 2. `语义归因层`
 3. `AI 上下文消歧层`
-4. `统一理解结果`
+4. `结构化提问状态层`
+5. `回复类型识别层`
+6. `字段许可层`
+7. `字段候选提取层`
+8. `字段互斥裁决层`
+9. `字段派生层`
+10. `统一落库前一致性校验层`
+11. `统一字段追问与恢复裁决层`
 
-在当前版本开始，统一理解主链正式补齐下游执行步骤：
-
-5. `上下文感知字段提取层`
-6. `字段互斥裁决层`
-7. `统一落库前一致性校验层`
-8. `统一字段追问与恢复裁决层`
-
-第一阶段明确保持以下逻辑不变：
+最终方案明确保持以下逻辑不变：
 
 - 开场白与 opening probe 策略保持现状
 - 核心字段 / 中等字段推进策略保持现状
 - 联系方式策略与状态机保持现状
 - 收尾与结束策略保持现状
 
-本方案只统一“这句话是什么意思”，不直接重写“下一步怎么推进”。
+本方案不只统一“这句话是什么意思”，还要把“这轮允许提哪些字段、哪些字段必须被拦、哪些字段最终能进入 resolved_slots”统一收口到一条主链。
 
 补充说明：
 
@@ -31,10 +31,12 @@
 - 它还必须成为字段提取的唯一上游输入
 - 后续字段提取、冲突裁决、落库校验，都必须服从统一理解结果
 - 不允许再出现“理解层已经知道这是联系方式回复，但字段层仍先把数字串提成年龄”的分叉执行
+- 不允许再出现“理解层已经知道 `90后` 属于 partner_requirement，但落库/展示层又把它补成用户自己的 age_label”这类跨 scope 污染
+- 字段提取、派生字段、落库与展示必须共享同一份结构化字段证据，不允许下游再基于整句文本自由回猜
 
 ## 为什么要新增独立模块
 
-当前项目中，单轮理解虽然已有 `turn_understanding_service`，但真实语义判断仍然分散在：
+当前项目中，单轮理解虽然已有 `turn_understanding_service`，但真实语义判断和字段最终裁决仍然分散在：
 
 - `TurnUnderstandingService`
 - `ChatService` 中的 FAQ / boundary / risk / contact context 判断
@@ -46,18 +48,23 @@
 
 - 同一句输入可能在多个模块被重复定性
 - 前面判断的结果可能被后面模块重新覆盖
+- 字段主提取权仍然落在旧 rule extractor 手里
 - 理解权和策略权耦合，导致问题难定位
 
-因此需要把“理解用户输入”做成独立模块，并让现有业务模块只消费统一结果。
+因此需要把“理解用户输入”做成独立模块，并让现有业务模块只消费统一结果；同时，字段识别与落库必须从“规则先抽、后面补救”升级为“上下文先解释、字段后裁决”。
 
 ## 总体设计
 
-新增模块目录：
+新增/扩展模块目录：
 
 - `src/modules/conversation_understanding/domain/models.py`
 - `src/modules/conversation_understanding/domain/lexical_signal_layer.py`
 - `src/modules/conversation_understanding/domain/semantic_understanding_layer.py`
 - `src/modules/conversation_understanding/domain/ai_context_disambiguation_layer.py`
+- `src/modules/conversation_understanding/domain/reply_act_classification_layer.py`
+- `src/modules/conversation_understanding/domain/field_permission_layer.py`
+- `src/modules/conversation_understanding/domain/field_arbitration_layer.py`
+- `src/modules/conversation_understanding/domain/field_derivation_layer.py`
 - `src/modules/conversation_understanding/domain/unified_turn_understanding_service.py`
 
 其中：
@@ -65,8 +72,13 @@
 - `词库信号层` 负责高召回 signal
 - `语义归因层` 负责字段级上下文理解
 - `AI 上下文消歧层` 负责冲突与低置信度场景
+- `结构化提问状态层` 负责把上一轮 AI 问法沉淀为机器可读状态
+- `回复类型识别层` 负责区分回答/纠正/反问/择偶表达/联系方式回复
+- `字段许可层` 负责先决定这轮允许哪些字段进入候选池
+- `字段互斥裁决层` 负责根据过滤后的字段候选重建最终 `resolved_slots`
+- `字段派生层` 负责基于已裁决字段证据生成 `age_label / birth_year / summary facets` 等派生结果
 - `统一理解服务` 负责编排三层并输出兼容旧系统的结果
-- `上下文感知字段提取层` 负责在理解结果约束下产出允许进入后续流程的字段
+- `字段候选提取层` 负责从原句中提取字段候选，但不再直接决定最终 resolved slots
 - `字段互斥裁决层` 负责处理 `phone/wechat` 与 `age/height/weight`、`sex` 与 `partner_gender_preference` 等冲突
 - `统一落库前一致性校验层` 负责最终兜底，阻止上下文不一致字段写入档案
 - `统一字段追问与恢复裁决层` 负责：
@@ -131,7 +143,7 @@
 }
 ```
 
-第一阶段为保证业务口径稳定，语义层继续复用现有 `TurnUnderstandingService` 作为主分析器，只把它封装成统一主链的一部分。
+当前阶段为保证业务口径稳定，语义层继续复用现有 `TurnUnderstandingService` 作为主分析器，但它不再拥有字段最终决定权，只作为 unified 主链中的一个语义来源。
 
 ### 3. AI 上下文消歧层
 
@@ -154,7 +166,46 @@
 
 这条规则优先于“仅靠全局开关控制 AI 是否启用”的老逻辑。
 
-### 4. 统一理解结果
+### 4. 结构化提问状态层
+
+生成层在每轮 AI 回复后，必须同步记录结构化状态，而不是只保存自然语言 `last_response`。
+
+建议最小结构：
+
+```json
+{
+  "question_intent": "profile_followup",
+  "asked_fields": ["monthly_income"],
+  "side_fields": ["occupation"],
+  "expected_scope": "self",
+  "allow_mixed_answer": true,
+  "resume_target": null
+}
+```
+
+作用：
+
+- 让“AI 上一轮到底在问什么”成为结构化真源
+- 下一轮理解时优先消费这份结构化状态，而不是回猜自然语言文案
+
+### 5. 回复类型识别层
+
+用户输入先不直接抽字段，先判断回复行为类型。
+
+第一批稳定分类至少包括：
+
+- `direct_answer`
+- `mixed_answer`
+- `off_target_answer`
+- `correction`
+- `new_question`
+- `preference_statement`
+- `contact_answer`
+- `soft_refusal`
+
+这一步是整个方案的关键。没有这层，系统仍然会不断陷入“AI 问 A，用户答了，但字段被规则抢成 B”的串槽问题。
+
+### 6. 统一理解结果
 
 统一理解结果是全项目唯一输入语义真源。
 
@@ -172,47 +223,60 @@
 
 不需要在第一阶段整体推翻重写。
 
-### 5. 上下文感知字段提取层
+### 7. 字段许可层
 
-这一步不再允许多个服务各自重新猜字段，必须统一收口到理解链之后。
+这一步先决定“这轮允许哪些字段进入候选池”，而不是先让 rule extractor 自由发挥。
 
-当前实现约束：
+输入：
 
-- `SemanticUnderstandingLayer` 在 unified 主链里优先调用“不带本地字段治理”的语义入口
-- 也就是 unified 主链拿到的是“原始语义结果”
-- 之后统一交给独立的字段治理层做：
-  - 上下文白名单
-  - 显式纠正优先
-  - 冲突裁决
-  - 最终字段拦截
+- 结构化提问状态
+- 回复类型
+- unified semantic result
+- 当前流程阶段
+- contact context
+- user_profile
 
-这样可以避免：
+输出：
 
-- `TurnUnderstandingService` 先本地治理一遍
-- `UnifiedTurnUnderstandingService` 再治理第二遍
-
-生产主链现在要求字段治理只在 unified 主链下游执行一次。
-
-核心原则：
-
-- 先得到最终 `primary_turn_type / subtype / secondary_signals`
-- 再决定这轮允许提哪些字段
-- 再决定这轮禁止提哪些字段
+- `allowed_fields`
+- `blocked_fields`
+- `priority_fields`
+- `allowed_scope`
 
 典型规则：
 
-- 如果当前是 `contact_answer` / `in_contact_flow=True`
-  - 优先提 `phone / wechat / invalid_contact_candidate`
-  - 禁止 `age / age_label / height / weight` 抢纯数字串
-- 如果当前是性别确认上下文
-  - 允许 `sex`
-  - 同时允许复合资料字段（例如 `occupation`）
-  - 不允许再退化成 `connective_opening`
-- 如果当前是异常值澄清上下文
-  - 只允许当前异常字段
-  - 不允许继续职业/收入/联系方式主线
+- 上一轮问 `monthly_income`，且本轮是 `direct_answer`
+  - 优先允许 `monthly_income`
+  - 禁止 `age / contact / partner_requirement` 抢答
+- 上一轮问 `monthly_income`，且本轮是 `mixed_answer`
+  - 允许 `monthly_income`
+  - 可顺带允许 `occupation / location`
+- 本轮是 `preference_statement`
+  - 允许 `partner_requirement / partner_gender_preference`
+  - 禁止 self profile 污染
+- 本轮是 `contact_answer`
+  - 只允许 `phone / wechat`
 
-### 6. 字段互斥裁决层
+### 8. 字段候选提取层
+
+这一步不再允许多个服务各自重新猜字段，必须统一收口到理解链之后。
+
+最终约束：
+
+- 旧的 deterministic / rule extractor 退化为“字段候选提取器”
+- 候选结构至少要包含：
+  - `field`
+  - `value`
+  - `scope`
+  - `confidence`
+  - `source_span`
+  - `source_text`
+  - `source_type`
+- 候选提取层不再直接决定最终 `resolved_slots`
+- `resolved_slots` 统一由 arbitration 层根据过滤后的候选重建
+- 任意候选一旦进入裁决链，后续层不得再脱离该候选的 `scope/source_span` 回头全文扫词
+
+### 9. 字段互斥裁决层
 
 字段提取后必须进入统一冲突裁决，不允许“谁先命中谁赢”。
 
@@ -226,7 +290,93 @@
 - `education` 与 `partner_requirement`
   - 明确教育语境优先 `education`
 
-### 7. 统一落库前一致性校验层
+补充约束：多数字长句必须先做数字语义角色归类，再进入字段互斥裁决。
+
+统一要求：
+
+- 不能把一句话里的多个数字直接平铺给多个字段抢占
+- 必须先区分数字的语义角色，再决定哪个字段可以消费该数字
+- 高风险流程切换不得绕开这层归类结果自行重新解析原句
+
+第一批需要稳定区分的数字角色至少包括：
+
+- `self_age_candidate`
+- `birth_year_candidate`
+- `partner_age_gap_candidate`
+- `partner_age_range_candidate`
+- `income_candidate`
+- `height_candidate`
+- `weight_candidate`
+- `contact_candidate`
+- `other_numeric_candidate`
+
+例如：
+
+- `我今年36，想找和我上下相差3岁的`
+  - `36` 应归类为 `self_age_candidate`
+  - `3` 应归类为 `partner_age_gap_candidate`
+- `我36，月薪2万，身高160`
+  - `36` 不允许被收入/身高字段消费
+  - `2万` 不允许被年龄字段消费
+  - `160` 不允许被收入字段消费
+
+数字角色归类完成后，各字段只允许消费属于自己的角色：
+
+- `age` 只消费 `self_age_candidate / birth_year_candidate`
+- 择偶年龄条件只消费 `partner_age_gap_candidate / partner_age_range_candidate`
+- `monthly_income` 只消费 `income_candidate`
+- `height / weight` 只消费对应体征数字
+- `phone / wechat` 只消费 `contact_candidate`
+
+补充约束：
+
+- 裁决层不仅输出平面 `resolved_slots`
+- 还必须输出与之对应的 `resolved_field_evidence`
+- 每个最终字段都必须能追溯到：
+  - `scope`
+  - `source_span`
+  - `source_text`
+  - `source_type`
+  - `confidence`
+- 这是后续字段派生、落库、展示的唯一真源
+
+### 10. 字段派生层
+
+这一步专门解决“理解对了，但派生标签/展示字段又错了”的问题。
+
+典型错误：
+
+- 语义层已经把 `95` 识别为 self 年龄线索
+- 也把 `90后都可以` 识别为 partner requirement
+- 但落库或展示层又回头扫整句，把 `90后` 贴成用户自己的 `age_label`
+
+为彻底禁止这类问题，统一约束如下：
+
+- 派生字段只能从已裁决字段证据生成
+- 不允许跨 scope 派生
+- 不允许从全文自由兜底补标签
+- 不允许从 partner 证据派生 self 字段
+- 不允许从 contact 证据派生 profile 字段
+
+第一批统一纳入派生层的字段包括：
+
+- `age_label`
+- `birth_year`
+- 年龄展示摘要
+- 其他依赖主字段重新格式化的 summary facets
+
+派生规则示例：
+
+- 若裁决结果存在 `self.age_label=95年`
+  - 展示层直接使用 `95年`
+- 若仅存在 `self.birth_year=1995`
+  - 可稳定派生 `95年`
+- 若仅存在 `self.age=31`
+  - 可展示 `31岁`
+- 不允许因为原句里另有 `partner_requirement=90后都可以`
+  - 就把 `90后` 反向补成用户自己的 `age_label`
+
+### 11. 统一落库前一致性校验层
 
 落库层不再承担“主判断”，只承担最后一致性兜底。
 
@@ -238,7 +388,36 @@
   - 结果里如果缺失 `sex`
   - 直接补回 `sex`
 
-### 8. 统一字段追问与恢复裁决层
+新增强约束：
+
+- 落库层禁止再基于整句文本为已裁决字段全文兜底补标签
+- 例如写入 `age` 时，不允许再从整句里自由扫描 `XX后/XX年` 给 self 补 `age_label`
+- 落库层只能消费：
+  - `resolved_slots`
+  - `resolved_field_evidence`
+  - `field_derivations`
+- 如果三者都没有产出某个派生字段，就宁可不写，也不能自由回猜
+
+### 12. 展示层约束
+
+展示层必须只消费落库后的结构化结果，不能重新做语义回推。
+
+统一约束：
+
+- 展示层禁止根据整句原文重新判断 `self / partner / contact`
+- 展示层禁止把 `31岁` 自由回推成 `90后` 并覆盖已有更细粒度标签
+- 展示层优先级固定为：
+  1. 已确认的 `self.age_label`
+  2. 已确认的 `self.birth_year`
+  3. 已确认的 `self.age`
+  4. 没有就不展示
+
+目标是保证：
+
+- 理解层裁决出来的 `scope`
+- 不会在 summary / profile 展示阶段再次被污染
+
+### 13. 统一字段追问与恢复裁决层
 
 这一步必须收口所有“下一句还追问什么”的判断，不允许再由多个模块各自猜主线。
 
@@ -298,10 +477,15 @@
 - 所有主入口不再直接调用 `TurnUnderstandingService.analyze(...)`
 - 统一改为调用 `UnifiedTurnUnderstandingService.analyze(...)`
 - `TurnUnderstandingService` 退化为统一理解模块内部的语义层依赖，不再作为外部主入口
+- `resolved_slots` 的最终生成权不再属于旧 deterministic extractor
+- 结构化提问状态必须成为下一轮字段识别的主上下文真源
+- 回复类型识别与字段许可必须成为字段层前置步骤
 
-## 第一阶段接入点
+## 实施阶段
 
-第一阶段只替换理解入口，现有业务推进逻辑不变。
+### 第一阶段接入点
+
+第一阶段先把主入口、状态写入和 unified 下游的字段许可打通，优先解决高频串槽问题。
 
 主要接入点：
 
@@ -312,11 +496,23 @@
 
 1. 所有主流程分析单轮输入都走统一理解服务
 2. 旧的 `turn_understanding_service` 仍保留，但只作为统一理解服务的内部依赖
-3. 后续模块先继续消费旧 `TurnUnderstandingResult`，降低迁移风险
+3. 结构化提问状态写入 `UserProfile`
+4. unified 主链新增回复类型识别与字段许可
+5. 关键高风险字段优先受 unified 字段许可控制：
+   - `monthly_income`
+   - `age`
+   - `location`
+   - `partner_requirement`
 
-## 第二阶段执行收口
+### 第二阶段执行收口
 
-当统一理解主链稳定后，主流程继续往“orchestration-only”收口：
+当统一理解主链稳定后，继续把文本字段主提取权从旧 rule extractor 手里收回：
+
+- `occupation`
+- `education`
+- `marital_status`
+
+同时主流程继续往“orchestration-only”收口：
 
 - `ChatService.prepare_turn_execution(...)`
   统一承接：
@@ -416,6 +612,10 @@ UnifiedTurnUnderstandingResult(
     ai_applied: bool,
     ai_result_used: bool,
     decision_source: str,
+    reply_act: str,
+    allowed_fields: set[str],
+    resolved_field_evidence: list[ResolvedFieldEvidence],
+    field_derivations: dict[str, str],
     notes: list[str],
 )
 ```
@@ -424,7 +624,26 @@ UnifiedTurnUnderstandingResult(
 
 - `semantic_result` 仍然复用现有结果结构
 - `decision_source` 用于标记本轮最终裁决来自 lexical / semantic / ai_disambiguation
+- `reply_act` 用于标记本轮回复行为类型
+- `allowed_fields` 用于标记 unified 下游最终允许进入候选池的字段集合
+- `resolved_field_evidence` 用于标记最终字段来自哪段文本、属于哪个 scope
+- `field_derivations` 用于标记诸如 `age_label / birth_year / summary facets` 这类只允许从已裁决证据生成的派生结果
 - `notes` 用于调试与观测
+
+建议新增证据结构：
+
+```python
+ResolvedFieldEvidence(
+    field: str,
+    value: str,
+    scope: str,
+    source_span: str,
+    source_text: str,
+    confidence: float,
+    source_type: str,
+    derived_from: str | None = None,
+)
+```
 
 ## 第一阶段短路规则
 
@@ -469,6 +688,10 @@ UnifiedTurnUnderstandingResult(
    - 联系方式关键转接
    - 收尾 / withdraw
    - 核心字段是否继续追问
+7. 当前结果会直接触发高风险短路或结束态，且原句存在多个数字语义角色：
+   - 例如 `我今年36，想找和我相差3岁的`
+   - 例如 `我23，想找比我大3岁的`
+   - 例如 `我93年，月薪2万，身高160`
 
 ### AI 介入后的职责边界
 
@@ -489,6 +712,37 @@ AI 不应直接决定：
 - 最终用户可见中文话术
 
 也就是说，AI 在这条管线里的职责是**语义消歧**，不是**表达层替身**。
+
+### 多数字长句与高风险短路约束
+
+从本版本开始，涉及年龄下限、结束态、限制态等高风险业务短路时，必须遵守以下约束：
+
+1. 高风险短路只能消费统一理解结果
+   - 例如 `age_under_limit` 必须优先读取统一理解链产出的 `resolved_slots.age`
+   - 不允许业务模块绕过统一理解结果，对原句重新裸解析数字
+
+2. 高风险短路前必须先看数字语义角色归类结果
+   - 如果同句同时存在 `self_age_candidate` 与 `partner_age_gap_candidate`
+   - 或存在多个可竞争年龄语义的数字片段
+   - 则不能直接进入结束态
+
+3. 命中数字角色冲突且将触发高风险流程时，必须升级到 AI 复核
+   - AI 只回答窄问题：
+     - 用户本人年龄是多少
+     - 哪些数字只是择偶年龄差/范围
+     - 是否允许触发该高风险短路
+   - AI 不负责最终话术，也不直接推进业务状态机
+
+4. 当前阶段不允许使用 fallback 裸猜数字参与高风险判断
+   - 如果统一理解结果不稳定
+   - 且 AI 复核也未形成明确结论
+   - 则不触发高风险短路，继续正常主流程
+
+这条约束的目标不是“让所有数字都必须经过 AI”，而是：
+
+- 普通长句仍然优先依赖规则层 + 语义层完成理解
+- 只有在多数字语义冲突且会触发高风险流程时，AI 才作为复核层介入
+- 高风险业务模块不再允许各自维护一套简化数字解析旁路
 
 ## 第二阶段：统一表达主链
 

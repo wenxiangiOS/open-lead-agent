@@ -190,6 +190,65 @@
             white-space: pre-wrap;
         }
 
+        .message.ai .debug-panel {
+            max-width: 75%;
+            margin-top: 8px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            background: #f3f5f7;
+            border: 1px dashed #d7dde3;
+            color: #5f6b76;
+            font-size: 12px;
+            line-height: 1.5;
+            display: inline-block;
+            text-align: left;
+        }
+
+        .debug-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 6px 10px;
+        }
+
+        .debug-title {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            color: #7b8794;
+            margin-bottom: 6px;
+        }
+
+        .debug-row {
+            display: block;
+            min-width: 0;
+        }
+
+        .debug-label {
+            color: #7b8794;
+            font-size: 10px;
+            margin-bottom: 2px;
+        }
+
+        .debug-value {
+            color: #51606d;
+            word-break: break-word;
+        }
+
+        .debug-value.inference {
+            color: #8a94a3;
+            font-size: 11px;
+        }
+
+        @media (max-width: 420px) {
+            .message.ai .debug-panel {
+                max-width: 82%;
+            }
+
+            .debug-grid {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
         .input-area {
             padding: 15px;
             background: white;
@@ -325,7 +384,7 @@
                 <h1>💕 AI红娘小缘</h1>
             </div>
             <p>同城脱单联盟 · 温暖牵线</p>
-            <button class="toggle-info-btn" id="toggleInfoBtn">📋 隐藏已收集信息</button>
+            <button class="toggle-info-btn hidden" id="toggleInfoBtn">📋 显示已收集信息</button>
         </div>
 
         <div class="status" id="status">
@@ -365,10 +424,11 @@
 
     <script>
         const API_BASE = window.location.origin;
+        const DEBUG_INFO_PREF_KEY = 'mobile_final_show_debug_info';
         let accountId = '';
         let isSubmittingMessage = false;
         let hasStarted = false;
-        let showDebugInfo = true;  // 默认显示已收集信息
+        let showDebugInfo = false;  // 默认隐藏已收集信息
         let replyPollTimer = null;
         let replyEventSource = null;
         let replyStreamFallbackTimer = null;
@@ -401,8 +461,86 @@
             }
         }
 
+        function buildDebugRows(profile) {
+            if (!profile || typeof profile !== 'object') return [];
+            const occupationInferenceEvidence =
+                (profile.extraction_evidence && profile.extraction_evidence.occupation_inference_candidate) || null;
+            const formatOccupationDisplay = () => {
+                const occupation = profile.occupation;
+                if (occupation !== null && occupation !== undefined && occupation !== '') return `${occupation}`;
+                if (profile.occupation_inference_candidate !== null && profile.occupation_inference_candidate !== undefined && profile.occupation_inference_candidate !== '') {
+                    return '未确认';
+                }
+                return '';
+            };
+            const formatOccupationInferenceDisplay = () => {
+                if (profile.occupation !== null && profile.occupation !== undefined && profile.occupation !== '') return '';
+                const candidate = profile.occupation_inference_candidate;
+                if (candidate === null || candidate === undefined || candidate === '') return '';
+                const confidence = occupationInferenceEvidence && occupationInferenceEvidence.confidence;
+                const reason = occupationInferenceEvidence && occupationInferenceEvidence.reason;
+                const reasonLabelMap = {
+                    explicit_self_industry: '自述行业',
+                    same_industry_exclusion: '同行反推',
+                    same_work_alignment: '同行表述',
+                    industry_context_fallback: '语境弱推断',
+                };
+                const reasonLabel = reason ? (reasonLabelMap[reason] || reason) : '';
+                const parsed = Number(confidence);
+                if (Number.isFinite(parsed)) {
+                    const label = parsed >= 0.85 ? '高置信' : parsed >= 0.70 ? '中置信' : '低置信';
+                    const suffixParts = [parsed.toFixed(2), label];
+                    if (reasonLabel) suffixParts.push(reasonLabel);
+                    return `[推断] ${candidate} (${suffixParts.join(', ')})`;
+                }
+                return reasonLabel ? `[推断] ${candidate} (${reasonLabel})` : `[推断] ${candidate}`;
+            };
+            const fieldNames = {
+                sex: '性别',
+                last_name: '称呼',
+                age: '年龄',
+                height: '身高',
+                weight: '体重',
+                location: '坐标',
+                education: '学历',
+                occupation: '职业',
+                occupation_inference_candidate: '职业推断(调试)',
+                monthly_income: '月薪',
+                marital_status: '婚况',
+                contact: '联系方式',
+                partner_requirement: '择偶要求',
+            };
+
+            const skipped = profile.skipped_fields || {};
+            const rows = [];
+
+            Object.entries(fieldNames).forEach(([field, label]) => {
+                let value = '';
+                if (field === 'contact') {
+                    value = formatContactDisplay(profile);
+                } else if (field === 'occupation_inference_candidate') {
+                    value = formatOccupationInferenceDisplay() || '无';
+                } else if (field === 'occupation') {
+                    value = formatOccupationDisplay() || '未留';
+                } else if (profile[field] !== null && profile[field] !== undefined && profile[field] !== '') {
+                    value = `${profile[field]}`;
+                } else if (skipped[field]) {
+                    value = '跳过';
+                } else {
+                    value = '未留';
+                }
+                rows.push({
+                    label,
+                    value,
+                    tone: field === 'occupation_inference_candidate' ? 'inference' : 'normal',
+                });
+            });
+
+            return rows;
+        }
+
         // 添加消息
-        function addMessage(type, text) {
+        function addMessage(type, text, debugProfile = null) {
             const chatBox = document.getElementById('chatBox');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${type}`;
@@ -412,6 +550,43 @@
             bubble.textContent = text;
 
             messageDiv.appendChild(bubble);
+
+            if (type === 'ai' && debugProfile) {
+                const rows = buildDebugRows(debugProfile);
+                if (rows.length > 0) {
+                    const panel = document.createElement('div');
+                    panel.className = 'debug-panel';
+
+                    const title = document.createElement('div');
+                    title.className = 'debug-title';
+                    title.textContent = '已收集信息';
+                    panel.appendChild(title);
+
+                    const grid = document.createElement('div');
+                    grid.className = 'debug-grid';
+
+                    rows.forEach(({ label, value, tone }) => {
+                        const row = document.createElement('div');
+                        row.className = 'debug-row';
+
+                        const labelNode = document.createElement('div');
+                        labelNode.className = 'debug-label';
+                        labelNode.textContent = label;
+
+                        const valueNode = document.createElement('div');
+                        valueNode.className = `debug-value${tone === 'inference' ? ' inference' : ''}`;
+                        valueNode.textContent = value;
+
+                        row.appendChild(labelNode);
+                        row.appendChild(valueNode);
+                        grid.appendChild(row);
+                    });
+
+                    panel.appendChild(grid);
+                    messageDiv.appendChild(panel);
+                }
+            }
+
             chatBox.appendChild(messageDiv);
             chatBox.scrollTop = chatBox.scrollHeight;
         }
@@ -450,56 +625,15 @@
             return parts.length ? parts.join(', ') : '未留';
         }
 
-        function formatDebugInfo(profile) {
-            if (!profile || typeof profile !== 'object') return '';
-            const fieldNames = {
-                sex: '性别',
-                last_name: '称呼',
-                age: '年龄',
-                height: '身高',
-                weight: '体重',
-                location: '坐标',
-                education: '学历',
-                marital_status: '婚况',
-                monthly_income: '月薪',
-                occupation: '职业',
-                contact: '联系方式',
-                partner_requirement: '择偶要求',
-            };
-
-            const fieldAskCount = profile.field_ask_count || {};
-            const skipped = profile.skipped_fields || {};
-            const lines = ['\n[已收集信息]'];
-
-            Object.entries(fieldNames).forEach(([field, label]) => {
-                if (field === 'contact') {
-                    lines.push(`  ${label}: ${formatContactDisplay(profile)}`);
-                    return;
-                }
-                const value = profile[field];
-                if (value !== null && value !== undefined && value !== '') {
-                    lines.push(`  ${label}: ${value}`);
-                    return;
-                }
-                if (skipped[field]) {
-                    lines.push(`  ${label}: 跳过`);
-                    return;
-                }
-                lines.push(`  ${label}: 未留`);
-            });
-
-            return lines.join('\n');
-        }
-
         async function fetchDebugInfo(accountId) {
             try {
                 const resp = await fetch(`${API_BASE}/api/doubao/profile/${encodeURIComponent(accountId)}`);
                 if (!resp.ok) return '';
                 const data = await resp.json();
-                if (!data || !data.success || !data.profile) return '';
-                return formatDebugInfo(data.profile);
+                if (!data || !data.success || !data.profile) return null;
+                return data.profile;
             } catch (error) {
-                return '';
+                return null;
             }
         }
 
@@ -571,13 +705,11 @@
                 if (replies.length > 0) {
                     for (const item of replies) {
                         let text = item.message || '';
+                        let debugProfile = null;
                         if (showDebugInfo) {
-                            const debugText = await fetchDebugInfo(accountId);
-                            if (debugText) {
-                                text += debugText;
-                            }
+                            debugProfile = await fetchDebugInfo(accountId);
                         }
-                        addMessage('ai', text);
+                        addMessage('ai', text, debugProfile);
                         if (item.id && item.id > lastReplyId) {
                             lastReplyId = item.id;
                         }
@@ -634,17 +766,15 @@
 
             for (const item of replies) {
                 let text = item.message || '';
+                let debugProfile = null;
                 if (showDebugInfo) {
-                    const debugText = await fetchDebugInfo(accountId);
-                    if (debugText) {
-                        text += debugText;
-                    }
+                    debugProfile = await fetchDebugInfo(accountId);
                 }
                 if (!attachedElapsed && elapsedText) {
                     text += elapsedText;
                     attachedElapsed = true;
                 }
-                addMessage('ai', text);
+                addMessage('ai', text, debugProfile);
                 if (item.id && item.id > lastReplyId) {
                     lastReplyId = item.id;
                 }
@@ -776,6 +906,11 @@
         // 切换已收集信息显示
         document.getElementById('toggleInfoBtn').addEventListener('click', function() {
             showDebugInfo = !showDebugInfo;
+            try {
+                localStorage.setItem(DEBUG_INFO_PREF_KEY, showDebugInfo ? '1' : '0');
+            } catch (error) {
+                console.log('保存调试面板偏好失败:', error);
+            }
             const btn = document.getElementById('toggleInfoBtn');
             btn.textContent = showDebugInfo ? '📋 隐藏已收集信息' : '📋 显示已收集信息';
             btn.classList.toggle('hidden', !showDebugInfo);
@@ -835,7 +970,13 @@
         // 初始化
         accountId = generateUserId();
         document.getElementById('accountId').value = accountId;
-        document.getElementById('toggleInfoBtn').textContent = '📋 隐藏已收集信息';
+        try {
+            showDebugInfo = localStorage.getItem(DEBUG_INFO_PREF_KEY) === '1';
+        } catch (error) {
+            showDebugInfo = false;
+        }
+        document.getElementById('toggleInfoBtn').textContent = showDebugInfo ? '📋 隐藏已收集信息' : '📋 显示已收集信息';
+        document.getElementById('toggleInfoBtn').classList.toggle('hidden', !showDebugInfo);
         checkStatus();
         setInterval(checkStatus, 30000);
     </script>

@@ -1,7 +1,10 @@
 import logging
+import json
+import os
 import re
 from typing import Any, Dict, Optional, Tuple
 
+from src.core.exceptions import AIServiceException
 from src.models.user_profile import UserProfile
 from src.modules.conversation.domain.turn_understanding_models import (
     SlotCandidate,
@@ -58,10 +61,14 @@ class ChatServicePreGenerationResolutionService:
         user_profile: UserProfile,
         user_message: str,
         dialog_id: str,
-        parsed_age: Optional[int],
+        turn_understanding: TurnUnderstandingResult,
     ) -> Tuple[Optional[str], Optional[Dict[str, Any]], UserProfile]:
-        if parsed_age is not None and parsed_age < 24:
-            user_profile.age = parsed_age
+        stable_self_age = await self._resolve_short_circuit_self_age(
+            user_message=user_message,
+            understanding=turn_understanding,
+        )
+        if stable_self_age is not None and stable_self_age < 24:
+            user_profile.age = stable_self_age
             user_profile.age_under_limit = True
             user_profile.conversation_ended = True
             await self.host.user_service.save_user_profile(account_id, user_profile)
@@ -93,6 +100,103 @@ class ChatServicePreGenerationResolutionService:
             )
             return "divorce_incomplete", payload, user_profile
         return None, None, user_profile
+
+    async def _resolve_short_circuit_self_age(
+        self,
+        *,
+        user_message: str,
+        understanding: TurnUnderstandingResult,
+    ) -> Optional[int]:
+        resolved_age = str((understanding.resolved_slots or {}).get("age") or "").strip() or None
+        stable_self_age, numeric_analysis = self.host.extraction_service.resolve_stable_self_age(
+            user_message=user_message,
+            resolved_age=resolved_age,
+        )
+        if stable_self_age is None:
+            return None
+        if stable_self_age >= 24:
+            return stable_self_age
+        if not bool((numeric_analysis or {}).get("has_multiple_age_roles")):
+            return stable_self_age
+        reviewed_age = await self._review_high_risk_age_conflict_with_ai(
+            user_message=user_message,
+            stable_self_age=stable_self_age,
+            numeric_analysis=numeric_analysis,
+        )
+        return reviewed_age
+
+    async def _review_high_risk_age_conflict_with_ai(
+        self,
+        *,
+        user_message: str,
+        stable_self_age: int,
+        numeric_analysis: Dict[str, Any],
+    ) -> Optional[int]:
+        ai_service = getattr(self.host, "ai_service", None)
+        if ai_service is None:
+            logger.info("[高风险年龄复核] ai_service 不可用，跳过短路")
+            return None
+
+        system_prompt = (
+            "你是一个高风险年龄语义复核器。"
+            "请只输出一行 JSON，不要输出解释。"
+            '格式：{"self_age":36,"partner_age_gap":3,"allow_age_under_limit":false}'
+        )
+        prompt = (
+            f"用户原句：{str(user_message or '').strip() or '-'}\n"
+            f"统一理解链当前本人年龄：{stable_self_age}\n"
+            f"数字语义分析：{json.dumps(numeric_analysis, ensure_ascii=False)}\n"
+            "任务：判断用户本人年龄是多少；如果句中出现择偶年龄差/范围，也要区分出来；"
+            "只有在能明确确认用户本人年龄小于24岁时，allow_age_under_limit 才能为 true。"
+        )
+        try:
+            raw = await ai_service.generate_response(
+                prompt,
+                system_prompt,
+                temperature=0.0,
+                max_tokens=80,
+                timeout=self._resolve_high_risk_age_review_timeout(),
+            )
+        except AIServiceException as exc:
+            logger.warning("[高风险年龄复核] AI 复核失败，跳过短路: %s", exc)
+            return None
+
+        parsed = self._parse_json_payload(raw)
+        if not parsed:
+            logger.warning("[高风险年龄复核] AI 返回无法解析，跳过短路: %s", raw)
+            return None
+
+        allow = bool(parsed.get("allow_age_under_limit"))
+        reviewed_age = self.host.extraction_service._parse_age(parsed.get("self_age"))  # noqa: SLF001
+        if allow and reviewed_age is not None and reviewed_age < 24:
+            logger.info("[高风险年龄复核] AI 确认用户年龄=%s，允许 age_under_limit", reviewed_age)
+            return reviewed_age
+        logger.info("[高风险年龄复核] AI 未确认低龄，跳过短路")
+        return None
+
+    @staticmethod
+    def _resolve_high_risk_age_review_timeout() -> float:
+        try:
+            timeout = float(os.getenv("HIGH_RISK_AGE_REVIEW_TIMEOUT_SECONDS", "8"))
+        except (TypeError, ValueError):
+            timeout = 8.0
+        return max(1.0, timeout)
+
+    @staticmethod
+    def _parse_json_payload(raw: str) -> Optional[Dict[str, Any]]:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", text)
+            if not match:
+                return None
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                return None
 
     def _resolve_divorce_confirmation_state(
         self,

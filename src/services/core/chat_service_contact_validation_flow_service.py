@@ -269,7 +269,7 @@ class ChatServiceContactValidationFlowService:
                 await self.host._mark_remaining_fields_as_skipped(account_id, user_profile)
                 collection_result["ending_info"] = self.host.ending_service.build_ending_info("normal_complete", user_profile)
                 await self.host.user_service.save_user_profile(account_id, user_profile)
-                return ai_response
+                return self.host._get_contact_terminal_or_resume_response(user_profile, str(user_message or ""))
 
             if self.host.contact_service.is_contact_complete(user_profile):
                 self.host.contact_service.clear_contact_context_state(user_profile)

@@ -280,14 +280,13 @@ class ChatServicePreparationService:
         turn_decision: TurnDecision,
         turn_understanding: TurnUnderstandingResult,
         message_count: int,
-        parsed_age: Optional[int],
     ) -> tuple[Optional[str], Optional[Dict[str, Any]], UserProfile]:
         route_name, payload, user_profile = await self.pre_generation_resolution_service.maybe_build_resolution_short_circuit_payload(
             account_id=account_id,
             user_profile=user_profile,
             user_message=user_message,
             dialog_id=dialog_id,
-            parsed_age=parsed_age,
+            turn_understanding=turn_understanding,
         )
         if route_name is not None and payload is not None:
             return route_name, payload, user_profile

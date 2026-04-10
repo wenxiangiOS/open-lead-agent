@@ -6,6 +6,8 @@
 
 import logging
 import os
+import re
+from typing import Optional
 
 from src.services.data.user_service import UserService
 
@@ -148,25 +150,46 @@ class AskTrackingService:
     def __init__(self, user_service: UserService):
         self.user_service = user_service
 
+    @staticmethod
+    def _extract_question_text(ai_response: str) -> str:
+        text = str(ai_response or "").strip()
+        if not text:
+            return ""
+        clauses = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("<"):
+                continue
+            parts = re.split(r"[。！？!?]", line)
+            for part in parts:
+                clause = part.strip("，,；;：: ")
+                if not clause:
+                    continue
+                if any(token in clause for token in ("？", "?", "吗", "呀", "呢")):
+                    clauses.append(clause)
+        return " ".join(clauses) if clauses else text
+
     async def track_ai_asked_fields(self, account_id: str, ai_response: str) -> None:
         """追踪 AI 询问的字段。"""
         from src.config.settings import get_field_keywords
 
         field_keywords = get_field_keywords()
+        question_text = self._extract_question_text(ai_response)
         is_asking_partner_requirement = any(
-            kw in ai_response for kw in self.PARTNER_REQUIREMENT_CONTEXT_KEYWORDS
+            kw in question_text for kw in self.PARTNER_REQUIREMENT_CONTEXT_KEYWORDS
         )
 
         asked_fields = []
         ai_response_lower = ai_response.lower()
+        question_text_lower = question_text.lower()
 
         if is_asking_partner_requirement:
             asked_fields.append('partner_requirement')
 
-        if any(pattern in ai_response for pattern in self.LOCATION_PATTERNS):
+        if any(pattern in question_text for pattern in self.LOCATION_PATTERNS):
             asked_fields.append('location')
 
-        if any(pattern in ai_response for pattern in self.OCCUPATION_PATTERNS):
+        if any(pattern in question_text for pattern in self.OCCUPATION_PATTERNS):
             asked_fields.append('occupation')
 
         for field, keywords in field_keywords.items():
@@ -179,10 +202,24 @@ class AskTrackingService:
             if field in asked_fields:
                 continue
 
+            explicit_field_patterns = {
+                "sex": [r"(男生还是女生|女生还是男生|性别)"],
+                "age": [r"(多大|几岁|年龄|哪一年的|几几年|哪年出生|出生年份)"],
+                "education": [r"(学历|毕业院校|读到什么)"],
+                "occupation": [r"(做什么工作的|从事什么工作|做哪方面工作|职业是什么|做哪行)"],
+                "location": [r"(常住在哪|住在哪|在哪个城市|在哪座城市|在哪里工作生活|现在在哪)"],
+                "marital_status": [r"(婚况|感情状态|现在单身吗|目前单身吗|离异|未婚|已婚)"],
+                "monthly_income": [r"(月收入|月薪|收入大概|工资大概|收入区间|薪资)"],
+            }
+            if any(re.search(pattern, question_text, re.IGNORECASE) for pattern in explicit_field_patterns.get(field, [])):
+                asked_fields.append(field)
+                continue
+
             for keyword in keywords:
                 if field == 'occupation' and keyword == '工作':
                     continue
-                if keyword in ai_response_lower or keyword in ai_response:
+                haystack = question_text_lower if keyword == keyword.lower() else question_text
+                if keyword in haystack:
                     asked_fields.append(field)
                     break
 
@@ -213,8 +250,8 @@ class AskTrackingService:
             if field == 'contact':
                 phone_keywords = ['电话', '手机号', '号码']
                 wechat_keywords = ['微信']
-                asked_phone = any(kw in ai_response_lower for kw in phone_keywords)
-                asked_wechat = any(kw in ai_response_lower for kw in wechat_keywords)
+                asked_phone = any(kw in question_text_lower for kw in phone_keywords)
+                asked_wechat = any(kw in question_text_lower for kw in wechat_keywords)
                 if asked_phone or asked_wechat:
                     logger.debug("[智能追问] 检测到联系方式询问，由 ContactCollectionService 管理")
                     continue

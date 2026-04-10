@@ -13,6 +13,46 @@ class ChatServiceTextCleanupService:
         self.host = host
 
     @staticmethod
+    def soften_absolute_promise_language(response: str) -> str:
+        text = str(response or "").strip()
+        if not text:
+            return text
+
+        phrase_replacements = (
+            (r"绝对不会", "一般不会"),
+            (r"绝不会", "一般不会"),
+            (r"肯定不会", "一般不会"),
+            (r"一定不会", "一般不会"),
+            (r"完全不会", "一般不会"),
+            (r"保证不会", "尽量避免"),
+            (r"确保不会", "尽量避免"),
+            (r"绝对不", "一般不"),
+            (r"肯定不", "一般不"),
+            (r"一定不", "先不"),
+            (r"绝对会", "会"),
+            (r"肯定会", "会"),
+            (r"一定会", "会"),
+        )
+        for pattern, replacement in phrase_replacements:
+            text = re.sub(pattern, replacement, text)
+
+        single_word_replacements = (
+            (r"绝对", "尽量"),
+            (r"肯定", "会"),
+            (r"一定", ""),
+            (r"保证", "尽量"),
+            (r"确保", "尽量"),
+        )
+        for pattern, replacement in single_word_replacements:
+            text = re.sub(pattern, replacement, text)
+
+        text = re.sub(r"尽量尽量", "尽量", text)
+        text = re.sub(r"会会", "会", text)
+        text = re.sub(r"先不先不", "先不", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    @staticmethod
     def sanitize_robotic_tone(response: str) -> str:
         """压掉明显的登记腔、客服腔和业务身份腔。"""
         text = str(response or "").strip()
@@ -163,6 +203,7 @@ class ChatServiceTextCleanupService:
         text = re.sub(r"^(?:了|啦|呀|呢|哈|啊)[。．]\s*", "", text)
         text = re.sub(r"([。！？!?])\s*(哈哈，原来|原来|这样的话|所以说)\s*$", r"\1", text)
         text = re.sub(r"^(哈哈，原来|原来|这样的话|所以说)\s*$", "", text)
+        text = ChatServiceTextCleanupService.soften_absolute_promise_language(text)
         text = re.sub(r"[，,。]{2,}", "。", text)
         text = re.sub(r"([。！？!?])([^\s])", r"\1 \2", text)
         text = re.sub(r"\s+", " ", text).strip(" ，,。")

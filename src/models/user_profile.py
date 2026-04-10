@@ -40,6 +40,7 @@ class UserProfile(BaseModel):
     marital_status: Optional[str] = Field(None, description="婚况（准核心字段）")
     monthly_income: Optional[str] = Field(None, description="月薪（月收入范围，中等字段）")
     occupation: Optional[str] = Field(None, description="职业（核心字段）")
+    occupation_inference_candidate: Optional[str] = Field(None, description="职业弱推断候选（不作为正式已收集职业）")
     contact: Optional[str] = Field(None, description="联系方式状态显示（核心字段）")
     phone: Optional[str] = Field(None, description="电话号码（单独存储）")
     wechat: Optional[str] = Field(None, description="微信号")
@@ -170,6 +171,10 @@ class UserProfile(BaseModel):
     last_asked_field: Optional[str] = Field(None, description="上一轮 AI 明确追问的字段（用于短答槽位绑定）")
     last_asked_side_field: Optional[str] = Field(None, description="上一轮 AI 顺带追问的字段（用于主次双答绑定）")
     last_asked_turn_index: Optional[int] = Field(None, description="上一轮追问的消息序号")
+    last_question_state: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="上一轮结构化提问状态（question_intent/asked_fields/side_fields/expected_scope/allow_mixed_answer/resume_target）",
+    )
     non_cooperation_turns: int = Field(default=0, description="连续不配合主流程的轮数")
     off_topic_turns: int = Field(default=0, description="连续偏离主流程的轮数")
     open_profile_attempts: int = Field(default=0, description="开放式补画像尝试次数")
@@ -373,6 +378,8 @@ class UserProfile(BaseModel):
                     validated = '女'
                 else:
                     validated = value
+            elif field_name == 'occupation_inference_candidate':
+                validated = self._normalize_occupation_value_for_candidate(value)
             else:
                 validated = value
 
@@ -383,9 +390,10 @@ class UserProfile(BaseModel):
                     import logging
                     logging.getLogger(__name__).warning(f"last_name 被设置为拼接字符串: {validated}")
                 setattr(self, field_name, validated)
-                self.collection_progress[field_name] = True
-                # 字段成功收集后，重置追问计数
-                self.reset_ask_count(field_name)
+                if field_name != 'occupation_inference_candidate':
+                    self.collection_progress[field_name] = True
+                    # 字段成功收集后，重置追问计数
+                    self.reset_ask_count(field_name)
                 if field_name == 'sex':
                     self.pending_sex_confirmation = None
                 if field_name == 'age':
@@ -404,6 +412,9 @@ class UserProfile(BaseModel):
                         self.pending_birth_year_bucket = None
                         self.birth_year_confirmation_closed = False
                         self.collection_progress['age'] = True
+
+                if field_name == 'occupation':
+                    self.occupation_inference_candidate = None
 
                 # 特殊处理：phone 和 wechat 字段收集成功后更新状态
                 if field_name == 'phone':
@@ -826,6 +837,30 @@ class UserProfile(BaseModel):
         self.last_asked_turn_index = None
         self.updated_at = datetime.now()
 
+    def set_last_question_state(self, state: Optional[Dict[str, Any]]) -> None:
+        normalized = dict(state or {})
+        normalized["asked_fields"] = [
+            str(item).strip()
+            for item in normalized.get("asked_fields", [])
+            if str(item).strip()
+        ]
+        normalized["side_fields"] = [
+            str(item).strip()
+            for item in normalized.get("side_fields", [])
+            if str(item).strip()
+        ]
+        expected_scope = str(normalized.get("expected_scope") or "").strip()
+        normalized["expected_scope"] = expected_scope or "self"
+        normalized["question_intent"] = str(normalized.get("question_intent") or "").strip() or "unknown"
+        normalized["resume_target"] = str(normalized.get("resume_target") or "").strip() or None
+        normalized["allow_mixed_answer"] = bool(normalized.get("allow_mixed_answer", False))
+        self.last_question_state = normalized
+        self.updated_at = datetime.now()
+
+    def clear_last_question_state(self) -> None:
+        self.last_question_state = {}
+        self.updated_at = datetime.now()
+
     def get_expected_field_for_short_answer(self, current_turn_index: int, max_gap: int = 1) -> Optional[str]:
         """
         获取短答应该优先解析的字段。
@@ -883,6 +918,7 @@ class UserProfile(BaseModel):
             "marital_status": self.marital_status,
             "monthly_income": self.monthly_income,
             "occupation": self.occupation,
+            "occupation_inference_candidate": self.occupation_inference_candidate,
             "contact": self.contact,
             "phone": self.phone,
             "wechat": self.wechat,
@@ -922,6 +958,7 @@ class UserProfile(BaseModel):
             "last_asked_field": self.last_asked_field,
             "last_asked_side_field": self.last_asked_side_field,
             "last_asked_turn_index": self.last_asked_turn_index,
+            "last_question_state": self.last_question_state,
             "pending_retry_field": self.pending_retry_field,
             "needs_bridge_back": self.needs_bridge_back,
             "last_side_topic_type": self.last_side_topic_type,
@@ -949,6 +986,7 @@ class UserProfile(BaseModel):
         turn_id: Optional[int],
         confidence: float,
         source: str,
+        reason: Optional[str] = None,
     ) -> None:
         """记录字段提取证据，便于回溯与评估融合质量。"""
         safe_confidence = max(0.0, min(1.0, float(confidence)))
@@ -958,6 +996,7 @@ class UserProfile(BaseModel):
             "turn_id": turn_id,
             "confidence": round(safe_confidence, 3),
             "source": source or "unknown",
+            "reason": str(reason or "").strip() or None,
             "updated_at": datetime.now().isoformat(),
         }
         self.updated_at = datetime.now()
@@ -1136,3 +1175,12 @@ class UserProfile(BaseModel):
             data['updated_at'] = datetime.fromisoformat(data['updated_at'])
 
         return cls(**data)
+
+    @staticmethod
+    def _normalize_occupation_value_for_candidate(value: Any) -> Optional[str]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        text = re.sub(r"[，,、。！？!?~～\s]+", "", text)
+        text = re.sub(r"(行业|相关|类工作|工作方向|方向)$", "", text)
+        return text or None

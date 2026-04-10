@@ -182,6 +182,12 @@ class UserProfile:
 
 - 如果用户明确表示电话不方便，但愿意改留微信，例如“电话不方便，留微信可以吗”，当轮应优先切换到微信流程。
 - 这类表达不等同于最终拒绝电话，而是联系方式偏好切换；后续在拿到微信后，仍可按现有规则再轻问一次电话。
+- 口语化表达如“微信可以不”“微信行不”“微信可不可以”按同一规则处理：
+  - 先暂停电话收集
+  - 当轮直接切到微信流程
+  - 不把电话记为最终拒绝
+  - 不额外增加电话有效询问次数
+  - 微信收集成功后，再恢复电话流程
 
 ### 4.2.1 主动拒绝规则（新增）
 
@@ -396,6 +402,7 @@ def is_hongkong_user(location: str) -> bool:
 表示联系方式流程当前所处阶段，例如：
 
 - `asking_phone`
+- `phone_paused_for_wechat_switch`
 - `phone_collected_wechat_pending`
 - `asking_wechat`
 - `contact_closed`
@@ -409,6 +416,23 @@ def is_hongkong_user(location: str) -> bool:
 - `ASK_WECHAT`
 - `PERSUADE_WECHAT`
 - `NONE`
+
+#### 渠道切换恢复规则（新增）
+
+当电话流程中用户表达：
+
+- `电话不方便，留微信可以吗`
+- `微信可以不`
+- `微信行不`
+
+按“联系方式渠道切换”处理，而不是电话拒绝：
+
+1. 当前轮暂停电话流程
+2. 直接进入 `ASK_WECHAT`
+3. `rejected_phone` 保持不变
+4. `phone_ask_count / phone_effective_ask_count` 不因这句切换话术额外增加
+5. 微信收集成功后，优先恢复一次电话流程
+6. 恢复电话时使用“微信已收后的补充电话”问法，而不是继续沿用电话说服态
 
 #### `contact_complete`
 
