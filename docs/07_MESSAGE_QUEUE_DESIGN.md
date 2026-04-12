@@ -1,21 +1,22 @@
 # 多次发送消息处理方案设计文档
 
 > 创建时间：2026-03-06
-> 最后更新：2026-03-19
+> 最后更新：2026-04-13
 > 状态：建议按本方案实施
 > 文档类型：正式技术方案
 
 ## 执行入口（只记这一个文档）
 
-后续无论是你本人还是其他模型协作，**只需要先打开本文件**，然后按下面 3 个入口执行：
+后续无论是你本人还是其他模型协作，**只需要先打开本文件**，然后按下面 4 个入口执行：
 
-1. 实现标准：优先遵循当前文档的 `零点一、2026-04-06 最终优化约束（职责边界收敛版）`，其余未冲突部分再遵循 `零、2026-03-18 最终实施基线`
-2. 当前进度：`docs/message_queue_status.yaml`
-3. 验收证据：`reports/mq/p0_acceptance_*.md`
+1. 若目标是“小红书短时间连发最终尽量只回一条”，优先遵循 `零点二、2026-04-12 小红书 latest-wins 完整方案（专家修订版）`
+2. 其余 MQ 通用边界与未冲突部分，再遵循 `零点一、2026-04-06 最终优化约束（职责边界收敛版）` 与 `零、2026-03-18 最终实施基线`
+3. 当前进度：`docs/message_queue_status.yaml`
+4. 验收证据：`reports/mq/p0_acceptance_*.md`
 
 协作口令（可直接复制给其他模型）：
 
-`先按 docs/07_MESSAGE_QUEUE_DESIGN.md 的“执行入口”“零点一”和“零”章节实施，再更新 docs/message_queue_status.yaml，并提交 reports/mq/p0_acceptance_*.md。`
+`先按 docs/07_MESSAGE_QUEUE_DESIGN.md 的“执行入口”和“零点二”章节实施；若零点二未覆盖，再遵循“零点一”和“零”；完成后更新 docs/message_queue_status.yaml，并提交 reports/mq/p0_acceptance_*.md。`
 
 ## 实施状态看板（跨模型协作必读）
 
@@ -70,12 +71,449 @@
 
 ## 零、2026-03-18 最终实施基线（给其他模型的强约束版本）
 
-本节是**实现优先级最高**的执行说明。若与本文其他段落存在细微冲突，以本节为准。
+本节是**历史实施基线**。若与 `零点二`、`零点一` 冲突，以 `零点二` 优先、`零点一` 次之；其余未冲突部分仍可继续参考本节。
+
+## 零点二、2026-04-12 小红书 latest-wins 完整方案（专家修订版）
+
+> 本节是面向“小红书用户短时间连续补发多条消息，但用户侧最终尽量只收到 1 条 AI 回复”的正式方案。  
+> 若与 `零点一`、`零`、`0.4 首版语义`、`0.4.1 后续真人化增强方案` 冲突，以本节为准。  
+> 2026-04-13 更新：本仓库已完成本节核心改造并通过专项验收；状态以 `docs/message_queue_status.yaml` 的 `latest_wins_xhs` 与 `reports/mq/latest_wins_acceptance_20260413.md` 为准。
+
+### 0.2.1 目标重定义
+
+针对小红书这类“用户喜欢连发补充”的平台，最终目标不应是“每条入站消息都尽快回”，而应是：
+
+1. 同一波连续输入，用户侧尽量只看到最后一条有效 AI 回复。
+2. 用户在 AI 生成期间继续补发时，旧回复若已被新输入覆盖，则不再发送。
+3. 不因只发最后一条回复而破坏资料收集、FAQ、联系方式、收尾等既有业务逻辑。
+4. 不因体验优化引入业务状态重复提交、计数漂移、历史重复写入。
+
+一句话原则：
+
+- 系统内部允许多次生成
+- 用户侧尽量只看到最后一条
+- 旧回复不发送
+- 旧状态不提交
+
+### 0.2.2 核心判定原则（latest-wins）
+
+本方案采用 `latest-wins`：
+
+1. **最新输入优先于旧草稿**
+   - 只要旧草稿覆盖范围之后又到达了新消息，旧草稿就失去发送资格。
+2. **发送资格晚于生成完成**
+   - “已经生成好”不等于“允许发送”。
+3. **业务提交晚于发送确认**
+   - 只有最终获胜的那一轮，才允许提交画像、历史、计数等业务副作用。
+4. **cancel 仍然是强失效信号**
+   - `cancel / 结束 / 反悔` 仍通过 `generation += 1` 直接让旧轮次失效。
+5. **普通补发也是覆盖信号**
+   - 即使不是 cancel，只要有更新消息到达，也会让旧草稿失去“最终发送资格”。
+
+### 0.2.3 架构边界（必须按此拆分）
+
+本方案必须把“生成”和“提交”拆开：
+
+- MQ 负责：
+  1. 接入、去重、排队
+  2. burst debounce
+  3. latest-wins 判定
+  4. 候选 outbox 管理
+  5. 发送前二次复核
+  6. 崩溃恢复、重试、观测
+
+- ChatService 负责：
+  1. 业务语义判断
+  2. FAQ / 联系方式 / 收尾等业务逻辑
+  3. 生成回复文本
+  4. 生成本轮业务状态变更草稿
+
+- Sender / Finalizer 负责：
+  1. 发送最终获胜回复
+  2. 发送成功后提交本轮业务状态变更
+  3. 推进已确认游标
+
+强约束：
+
+1. MQ 不能新增业务语义规则。
+2. MQ 可以决定“这轮结果是否还有资格发送与提交”。
+3. ChatService 可以继续做原有业务判断，但在 latest-wins 方案里不得直接写最终状态到真实存储。
+
+### 0.2.4 为什么不能只做 sender 丢弃旧回复
+
+只在 sender 层丢掉旧回复是不够的。
+
+原因：
+
+1. 当前 `ChatService` 不是纯函数，执行过程中会更新画像、历史、计数等状态。
+2. 如果旧轮次已经把业务状态写入真实存储，即使最终不发送，业务状态也已经漂移。
+3. 这样会出现：
+   - 电话/微信追问计数被多加
+   - 历史重复写入
+   - 收尾状态提前推进
+   - FAQ/主线恢复逻辑被旧轮污染
+
+因此本方案必须采用：
+
+- **先生成草稿**
+- **后确认仍然最新**
+- **最后发送并提交**
+
+### 0.2.5 主键模型（必须收敛）
+
+为避免同一账号下多个对话串线，本方案引入双主键：
+
+1. `conversation_key = account_id + "::" + (dialog_id or "_")`
+2. `profile_key = account_id`
+
+用途：
+
+- `conversation_key` 用于 MQ 排队、排序、latest-wins、outbox、恢复。
+- `profile_key` 用于沿用当前用户画像、资料收集、联系方式等业务状态。
+
+强约束：
+
+1. MQ session 不得再仅以 `account_id` 作为唯一编排主键。
+2. 同一 `account_id` 下不同 `dialog_id` 的消息不得合并到同一 burst。
+3. 若平台确实保证单账号只会有一个有效 dialog，也仍建议保留 `conversation_key`，避免未来接入方变化时重新拆库。
+
+### 0.2.6 burst 体验目标
+
+对“小红书连续补发”场景，burst 的定义是：
+
+1. 用户在较短时间内连续发送 2 到 N 条补充消息。
+2. 这些消息构成同一波输入。
+3. AI 应尽量等这一波收束后再回。
+4. 若 AI 已开始处理，但这一波仍未结束，则尽量只保留最后一条有效回复。
+
+推荐体验目标：
+
+1. 用户连续发 3 到 5 条，最终只收到 1 条回复。
+2. 用户刚补完最后一句后，首条有效回复不应明显超过 2 到 4 秒。
+3. 用户不应连续看到“上一条回复刚发出，下一条更完整回复又来了”的机器人感。
+
+### 0.2.7 session 状态模型（latest-wins 版）
+
+建议 session 最小字段改为：
+
+```json
+{
+  "conversation_key": "u123::d456",
+  "profile_key": "u123",
+  "version": 2,
+  "state": "IDLE",
+  "generation": 0,
+  "last_ack_seq": 0,
+  "max_enqueued_seq": 0,
+  "last_enqueue_at_ms": 0,
+  "first_enqueue_at_ms": 0,
+  "debounce_until_ms": 0,
+  "active_turn_id": "",
+  "active_start_seq": 0,
+  "active_end_seq": 0,
+  "pending_turn_id": "",
+  "pending_end_seq": 0,
+  "pending_generation": 0,
+  "fail_streak": 0,
+  "updated_at_ms": 0
+}
+```
+
+字段语义：
+
+1. `last_ack_seq`
+   - 不是“已经处理过的最后一条”。
+   - 而是“已经被最终确认发送或确认静默提交的最后一条”。
+2. `active_turn_id`
+   - 当前正在生成的轮次。
+3. `pending_turn_id`
+   - 当前已经生成完成、等待发送或等待最终提交确认的候选轮次。
+4. `pending_end_seq`
+   - 当前候选轮次覆盖到哪一条消息。
+
+强约束：
+
+1. latest-wins 方案下，不得再把 `last_consumed_seq` 当作最终确认游标。
+2. 只有最终获胜轮次完成提交后，才允许推进 `last_ack_seq`。
+
+### 0.2.8 TurnDraft 模型（必须新增）
+
+worker 生成完成后，不直接写最终 outbox 文本和最终业务状态，而是先产出 `TurnDraft`：
+
+```json
+{
+  "turn_id": "t_xxx",
+  "conversation_key": "u123::d456",
+  "profile_key": "u123",
+  "generation": 7,
+  "covered_start_seq": 21,
+  "covered_end_seq": 24,
+  "dialog_id": "d456",
+  "reply_text": "最终回复文本",
+  "mutation_set": {
+    "profile_patch": {},
+    "user_state_patch": {},
+    "history_appends": [],
+    "recent_response_patch": {},
+    "metrics_patch": {}
+  },
+  "created_at_ms": 0
+}
+```
+
+`mutation_set` 的含义：
+
+1. 当前轮次对画像的修改草稿
+2. 当前轮次对用户状态的修改草稿
+3. 当前轮次计划追加到历史的消息
+4. 当前轮次计划更新的近期回复
+5. 当前轮次需要记的业务指标
+
+强约束：
+
+1. `TurnDraft` 在 sender/finalizer 确认前不得提交到真实业务存储。
+2. `TurnDraft` 必须支持按 `turn_id` 幂等提交。
+
+### 0.2.9 TurnSandbox（必须新增）
+
+为最小化对现有 ChatService 的侵入，本方案要求新增 `TurnSandbox`：
+
+1. 允许 ChatService 正常读取真实画像与上下文。
+2. 拦截本轮所有写操作：
+   - `save_user_profile`
+   - `save_user_state`
+   - `add_message_to_history`
+   - 其他对话状态写入
+3. 将这些写操作收集为 `mutation_set`，而不是直接落库。
+
+设计目的：
+
+1. 保留现有 ChatService 的业务判断逻辑。
+2. 避免为 latest-wins 全量重写业务层。
+3. 把“生成结果”和“提交结果”明确分离。
+
+### 0.2.10 入站流程（必须原子）
+
+`enqueue_message()` 仍需一次事务完成：
+
+1. dedupe 检查
+2. dedupe 写入
+3. seq 自增
+4. 原文消息落库
+5. session 更新
+6. ready_users 调度
+7. 返回 `{accepted, state, seq}`
+
+与首版不同的点：
+
+1. session 主键应改为 `conversation_key`
+2. 普通消息只推进 `max_enqueued_seq`
+3. `cancel_like` 额外执行 `generation += 1`
+4. 生产环境不建议再依赖用户文案中的“好了/你回复吧”这类关键词做 `force_flush`
+5. 若保留 `force_flush`，也只能作为调试能力，默认关闭，不得作为小红书正式体验主策略
+
+### 0.2.11 worker 流程（latest-wins 版）
+
+`run_user_turn(conversation_key)` 必须按以下顺序：
+
+1. 获取会话锁
+2. 读取 session
+3. 若 `state != DEBOUNCING` 或尚未到点，则 reschedule 并退出
+4. 以 `start_seq = last_ack_seq + 1`、`end_seq = max_enqueued_seq` 启动本轮
+5. 将 session 置为 `RUNNING`
+6. 读取 `start_seq ~ end_seq` 全部原文消息
+7. 按顺序原文拼接
+8. 在 `TurnSandbox` 中执行 ChatService，产出 `TurnDraft`
+9. worker 完成后立即做**第一次 latest gate**
+10. 若草稿仍是最新，则写候选 outbox；否则直接丢弃草稿
+11. 根据 session 当前状态决定是否重新调度下一轮
+
+### 0.2.12 第一次 latest gate（worker 侧）
+
+worker 生成完成后，只要满足任一条件，就必须判定本轮失去发送资格：
+
+1. `current_session.generation != draft.generation`
+2. `current_session.max_enqueued_seq > draft.covered_end_seq`
+3. `current_session.active_turn_id != draft.turn_id`
+
+解释：
+
+1. 第 1 条表示被 cancel/结束语义打断。
+2. 第 2 条表示生成期间有更新消息进入，本轮已经不是“最新覆盖范围”。
+3. 第 3 条表示当前执行权已被恢复流程或其他轮次替换。
+
+处理动作：
+
+1. 不发送旧回复
+2. 不提交旧状态
+3. 不推进 `last_ack_seq`
+4. 若还有未确认消息，则重回 `DEBOUNCING`
+
+### 0.2.13 候选 outbox 与发送前静默窗口
+
+草稿通过 worker 侧 latest gate 后，不应立刻发送，而应进入候选 outbox：
+
+1. 写入 `mq:outbox:{job_id}`
+2. 记录：
+   - `turn_id`
+   - `generation`
+   - `covered_end_seq`
+   - `reply_text`
+   - `dialog_id`
+   - `mutation_set`
+3. 将 `next_retry_at_ms` 设为 `now + MQ_PRE_SEND_SILENCE_MS`
+
+`MQ_PRE_SEND_SILENCE_MS` 的目的：
+
+1. 防止“刚生成完，用户又补一句”的临界误发
+2. 让 sender 再观察一个极短窗口
+3. 与主 debounce 分工不同，不能替代主 debounce
+
+### 0.2.14 第二次 latest gate（sender/finalizer 侧）
+
+sender 真正发送前，必须再次读取 session；满足任一条件即 drop：
+
+1. `session.generation != job.generation`
+2. `session.pending_turn_id != job.turn_id`（若采用 pending 标记）
+3. `session.max_enqueued_seq > job.covered_end_seq`
+4. `session.last_ack_seq >= job.covered_end_seq`
+
+解释：
+
+1. 第 1 条防 cancel。
+2. 第 2 条防旧候选误发。
+3. 第 3 条防普通补发覆盖旧草稿。
+4. 第 4 条防重复发送或重复提交。
+
+### 0.2.15 发送与提交顺序（必须固定）
+
+最终顺序必须是：
+
+1. sender 对通过 latest gate 的候选 job 调下游发送接口
+2. 必须携带幂等键，建议 `client_msg_id = job_id`
+3. 只有下游明确返回成功后，才进入 commit
+4. commit `TurnDraft` 到真实业务存储
+5. 原子推进 `last_ack_seq = covered_end_seq`
+6. 清空 `pending_turn_id`
+7. `mark_outbox_done(job_id)`
+
+强约束：
+
+1. 不得在发送前就提交真实业务状态。
+2. 不得在发送失败时推进 `last_ack_seq`。
+3. commit 必须按 `turn_id` 幂等。
+
+### 0.2.16 空回复与业务静默
+
+若当前轮次的最终业务结果是合法空回复：
+
+1. 不发送 outbox 文本
+2. 但仍需做一次 `silent commit`
+3. 该 `silent commit` 仍需通过 latest gate
+4. 成功后仍可推进 `last_ack_seq`
+
+原因：
+
+1. 有些业务轮次“静默”本身就是正确行为
+2. 不能因为没有发文本，就让同一批消息永远处于未确认状态
+
+### 0.2.17 失败与恢复
+
+必须覆盖以下场景：
+
+1. **worker 崩溃，draft 尚未产出**
+   - `last_ack_seq` 未推进，恢复后重新生成
+2. **worker 产出 draft，但尚未写 outbox 就崩溃**
+   - draft 不视为已确认，恢复后可重算
+3. **outbox 已写，但 sender 尚未发送**
+   - 重启后从 outbox 恢复
+4. **发送成功，但 commit 前进程崩溃**
+   - 依赖下游幂等键重试发送，并补做 commit
+5. **commit 成功，但 mark_outbox_done 前崩溃**
+   - 依赖 `last_ack_seq >= covered_end_seq` 与 `turn_id` 幂等，防止重复提交与重复发送
+
+### 0.2.18 默认参数建议（小红书基线）
+
+推荐默认值：
+
+```python
+MQ_DEBOUNCE_MS = 1200
+MQ_DEBOUNCE_APPEND_MS = 500
+MQ_DEBOUNCE_MAX_MS = 2500
+MQ_PRE_SEND_SILENCE_MS = 400
+MQ_RUNNING_RECHECK_MS = 250
+MQ_WORKER_POLL_MS = 100
+MQ_SENDER_POLL_MS = 150
+MQ_MAX_PENDING_MESSAGES = 30
+MQ_OUTBOX_MAX_RETRIES = 8
+MQ_RUNNING_STALE_AFTER_MS = 120000
+MQ_SESSION_TTL_SECONDS = 604800
+MQ_DEDUPE_TTL_SECONDS = 86400
+```
+
+调优原则：
+
+1. debounce 用来接用户补发
+2. pre-send silence 用来防临界误发
+3. 两者都要短，但职责不同
+4. 不建议把体验完全建立在“用户说了一个结束词就立即 flush”上
+
+### 0.2.19 明确不做的事情
+
+本方案明确不做：
+
+1. 不在 MQ 层做 FAQ / 联系方式 / 收尾语义判断
+2. 不在 MQ 层总结、压缩、改写用户原话
+3. 不依赖用户文案中的“好了”“你回复吧”作为正式控制信号
+4. 不要求真正中断底层 LLM socket
+5. 不要求旧轮次一旦开始就必须发出去
+
+唯一允许的狭义控制信号：
+
+1. `cancel_like`
+2. 且仅用于 `generation += 1`
+3. 不得扩展为 FAQ / 顾虑 / 联系方式语义分流器
+
+### 0.2.20 验收标准（latest-wins 专项）
+
+以下全部通过，才算本节落地完成：
+
+1. 用户 2 秒内连续发 3 到 5 条，最终只收到 1 条 AI 回复。
+2. AI 生成中又补发普通消息，旧草稿不发送，最终只发覆盖最新输入的一条回复。
+3. AI 生成中发送 cancel，旧草稿不发送，且不提交旧状态。
+4. 合法空回复场景不发送文本，但能正确推进已确认游标。
+5. 同一 `account_id` 下不同 `dialog_id` 不串队列。
+6. send 成功后进程崩溃，重试不会导致用户侧重复可见回复。
+7. worker 崩溃恢复后，不会重复推进电话/微信追问计数、不会重复写历史。
+8. 历史、画像、近期回复等业务变更只由最终获胜 turn 提交一次。
+
+### 0.2.21 建议改造文件范围
+
+本节落地时，建议至少涉及：
+
+- 需要升级：
+  - `src/services/queue/message_models.py`
+  - `src/services/queue/queue_store.py`
+  - `src/services/queue/message_orchestrator.py`
+  - `src/workers/reply_sender_worker.py`
+  - `src/modules/conversation/application/process_chat_turn.py`
+
+- 建议新增：
+  - `src/services/queue/turn_draft_models.py`
+  - `src/services/queue/turn_sandbox.py`
+  - `src/services/queue/turn_commit_service.py`
+
+交付顺序建议：
+
+1. 先把 `account_id` 主键升级为 `conversation_key`
+2. 再引入 `last_ack_seq / pending_turn_id / covered_end_seq`
+3. 再拆出 `TurnDraft + TurnSandbox + TurnCommit`
+4. 最后把 sender 切为“发送 + commit finalizer”
 
 ## 零点一、2026-04-06 最终优化约束（职责边界收敛版）
 
 > 本节是在 `零、2026-03-18 最终实施基线` 之上的补充强约束。  
-> 若与本文其他段落冲突，以本节为准。  
+> 若与 `零点二` 冲突，以 `零点二` 为准；其余冲突再以本节为准。  
 > 目的：在不影响真人感、不影响资料收集逻辑的前提下，继续使用 MQ 方案。
 
 ### 0.1.1 总原则

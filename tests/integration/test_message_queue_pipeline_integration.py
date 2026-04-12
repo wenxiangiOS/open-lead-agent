@@ -202,8 +202,8 @@ async def _test_running_new_messages_trigger_next_turn_after_current_turn_finish
         }
     )
 
-    # Non-cancel messages during RUNNING should mark dirty=true and trigger the next turn
-    # after the current turn finishes, rather than stale-dropping the current turn.
+    # latest-wins 语义：RUNNING 期间普通补发会让当前轮次失去发送资格，
+    # 最终只保留覆盖“截至最新输入窗口”的一条回复。
     chat.release_first_call.set()
 
     await asyncio.sleep(0.7)
@@ -214,17 +214,16 @@ async def _test_running_new_messages_trigger_next_turn_after_current_turn_finish
 
     assert chat.questions == [
         "我来自深圳 好了",
-        "我今年35岁\n我想找一个深圳的男的",
+        "我来自深圳 好了\n我今年35岁\n我想找一个深圳的男的",
     ]
 
     jobs = list(store._memory_outbox.values())  # noqa: SLF001
     replies = [job.reply_text for job in jobs]
-    assert len(replies) == 2
-    assert any("我来自深圳 好了" in reply for reply in replies)
-    assert any("我今年35岁\n我想找一个深圳的男的" in reply for reply in replies)
+    assert len(replies) == 1
+    assert replies[0] == "ECHO:我来自深圳 好了\n我今年35岁\n我想找一个深圳的男的"
 
     metrics = await store.get_queue_metrics()
-    assert metrics["stale_drop_count"] == 0
+    assert metrics["stale_drop_count"] >= 1
 
 
 def test_worker_restart_can_resume_pending_messages():

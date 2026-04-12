@@ -1,6 +1,6 @@
 # Message Queue Runbook
 
-更新时间：2026-03-18
+更新时间：2026-04-13
 
 ## 1. Redis 故障应急
 
@@ -78,6 +78,9 @@
 3. 重复 `platformMsgId` 仅处理一次。
 4. 发送失败可重试，重试后可恢复。
 5. 背压命中时返回 `queue_full`，系统无雪崩。
+6. 小红书 latest-wins 参数核对：
+   - `MQ_FORCE_FLUSH_ENABLED=false`（生产默认关闭）
+   - `MQ_PRE_SEND_SILENCE_MS=400`（可按体验在 300~800 之间调优）
 
 
 ## 6. 生产联调 Smoke
@@ -99,6 +102,7 @@ python3 scripts/run_mq_p0_production_smoke.py --timeout-seconds 30 --report-file
 - 核心开关：`MQ_ENABLED`
 - 外发通道：`XHS_REPLY_API`, `XHS_REPLY_API_BACKUP`, `XHS_REPLY_TIMEOUT_SECONDS`
 - 聚合参数：`MQ_DEBOUNCE_MS`, `MQ_DEBOUNCE_APPEND_MS`, `MQ_DEBOUNCE_MAX_MS`
+- latest-wins 参数：`MQ_FORCE_FLUSH_ENABLED`（建议 false）, `MQ_PRE_SEND_SILENCE_MS`
 - 执行参数：`MQ_READY_BATCH_SIZE`, `MQ_WORKER_POLL_MS`, `MQ_RUNNING_RECHECK_MS`
 - 重试参数：`MQ_OUTBOX_MAX_RETRIES`, `MQ_SENDER_POLL_MS`
 - 背压：`MQ_MAX_PENDING_MESSAGES`

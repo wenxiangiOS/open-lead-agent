@@ -58,6 +58,7 @@ class QueueStore:
         self._memory_dedupe: Dict[str, int] = {}
         self._memory_metrics: Dict[str, int] = {}
         self._memory_delivered: Dict[str, List[dict]] = {}
+        self._memory_committed_turns: set[str] = set()
 
     @staticmethod
     def _now_ms() -> int:
@@ -126,22 +127,63 @@ class QueueStore:
     def _key(self, key: str) -> str:
         return redis_service._key(key)  # noqa: SLF001
 
+    @staticmethod
+    def conversation_key(account_id: str, dialog_id: Optional[str]) -> str:
+        dialog = str(dialog_id or "").strip() or "_"
+        return f"{account_id}::{dialog}"
+
+    @staticmethod
+    def profile_key_from_conversation(conversation_key: str) -> str:
+        if "::" in conversation_key:
+            return conversation_key.split("::", 1)[0]
+        return conversation_key
+
+    @staticmethod
+    def _ack_seq_from_raw(raw: dict) -> int:
+        if "last_ack_seq" in raw:
+            return int(raw.get("last_ack_seq", 0))
+        return int(raw.get("last_consumed_seq", 0))
+
+    @staticmethod
+    def _ack_seq(session: QueueSession) -> int:
+        return int(session.last_ack_seq)
+
     def _default_session(self, account_id: str, now_ms: Optional[int] = None) -> QueueSession:
-        return QueueSession(account_id=account_id, updated_at_ms=now_ms or self._now_ms())
+        return QueueSession(
+            account_id=account_id,
+            profile_key=self.profile_key_from_conversation(account_id),
+            version=2,
+            updated_at_ms=now_ms or self._now_ms(),
+        )
 
     def _to_session(self, account_id: str, raw: Optional[dict], now_ms: Optional[int] = None) -> QueueSession:
         if not raw:
             return self._default_session(account_id, now_ms)
+        version = int(raw.get("version", 1))
+        pending_turn_id = str(raw.get("pending_turn_id", ""))
+        last_consumed_seq = int(raw.get("last_consumed_seq", 0))
+        last_ack_seq = self._ack_seq_from_raw(raw)
+        # 兼容历史会话：仅当老版本且无待发送候选时，允许按历史游标补齐 ack。
+        if version < 2 and last_ack_seq == 0 and last_consumed_seq > 0 and not pending_turn_id:
+            last_ack_seq = last_consumed_seq
+            version = 2
         return QueueSession(
             account_id=account_id,
-            version=int(raw.get("version", 1)),
+            profile_key=str(raw.get("profile_key") or self.profile_key_from_conversation(account_id)),
+            version=version,
             state=raw.get("state", SESSION_IDLE),
             generation=int(raw.get("generation", 0)),
             debounce_until_ms=int(raw.get("debounce_until_ms", 0)),
             first_enqueue_at_ms=int(raw.get("first_enqueue_at_ms", 0)),
-            last_consumed_seq=int(raw.get("last_consumed_seq", 0)),
+            last_ack_seq=last_ack_seq,
+            last_consumed_seq=last_consumed_seq,
             max_enqueued_seq=int(raw.get("max_enqueued_seq", 0)),
             active_turn_id=raw.get("active_turn_id", ""),
+            active_start_seq=int(raw.get("active_start_seq", 0)),
+            active_end_seq=int(raw.get("active_end_seq", 0)),
+            pending_turn_id=pending_turn_id,
+            pending_end_seq=int(raw.get("pending_end_seq", 0)),
+            pending_generation=int(raw.get("pending_generation", 0)),
             dirty=bool(raw.get("dirty", False)),
             fail_streak=int(raw.get("fail_streak", 0)),
             updated_at_ms=int(raw.get("updated_at_ms", now_ms or self._now_ms())),
@@ -152,13 +194,16 @@ class QueueStore:
         if client is None:
             return self._enqueue_memory(msg, now_ms)
 
-        dedupe_key = self._key(f"mq:dedupe:{msg.account_id}:{msg.platform_msg_id}")
-        seq_key = self._key(f"mq:seq:{msg.account_id}")
-        msg_prefix = self._key(f"mq:msg:{msg.account_id}:")
-        session_key = self._key(f"mq:session:{msg.account_id}")
+        conversation_key = msg.conversation_key or msg.account_id
+        dedupe_key = self._key(f"mq:dedupe:{conversation_key}:{msg.platform_msg_id}")
+        seq_key = self._key(f"mq:seq:{conversation_key}")
+        msg_prefix = self._key(f"mq:msg:{conversation_key}:")
+        session_key = self._key(f"mq:session:{conversation_key}")
         ready_key = self._key("mq:ready_users")
 
         payload = {
+            "account_id": msg.account_id,
+            "conversation_key": conversation_key,
             "content": msg.content,
             "dialog_id": msg.dialog_id,
             "timestamp": msg.timestamp,
@@ -186,10 +231,11 @@ class QueueStore:
         local recheck_ms = tonumber(ARGV[8])
         local cancel_like = tonumber(ARGV[9])
         local force_flush = tonumber(ARGV[10])
-        local account_id = ARGV[11]
+        local conversation_key = ARGV[11]
         local max_pending = tonumber(ARGV[12])
         local priority_boost = tonumber(ARGV[13])
         local adaptive_enabled = tonumber(ARGV[14])
+        local profile_key = ARGV[15]
 
         if redis.call('EXISTS', dedupe_key) == 1 then
             local session_raw = redis.call('GET', session_key)
@@ -207,22 +253,37 @@ class QueueStore:
             s = cjson.decode(raw)
         else
             s = {
-                account_id = account_id,
-                version = 1,
+                account_id = conversation_key,
+                profile_key = profile_key,
+                version = 2,
                 state = 'IDLE',
                 generation = 0,
                 debounce_until_ms = 0,
                 first_enqueue_at_ms = 0,
+                last_ack_seq = 0,
                 last_consumed_seq = 0,
                 max_enqueued_seq = 0,
                 active_turn_id = '',
+                active_start_seq = 0,
+                active_end_seq = 0,
+                pending_turn_id = '',
+                pending_end_seq = 0,
+                pending_generation = 0,
                 dirty = false,
                 fail_streak = 0,
                 updated_at_ms = now_ms
             }
         end
 
-        local pending = (tonumber(s['max_enqueued_seq']) or 0) - (tonumber(s['last_consumed_seq']) or 0)
+        if not s['profile_key'] or tostring(s['profile_key']) == '' then
+            s['profile_key'] = profile_key
+        end
+
+        local base_ack = tonumber(s['last_ack_seq'])
+        if not base_ack then
+            base_ack = tonumber(s['last_consumed_seq']) or 0
+        end
+        local pending = (tonumber(s['max_enqueued_seq']) or 0) - base_ack
         if pending < 0 then
             pending = 0
         end
@@ -288,7 +349,7 @@ class QueueStore:
             if cancel_like == 1 or force_flush == 1 then
                 running_score = running_score - priority_boost
             end
-            redis.call('ZADD', ready_key, running_score, account_id)
+            redis.call('ZADD', ready_key, running_score, conversation_key)
         end
 
         s['max_enqueued_seq'] = seq
@@ -301,10 +362,14 @@ class QueueStore:
             if cancel_like == 1 or force_flush == 1 then
                 schedule_score = schedule_score - priority_boost
             end
-            redis.call('ZADD', ready_key, schedule_score, account_id)
+            redis.call('ZADD', ready_key, schedule_score, conversation_key)
         end
 
-        local new_pending = (tonumber(s['max_enqueued_seq']) or 0) - (tonumber(s['last_consumed_seq']) or 0)
+        local new_base_ack = tonumber(s['last_ack_seq'])
+        if not new_base_ack then
+            new_base_ack = tonumber(s['last_consumed_seq']) or 0
+        end
+        local new_pending = (tonumber(s['max_enqueued_seq']) or 0) - new_base_ack
         if new_pending < 0 then
             new_pending = 0
         end
@@ -329,10 +394,11 @@ class QueueStore:
             int(self._cfg("mq_running_recheck_ms", 300)),
             1 if msg.cancel_like else 0,
             1 if msg.force_flush else 0,
-            msg.account_id,
+            conversation_key,
             int(self._cfg("mq_max_pending_messages", 20)),
             int(self._cfg("mq_priority_boost_ms", 200)),
             1 if bool(self._cfg("mq_adaptive_debounce_enabled", False)) else 0,
+            msg.account_id,
         )
 
         code = int(ret[0])
@@ -355,23 +421,28 @@ class QueueStore:
 
     def _enqueue_memory(self, msg: IncomingMessage, now_ms: int) -> EnqueueResult:
         dedupe_expire = now_ms + self._dedupe_ttl() * 1000
-        dedupe_key = f"{msg.account_id}:{msg.platform_msg_id}"
+        conversation_key = msg.conversation_key or msg.account_id
+        dedupe_key = f"{conversation_key}:{msg.platform_msg_id}"
         if self._memory_dedupe.get(dedupe_key, 0) > now_ms:
-            session = self._memory_sessions.get(msg.account_id, self._default_session(msg.account_id, now_ms))
+            session = self._memory_sessions.get(conversation_key, self._default_session(conversation_key, now_ms))
             return EnqueueResult(False, True, session.state, 0, status="duplicate", pending=0)
         self._memory_dedupe[dedupe_key] = dedupe_expire
 
-        session = self._memory_sessions.get(msg.account_id, self._default_session(msg.account_id, now_ms))
-        pending = max(0, session.max_enqueued_seq - session.last_consumed_seq)
+        session = self._memory_sessions.get(conversation_key, self._default_session(conversation_key, now_ms))
+        session.profile_key = msg.account_id
+        ack_seq = self._ack_seq(session)
+        pending = max(0, session.max_enqueued_seq - ack_seq)
         max_pending = int(self._cfg("mq_max_pending_messages", 20))
         if pending >= max_pending:
             self._memory_metrics["queue_full_count"] = self._memory_metrics.get("queue_full_count", 0) + 1
             return EnqueueResult(False, False, session.state, 0, status="queue_full", pending=pending)
 
-        seq = self._memory_seq.get(msg.account_id, 0) + 1
-        self._memory_seq[msg.account_id] = seq
+        seq = self._memory_seq.get(conversation_key, 0) + 1
+        self._memory_seq[conversation_key] = seq
 
-        self._memory_msgs.setdefault(msg.account_id, {})[seq] = {
+        self._memory_msgs.setdefault(conversation_key, {})[seq] = {
+            "account_id": msg.account_id,
+            "conversation_key": conversation_key,
             "content": msg.content,
             "dialog_id": msg.dialog_id,
             "timestamp": msg.timestamp,
@@ -411,13 +482,14 @@ class QueueStore:
             session.dirty = True
 
         session.updated_at_ms = now_ms
-        self._memory_sessions[msg.account_id] = session
+        self._memory_sessions[conversation_key] = session
         score = session.debounce_until_ms if session.state == SESSION_DEBOUNCING else now_ms
         if msg.cancel_like or msg.force_flush:
             score -= int(self._cfg("mq_priority_boost_ms", 200))
-        self._memory_ready[msg.account_id] = score
+        self._memory_ready[conversation_key] = score
 
-        pending = max(0, session.max_enqueued_seq - session.last_consumed_seq)
+        ack_seq = self._ack_seq(session)
+        pending = max(0, session.max_enqueued_seq - ack_seq)
         return EnqueueResult(True, False, session.state, seq, status="queued", pending=pending)
 
     async def get_queue_metrics(self) -> Dict[str, int]:
@@ -427,7 +499,8 @@ class QueueStore:
             running = 0
             debouncing = 0
             for session in self._memory_sessions.values():
-                total_pending += max(0, session.max_enqueued_seq - session.last_consumed_seq)
+                ack_seq = self._ack_seq(session)
+                total_pending += max(0, session.max_enqueued_seq - ack_seq)
                 if session.state == SESSION_RUNNING:
                     running += 1
                 elif session.state == SESSION_DEBOUNCING:
@@ -457,9 +530,10 @@ class QueueStore:
             if not raw:
                 continue
             data = json.loads(raw)
+            ack_seq = self._ack_seq_from_raw(data)
             pending_depth += max(
                 0,
-                int(data.get("max_enqueued_seq", 0)) - int(data.get("last_consumed_seq", 0)),
+                int(data.get("max_enqueued_seq", 0)) - ack_seq,
             )
             state = data.get("state")
             if state == SESSION_RUNNING:
@@ -489,13 +563,69 @@ class QueueStore:
         client = await self._get_client()
         now_ms = self._now_ms()
         if client is None:
-            return self._memory_sessions.get(account_id, self._default_session(account_id, now_ms))
+            session = self._memory_sessions.get(account_id)
+            if session is not None:
+                return session
+            if "::" not in account_id:
+                prefix = f"{account_id}::"
+                candidates = [s for key, s in self._memory_sessions.items() if key.startswith(prefix)]
+                if candidates:
+                    candidates.sort(key=lambda item: item.updated_at_ms, reverse=True)
+                    return candidates[0]
+            return self._default_session(account_id, now_ms)
 
         raw = await client.get(self._key(f"mq:session:{account_id}"))
+        if not raw and "::" not in account_id:
+            resolved = await self.resolve_conversation_key(account_id)
+            if resolved != account_id:
+                raw = await client.get(self._key(f"mq:session:{resolved}"))
+                account_id = resolved
         session_dict = json.loads(raw) if raw else None
         return self._to_session(account_id, session_dict, now_ms)
 
+    async def resolve_conversation_key(self, account_or_conversation: str) -> str:
+        if "::" in account_or_conversation:
+            return account_or_conversation
+
+        account_id = account_or_conversation
+        client = await self._get_client()
+        if client is None:
+            candidates = [
+                (key, session.updated_at_ms)
+                for key, session in self._memory_sessions.items()
+                if key.startswith(f"{account_id}::")
+            ]
+            if not candidates:
+                return account_id
+            candidates.sort(key=lambda item: item[1], reverse=True)
+            return candidates[0][0]
+
+        pattern = self._key(f"mq:session:{account_id}::*")
+        best_key = None
+        best_updated_at = -1
+        async for key in client.scan_iter(match=pattern, count=200):
+            raw = await client.get(key)
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except Exception:
+                continue
+            updated_at = int(data.get("updated_at_ms", 0))
+            if updated_at > best_updated_at:
+                best_updated_at = updated_at
+                best_key = key
+
+        if not best_key:
+            return account_id
+        prefix = self._key("mq:session:")
+        if best_key.startswith(prefix):
+            return best_key[len(prefix):]
+        return best_key.rsplit(":", 1)[-1]
+
     async def save_session(self, session: QueueSession) -> None:
+        if not session.profile_key:
+            session.profile_key = self.profile_key_from_conversation(session.account_id)
         client = await self._get_client()
         if client is None:
             self._memory_sessions[session.account_id] = session
@@ -577,12 +707,15 @@ class QueueStore:
             await self.schedule_user(account_id, session.debounce_until_ms)
             return None
 
-        start_seq = session.last_consumed_seq + 1
+        ack_seq = self._ack_seq(session)
+        start_seq = ack_seq + 1
         end_seq = session.max_enqueued_seq
 
         if start_seq > end_seq:
             session.state = SESSION_IDLE
             session.active_turn_id = ""
+            session.active_start_seq = 0
+            session.active_end_seq = 0
             session.debounce_until_ms = 0
             session.first_enqueue_at_ms = 0
             session.updated_at_ms = now_ms
@@ -592,6 +725,8 @@ class QueueStore:
         turn_id = uuid.uuid4().hex
         session.state = SESSION_RUNNING
         session.active_turn_id = turn_id
+        session.active_start_seq = start_seq
+        session.active_end_seq = end_seq
         session.dirty = False
         session.fail_streak = 0
         session.updated_at_ms = now_ms
@@ -600,6 +735,7 @@ class QueueStore:
         return TurnContext(
             turn_id=turn_id,
             account_id=account_id,
+            profile_key=session.profile_key or self.profile_key_from_conversation(account_id),
             generation=session.generation,
             start_seq=start_seq,
             end_seq=end_seq,
@@ -632,18 +768,26 @@ class QueueStore:
             return True
         if session.active_turn_id != turn.turn_id:
             return True
+        if int(session.max_enqueued_seq) > int(turn.end_seq):
+            return True
         return False
 
     async def mark_turn_stale(self, account_id: str, turn: TurnContext, now_ms: int) -> None:
         await self.incr_metric("stale_drop_count")
         session = await self.get_session(account_id)
-        session.last_consumed_seq = max(session.last_consumed_seq, turn.end_seq)
+        generation_bumped = int(session.generation) != int(turn.generation)
+        if generation_bumped:
+            session.last_ack_seq = max(int(session.last_ack_seq), int(turn.end_seq))
+        session.last_consumed_seq = max(int(session.last_consumed_seq), int(turn.end_seq))
         session.active_turn_id = ""
+        session.active_start_seq = 0
+        session.active_end_seq = 0
         session.dirty = False
         session.fail_streak = 0
         session.updated_at_ms = now_ms
 
-        if session.last_consumed_seq < session.max_enqueued_seq:
+        ack_seq = self._ack_seq(session)
+        if ack_seq < session.max_enqueued_seq:
             session.state = SESSION_DEBOUNCING
             session.debounce_until_ms = now_ms + int(self._cfg("mq_running_recheck_ms", 300))
             session.first_enqueue_at_ms = now_ms
@@ -657,13 +801,15 @@ class QueueStore:
 
     async def finish_turn_success(self, account_id: str, turn: TurnContext, now_ms: int, has_more: bool) -> None:
         session = await self.get_session(account_id)
-        session.last_consumed_seq = max(session.last_consumed_seq, turn.end_seq)
+        session.last_consumed_seq = max(int(session.last_consumed_seq), int(turn.end_seq))
         session.active_turn_id = ""
+        session.active_start_seq = 0
+        session.active_end_seq = 0
         session.dirty = False
         session.fail_streak = 0
         session.updated_at_ms = now_ms
 
-        if has_more or session.last_consumed_seq < session.max_enqueued_seq:
+        if has_more:
             session.state = SESSION_DEBOUNCING
             session.debounce_until_ms = now_ms + int(self._cfg("mq_running_recheck_ms", 300))
             session.first_enqueue_at_ms = now_ms
@@ -678,6 +824,8 @@ class QueueStore:
     async def mark_turn_failed(self, account_id: str, turn: TurnContext, now_ms: int) -> None:
         session = await self.get_session(account_id)
         session.active_turn_id = ""
+        session.active_start_seq = 0
+        session.active_end_seq = 0
         session.state = SESSION_DEBOUNCING
         session.dirty = True
         session.fail_streak = max(0, int(session.fail_streak)) + 1
@@ -698,6 +846,13 @@ class QueueStore:
         await self.schedule_user(account_id, session.debounce_until_ms)
 
     async def write_outbox(self, job: OutboxJob) -> None:
+        session = await self.get_session(job.conversation_key)
+        session.pending_turn_id = job.turn_id
+        session.pending_end_seq = int(job.covered_end_seq)
+        session.pending_generation = int(job.generation)
+        session.updated_at_ms = self._now_ms()
+        await self.save_session(session)
+
         client = await self._get_client()
         if client is None:
             self._memory_outbox[job.job_id] = job
@@ -784,8 +939,89 @@ class QueueStore:
         await client.zadd(self._key("mq:outbox:ready"), {job_id: next_retry_at_ms})
 
     async def is_outbox_job_stale(self, job: OutboxJob) -> bool:
-        session = await self.get_session(job.account_id)
-        return int(session.generation) != int(job.generation)
+        conversation_key = job.conversation_key or (
+            job.account_id if "::" in str(job.account_id) else self.conversation_key(job.account_id, job.dialog_id)
+        )
+        session = await self.get_session(conversation_key)
+        ack_seq = self._ack_seq(session)
+        if int(session.generation) != int(job.generation):
+            return True
+        if int(session.max_enqueued_seq) > int(job.covered_end_seq):
+            return True
+        if session.pending_turn_id and session.pending_turn_id != job.turn_id:
+            return True
+        if ack_seq >= int(job.covered_end_seq):
+            return True
+        return False
+
+    async def on_outbox_stale_drop(self, job: OutboxJob, now_ms: int) -> None:
+        conversation_key = job.conversation_key or (
+            job.account_id if "::" in str(job.account_id) else self.conversation_key(job.account_id, job.dialog_id)
+        )
+        session = await self.get_session(conversation_key)
+        if session.pending_turn_id == job.turn_id:
+            session.pending_turn_id = ""
+            session.pending_end_seq = 0
+            session.pending_generation = 0
+        session.updated_at_ms = now_ms
+        ack_seq = self._ack_seq(session)
+        if ack_seq < int(session.max_enqueued_seq):
+            session.state = SESSION_DEBOUNCING
+            session.debounce_until_ms = now_ms + int(self._cfg("mq_running_recheck_ms", 300))
+            session.first_enqueue_at_ms = now_ms
+            await self.schedule_user(conversation_key, session.debounce_until_ms)
+        elif session.state != SESSION_RUNNING:
+            session.state = SESSION_IDLE
+            session.debounce_until_ms = 0
+            session.first_enqueue_at_ms = 0
+        await self.save_session(session)
+
+    async def finalize_turn_commit(self, job: OutboxJob, now_ms: int) -> bool:
+        conversation_key = job.conversation_key or (
+            job.account_id if "::" in str(job.account_id) else self.conversation_key(job.account_id, job.dialog_id)
+        )
+        session = await self.get_session(conversation_key)
+        if int(session.generation) != int(job.generation):
+            return False
+        if session.pending_turn_id and session.pending_turn_id != job.turn_id:
+            return False
+        if int(session.max_enqueued_seq) > int(job.covered_end_seq):
+            return False
+
+        session.last_ack_seq = max(int(session.last_ack_seq), int(job.covered_end_seq))
+        session.last_consumed_seq = max(int(session.last_consumed_seq), int(session.last_ack_seq))
+        session.pending_turn_id = ""
+        session.pending_end_seq = 0
+        session.pending_generation = 0
+        session.updated_at_ms = now_ms
+
+        if session.last_ack_seq < int(session.max_enqueued_seq):
+            session.state = SESSION_DEBOUNCING
+            session.debounce_until_ms = now_ms + int(self._cfg("mq_running_recheck_ms", 300))
+            session.first_enqueue_at_ms = now_ms
+            await self.schedule_user(conversation_key, session.debounce_until_ms)
+        elif session.state != SESSION_RUNNING:
+            session.state = SESSION_IDLE
+            session.debounce_until_ms = 0
+            session.first_enqueue_at_ms = 0
+
+        await self.save_session(session)
+        return True
+
+    async def is_turn_committed(self, turn_id: str) -> bool:
+        client = await self._get_client()
+        if client is None:
+            return turn_id in self._memory_committed_turns
+        key = f"mq:turn:committed:{turn_id}"
+        return bool(await client.exists(self._key(key)))
+
+    async def mark_turn_committed(self, turn_id: str) -> None:
+        client = await self._get_client()
+        if client is None:
+            self._memory_committed_turns.add(turn_id)
+            return
+        key = f"mq:turn:committed:{turn_id}"
+        await client.setex(self._key(key), self._session_ttl(), "1")
 
     async def append_delivered_reply(
         self,
@@ -881,6 +1117,8 @@ class QueueStore:
                 if session.state == SESSION_RUNNING and (now_ms - session.updated_at_ms) > stale_after_ms:
                     session.state = SESSION_DEBOUNCING
                     session.active_turn_id = ""
+                    session.active_start_seq = 0
+                    session.active_end_seq = 0
                     session.debounce_until_ms = now_ms + int(self._cfg("mq_running_recheck_ms", 300))
                     session.first_enqueue_at_ms = now_ms
                     recovered += 1
@@ -900,6 +1138,8 @@ class QueueStore:
                 continue
             data["state"] = SESSION_DEBOUNCING
             data["active_turn_id"] = ""
+            data["active_start_seq"] = 0
+            data["active_end_seq"] = 0
             data["debounce_until_ms"] = now_ms + int(self._cfg("mq_running_recheck_ms", 300))
             data["first_enqueue_at_ms"] = now_ms
             data["updated_at_ms"] = now_ms

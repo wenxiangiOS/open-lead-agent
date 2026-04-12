@@ -1,6 +1,6 @@
 version: 1
 project: message_queue_orchestration
-last_updated: "2026-04-08 11:31:00 +0800"
+last_updated: "2026-04-13 01:38:00 +0800"
 baseline_commit: "2bef0da"
 owner: "unassigned"
 
@@ -68,6 +68,35 @@ status:
     evidence:
       acceptance_report: "reports/mq/p2_acceptance_20260318.md"
       updated_by: "codex-gpt5"
+
+  latest_wins_xhs:
+    state: DONE
+    summary: "小红书 latest-wins 方案已落地：短时多条输入仅保留最终可见回复，且业务提交后置到最终获胜轮次"
+    checklist:
+      conversation_profile_key_split: true
+      turn_sandbox_deferred_mutation: true
+      sender_stale_gate_and_drop: true
+      sender_commit_and_finalize: true
+      silent_branch_precommit_stale_recheck: true
+      ack_cursor_uses_last_ack_seq: true
+      force_flush_and_pre_send_silence_config_exposed: true
+      force_flush_default_disabled: true
+      latest_wins_e2e_acceptance: true
+    evidence:
+      acceptance_report: "reports/mq/latest_wins_acceptance_20260413.md"
+      test_commands:
+        - "pytest -q -o addopts='' tests/integration/test_message_queue_latest_wins_commit_integration.py tests/integration/test_message_queue_pipeline_integration.py tests/integration/test_xhs_ingest_to_delivery_local_http.py"
+        - "pytest -q -o addopts='' tests/unit/test_queue_store.py tests/unit/test_message_orchestrator.py tests/unit/test_reply_sender_worker.py tests/unit/test_message_queue_worker.py"
+        - "pytest -q -o addopts='' tests/unit/test_message_orchestrator.py tests/unit/test_queue_intent_classifier.py"
+        - "pytest -q -o addopts='' tests/unit/test_process_chat_turn_use_case.py tests/unit/test_process_chat_turn_async_backfill.py tests/unit/test_chat_service_regressions.py"
+        - "pytest -q -o addopts='' tests/unit/test_app_mq_toggle.py tests/unit/test_xiaohongshu_ingest_route.py tests/unit/test_reply_delivery_service.py tests/unit/test_queue_intent_classifier.py"
+      test_results:
+        - "latest-wins 集成验收: 8 passed"
+        - "mq 核心单测回归: 29 passed"
+        - "orchestrator 配置闸门回归: 18 passed"
+        - "chat 主链路回归: 448 passed (11 warnings)"
+        - "mq 路由与开关回归: 10 passed"
+      updated_by: "codex-gpt5.4"
 
 rules:
   - "任何模型将 p0.state 置为 DONE 前，必须先提供 acceptance_report。"

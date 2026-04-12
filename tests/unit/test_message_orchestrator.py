@@ -1,4 +1,6 @@
 import asyncio
+import os
+import time
 
 from src.modules.shared.models.use_case_models import (
     IngestMessageCommand,
@@ -193,20 +195,28 @@ def test_empty_response_business_silent_metric():
 
 async def _test_empty_response_business_silent_metric():
     redis_service.enabled = False
-    store = QueueStore()
-    orchestrator = MessageOrchestrator(chat_service=EmptyChatService(), queue_store=store)
+    previous = os.environ.get("MQ_FORCE_FLUSH_ENABLED")
+    os.environ["MQ_FORCE_FLUSH_ENABLED"] = "true"
+    try:
+        store = QueueStore()
+        orchestrator = MessageOrchestrator(chat_service=EmptyChatService(), queue_store=store)
 
-    now_payload = {
-        "accountId": "u_empty",
-        "dialogId": "d_empty",
-        "message": "第一句 好了",
-        "platformMsgId": "pm_empty_1",
-    }
-    await orchestrator.ingest(now_payload)
-    await orchestrator.run_user_turn("u_empty")
+        now_payload = {
+            "accountId": "u_empty",
+            "dialogId": "d_empty",
+            "message": "第一句 好了",
+            "platformMsgId": "pm_empty_1",
+        }
+        await orchestrator.ingest(now_payload)
+        await orchestrator.run_user_turn("u_empty")
 
-    metrics = await store.get_queue_metrics()
-    assert metrics["empty_response_business_silent"] >= 1
+        metrics = await store.get_queue_metrics()
+        assert metrics["empty_response_business_silent"] >= 1
+    finally:
+        if previous is None:
+            os.environ.pop("MQ_FORCE_FLUSH_ENABLED", None)
+        else:
+            os.environ["MQ_FORCE_FLUSH_ENABLED"] = previous
 
 
 def test_contact_validation_retry_metric():
@@ -215,28 +225,36 @@ def test_contact_validation_retry_metric():
 
 async def _test_contact_validation_retry_metric():
     redis_service.enabled = False
-    store = QueueStore()
-    orchestrator = MessageOrchestrator(
-        chat_service=ValidationRetryChatServiceWithProtocol(
-            response="你再发一个能联系到你的号码就行，不方便的话晚点发也可以。",
-            silent=False,
-        ),
-        queue_store=store,
-    )
+    previous = os.environ.get("MQ_FORCE_FLUSH_ENABLED")
+    os.environ["MQ_FORCE_FLUSH_ENABLED"] = "true"
+    try:
+        store = QueueStore()
+        orchestrator = MessageOrchestrator(
+            chat_service=ValidationRetryChatServiceWithProtocol(
+                response="你再发一个能联系到你的号码就行，不方便的话晚点发也可以。",
+                silent=False,
+            ),
+            queue_store=store,
+        )
 
-    await orchestrator.ingest(
-        {
-            "accountId": "u_validation_retry",
-            "dialogId": "d_validation_retry",
-            "message": "我电话12345，好了",
-            "platformMsgId": "pm_validation_retry_1",
-        }
-    )
-    await orchestrator.run_user_turn("u_validation_retry")
+        await orchestrator.ingest(
+            {
+                "accountId": "u_validation_retry",
+                "dialogId": "d_validation_retry",
+                "message": "我电话12345，好了",
+                "platformMsgId": "pm_validation_retry_1",
+            }
+        )
+        await orchestrator.run_user_turn("u_validation_retry")
 
-    metrics = await store.get_queue_metrics()
-    assert metrics["contact_validation_retry"] >= 1
-    assert metrics["contact_validation_silent"] == 0
+        metrics = await store.get_queue_metrics()
+        assert metrics["contact_validation_retry"] >= 1
+        assert metrics["contact_validation_silent"] == 0
+    finally:
+        if previous is None:
+            os.environ.pop("MQ_FORCE_FLUSH_ENABLED", None)
+        else:
+            os.environ["MQ_FORCE_FLUSH_ENABLED"] = previous
 
 
 def test_contact_validation_silent_metric():
@@ -245,27 +263,35 @@ def test_contact_validation_silent_metric():
 
 async def _test_contact_validation_silent_metric():
     redis_service.enabled = False
-    store = QueueStore()
-    orchestrator = MessageOrchestrator(
-        chat_service=ValidationRetryChatServiceWithProtocol(
-            response="",
-            silent=True,
-        ),
-        queue_store=store,
-    )
+    previous = os.environ.get("MQ_FORCE_FLUSH_ENABLED")
+    os.environ["MQ_FORCE_FLUSH_ENABLED"] = "true"
+    try:
+        store = QueueStore()
+        orchestrator = MessageOrchestrator(
+            chat_service=ValidationRetryChatServiceWithProtocol(
+                response="",
+                silent=True,
+            ),
+            queue_store=store,
+        )
 
-    await orchestrator.ingest(
-        {
-            "accountId": "u_validation_silent",
-            "dialogId": "d_validation_silent",
-            "message": "我电话12345，好了",
-            "platformMsgId": "pm_validation_silent_1",
-        }
-    )
-    await orchestrator.run_user_turn("u_validation_silent")
+        await orchestrator.ingest(
+            {
+                "accountId": "u_validation_silent",
+                "dialogId": "d_validation_silent",
+                "message": "我电话12345，好了",
+                "platformMsgId": "pm_validation_silent_1",
+            }
+        )
+        await orchestrator.run_user_turn("u_validation_silent")
 
-    metrics = await store.get_queue_metrics()
-    assert metrics["contact_validation_silent"] >= 1
+        metrics = await store.get_queue_metrics()
+        assert metrics["contact_validation_silent"] >= 1
+    finally:
+        if previous is None:
+            os.environ.pop("MQ_FORCE_FLUSH_ENABLED", None)
+        else:
+            os.environ["MQ_FORCE_FLUSH_ENABLED"] = previous
 
 
 def test_combine_messages_context_compaction():
@@ -361,3 +387,95 @@ async def _test_process_turn_command_normalizes_numeric_timestamp_for_protocol()
     assert command.timestamp is not None
     assert "T" in command.timestamp
     assert result.response == "协议回复"
+
+
+def test_ingest_force_flush_respects_env_toggle_disabled():
+    asyncio.run(_test_ingest_force_flush_respects_env_toggle_disabled())
+
+
+async def _test_ingest_force_flush_respects_env_toggle_disabled():
+    redis_service.enabled = False
+    previous = os.environ.get("MQ_FORCE_FLUSH_ENABLED")
+    os.environ["MQ_FORCE_FLUSH_ENABLED"] = "false"
+    try:
+        orchestrator = MessageOrchestrator(chat_service=DummyChatService(), queue_store=QueueStore())
+        result = await orchestrator.ingest(
+            {
+                "accountId": "u_force_flush_off",
+                "dialogId": "d_force_flush_off",
+                "message": "好了",
+                "platformMsgId": "pm_force_flush_off",
+            }
+        )
+        assert result["accepted"] is True
+        assert result["forceFlush"] is False
+    finally:
+        if previous is None:
+            os.environ.pop("MQ_FORCE_FLUSH_ENABLED", None)
+        else:
+            os.environ["MQ_FORCE_FLUSH_ENABLED"] = previous
+
+
+def test_ingest_force_flush_respects_env_toggle_enabled():
+    asyncio.run(_test_ingest_force_flush_respects_env_toggle_enabled())
+
+
+async def _test_ingest_force_flush_respects_env_toggle_enabled():
+    redis_service.enabled = False
+    previous = os.environ.get("MQ_FORCE_FLUSH_ENABLED")
+    os.environ["MQ_FORCE_FLUSH_ENABLED"] = "true"
+    try:
+        orchestrator = MessageOrchestrator(chat_service=DummyChatService(), queue_store=QueueStore())
+        result = await orchestrator.ingest(
+            {
+                "accountId": "u_force_flush_on",
+                "dialogId": "d_force_flush_on",
+                "message": "好了",
+                "platformMsgId": "pm_force_flush_on",
+            }
+        )
+        assert result["accepted"] is True
+        assert result["forceFlush"] is True
+    finally:
+        if previous is None:
+            os.environ.pop("MQ_FORCE_FLUSH_ENABLED", None)
+        else:
+            os.environ["MQ_FORCE_FLUSH_ENABLED"] = previous
+
+
+def test_run_user_turn_respects_pre_send_silence_env():
+    asyncio.run(_test_run_user_turn_respects_pre_send_silence_env())
+
+
+async def _test_run_user_turn_respects_pre_send_silence_env():
+    redis_service.enabled = False
+    previous_force = os.environ.get("MQ_FORCE_FLUSH_ENABLED")
+    previous_silence = os.environ.get("MQ_PRE_SEND_SILENCE_MS")
+    try:
+        os.environ["MQ_FORCE_FLUSH_ENABLED"] = "true"
+        os.environ["MQ_PRE_SEND_SILENCE_MS"] = "0"
+        store = QueueStore()
+        orchestrator = MessageOrchestrator(chat_service=DummyChatService(), queue_store=store)
+        await orchestrator.ingest(
+            {
+                "accountId": "u_zero_silence",
+                "dialogId": "d_zero_silence",
+                "message": "第一句 好了",
+                "platformMsgId": "pm_zero_silence_1",
+            }
+        )
+        await orchestrator.run_user_turn("u_zero_silence")
+
+        jobs = list(store._memory_outbox.values())  # noqa: SLF001
+        assert len(jobs) == 1
+        now_ms = int(time.time() * 1000)
+        assert jobs[0].next_retry_at_ms <= now_ms + 100
+    finally:
+        if previous_force is None:
+            os.environ.pop("MQ_FORCE_FLUSH_ENABLED", None)
+        else:
+            os.environ["MQ_FORCE_FLUSH_ENABLED"] = previous_force
+        if previous_silence is None:
+            os.environ.pop("MQ_PRE_SEND_SILENCE_MS", None)
+        else:
+            os.environ["MQ_PRE_SEND_SILENCE_MS"] = previous_silence

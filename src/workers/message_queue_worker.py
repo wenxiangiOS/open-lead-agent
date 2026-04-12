@@ -38,7 +38,10 @@ class MessageQueueWorker:
         for account_id in user_ids:
             try:
                 session = await self.queue_store.get_session(account_id)
-                pending = max(0, int(session.max_enqueued_seq) - int(session.last_consumed_seq))
+                ack_seq = int(getattr(session, "last_ack_seq", 0))
+                if not hasattr(session, "last_ack_seq"):
+                    ack_seq = int(getattr(session, "last_consumed_seq", 0))
+                pending = max(0, int(session.max_enqueued_seq) - ack_seq)
                 if pending >= hot_threshold:
                     hot_users.append(account_id)
                 else:

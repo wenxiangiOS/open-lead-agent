@@ -6,6 +6,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from starlette.requests import Request
 
 from src.api.routes.xiaohongshu_ingest import init_service as init_ingest_service, ingest_message
 from src.services.data.redis_service import redis_service
@@ -79,7 +80,20 @@ async def _test_ingest_api_to_local_http_delivery_e2e():
         init_ingest_service(orchestrator)
 
         # through ingest API route
+        async def _receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/xiaohongshu/messages/ingest",
+                "headers": [],
+            },
+            _receive,
+        )
         result = await ingest_message(
+            request,
             {
                 "accountId": "local_http_user",
                 "dialogId": "d_local_http",

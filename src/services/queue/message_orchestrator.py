@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from datetime import datetime, timezone
@@ -18,6 +19,9 @@ from src.services.core.chat_service import ChatService
 from src.services.queue.intent_classifier import QueueIntentClassifier
 from src.services.queue.message_models import IncomingMessage, OutboxJob
 from src.services.queue.queue_store import QueueStore
+from src.services.queue.turn_commit_service import TurnCommitService
+from src.services.queue.turn_draft_models import TurnMutationSet
+from src.services.queue.turn_sandbox import TurnSandbox
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +32,14 @@ class MessageOrchestrator:
         chat_service: ChatService,
         queue_store: Optional[QueueStore] = None,
         classifier: Optional[QueueIntentClassifier] = None,
+        commit_service: Optional[TurnCommitService] = None,
     ) -> None:
         self.chat_service = chat_service
         self.queue_store = queue_store or QueueStore()
         self.classifier = classifier or QueueIntentClassifier()
+        self.commit_service = commit_service
+        if self.commit_service is None and hasattr(chat_service, "user_service"):
+            self.commit_service = TurnCommitService(chat_service.user_service, self.queue_store)
 
     @staticmethod
     def _now_ms() -> int:
@@ -63,6 +71,34 @@ class MessageOrchestrator:
         except Exception:
             return None
 
+    @staticmethod
+    def _env_bool(name: str, default: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _mq_force_flush_enabled(self) -> bool:
+        value = getattr(settings, "mq_force_flush_enabled", None)
+        if value is not None:
+            return bool(value)
+        return self._env_bool("MQ_FORCE_FLUSH_ENABLED", False)
+
+    def _mq_pre_send_silence_ms(self) -> int:
+        value = getattr(settings, "mq_pre_send_silence_ms", None)
+        if value is not None:
+            try:
+                return max(0, int(value))
+            except Exception:
+                return 400
+        raw = os.getenv("MQ_PRE_SEND_SILENCE_MS")
+        if raw is None:
+            return 400
+        try:
+            return max(0, int(raw.strip()))
+        except Exception:
+            return 400
+
 
     async def _incr_metric(self, name: str, value: int = 1) -> None:
         try:
@@ -83,6 +119,10 @@ class MessageOrchestrator:
                 await self._incr_metric("contact_validation_silent")
             else:
                 await self._incr_metric("contact_validation_retry")
+
+    @staticmethod
+    def _conversation_key(account_id: str, dialog_id: Optional[str]) -> str:
+        return QueueStore.conversation_key(account_id, dialog_id)
 
     @staticmethod
     def _to_ingest_command(payload: dict | IngestMessageCommand) -> IngestMessageCommand:
@@ -129,6 +169,7 @@ class MessageOrchestrator:
 
         now_ms = self._now_ms()
         intent = self.classifier.classify(content)
+        conversation_key = self._conversation_key(account_id, command.dialog_id)
         normalized_timestamp = self._normalize_timestamp(command.timestamp)
         if command.timestamp is not None and normalized_timestamp is None:
             logger.warning(
@@ -139,13 +180,15 @@ class MessageOrchestrator:
 
         incoming = IncomingMessage(
             account_id=account_id,
+            conversation_key=conversation_key,
             dialog_id=command.dialog_id,
             content=content,
             platform_msg_id=platform_msg_id,
             timestamp=normalized_timestamp,
             sex=command.sex,
             cancel_like=bool(intent.get("cancel_like", False)),
-            force_flush=bool(intent.get("force_flush", False)),
+            force_flush=bool(intent.get("force_flush", False))
+            and self._mq_force_flush_enabled(),
         )
 
         result = await self.queue_store.enqueue_message(incoming, now_ms)
@@ -162,6 +205,7 @@ class MessageOrchestrator:
             "success": True,
             "accepted": bool(result.accepted),
             "status": status,
+            "conversationKey": conversation_key,
             "sessionState": result.session_state,
             "seq": result.seq,
             "pending": result.pending,
@@ -171,10 +215,11 @@ class MessageOrchestrator:
         }
 
     async def run_user_turn(self, account_id: str) -> None:
+        conversation_key = await self.queue_store.resolve_conversation_key(account_id)
         now_ms = self._now_ms()
         lock_token = uuid.uuid4().hex
         locked = await self.queue_store.acquire_user_lock(
-            account_id,
+            conversation_key,
             lock_token,
             ttl_seconds=180,
         )
@@ -182,12 +227,12 @@ class MessageOrchestrator:
             return
 
         try:
-            turn = await self.queue_store.start_turn(account_id, now_ms)
+            turn = await self.queue_store.start_turn(conversation_key, now_ms)
             if turn is None:
                 return
             await self._incr_metric("turn_started")
 
-            messages = await self.queue_store.get_turn_messages(account_id, turn.start_seq, turn.end_seq)
+            messages = await self.queue_store.get_turn_messages(conversation_key, turn.start_seq, turn.end_seq)
             combined_message = self.combine_messages(
                 messages,
                 max_chars=int(getattr(settings, "mq_max_combined_chars", 4000)),
@@ -196,7 +241,7 @@ class MessageOrchestrator:
             )
 
             if not combined_message:
-                await self.queue_store.finish_turn_success(account_id, turn, self._now_ms(), has_more=False)
+                await self.queue_store.finish_turn_success(conversation_key, turn, self._now_ms(), has_more=False)
                 await self._incr_metric("turn_succeeded")
                 return
 
@@ -204,15 +249,30 @@ class MessageOrchestrator:
             latest_sex = self._last_non_empty(messages, "sex")
             latest_ts = self._last_non_empty(messages, "timestamp")
 
-            result = await self._process_turn_command(
-                ProcessChatTurnCommand(
-                    question=combined_message,
-                    account_id=account_id,
-                    dialog_id=latest_dialog,
-                    sex=latest_sex,
-                    timestamp=latest_ts,
+            if hasattr(self.chat_service, "user_service"):
+                async with TurnSandbox(self.chat_service.user_service, turn.profile_key) as sandbox:
+                    result = await self._process_turn_command(
+                        ProcessChatTurnCommand(
+                            question=combined_message,
+                            account_id=turn.profile_key,
+                            dialog_id=latest_dialog,
+                            sex=latest_sex,
+                            timestamp=latest_ts,
+                        )
+                    )
+                    mutation_set = sandbox.collect_mutation_set()
+            else:
+                result = await self._process_turn_command(
+                    ProcessChatTurnCommand(
+                        question=combined_message,
+                        account_id=turn.profile_key,
+                        dialog_id=latest_dialog,
+                        sex=latest_sex,
+                        timestamp=latest_ts,
+                    )
                 )
-            )
+                mutation_set = TurnMutationSet()
+
             await self._record_validation_metrics(result)
             response = result.response.strip()
             now_ms = self._now_ms()
@@ -220,47 +280,93 @@ class MessageOrchestrator:
             if await self.queue_store.is_turn_stale(turn):
                 logger.info(
                     "[mq.turn] stale dropped",
-                    extra={"account_id": account_id, "turn_id": turn.turn_id, "generation": turn.generation},
+                    extra={"conversation_key": conversation_key, "turn_id": turn.turn_id, "generation": turn.generation},
                 )
-                await self.queue_store.mark_turn_stale(account_id, turn, now_ms)
+                await self.queue_store.mark_turn_stale(conversation_key, turn, now_ms)
                 await self._incr_metric("turn_stale")
                 return
 
             if response:
+                pre_send_silence_ms = self._mq_pre_send_silence_ms()
                 job = OutboxJob(
                     job_id=uuid.uuid4().hex,
-                    account_id=account_id,
+                    account_id=turn.profile_key,
+                    conversation_key=conversation_key,
                     turn_id=turn.turn_id,
                     generation=turn.generation,
+                    covered_end_seq=turn.end_seq,
                     reply_text=response,
                     dialog_id=result.dialog_id or latest_dialog,
                     retry_count=0,
-                    next_retry_at_ms=now_ms,
+                    next_retry_at_ms=now_ms + max(0, pre_send_silence_ms),
+                    mutation_set=TurnSandbox.serialize_mutation_set(mutation_set),
                 )
                 await self.queue_store.write_outbox(job)
                 await self._incr_metric("outbox_created")
-            else:
-                if result.success:
-                    await self._incr_metric("empty_response_business_silent")
-                else:
-                    await self._incr_metric("empty_response_error")
+                session = await self.queue_store.get_session(conversation_key)
+                has_more = int(session.max_enqueued_seq) > int(turn.end_seq) or bool(session.dirty)
+                await self.queue_store.finish_turn_success(conversation_key, turn, now_ms, has_more=has_more)
+                await self._incr_metric("turn_succeeded")
+                return
 
-            session = await self.queue_store.get_session(account_id)
-            has_more = session.last_consumed_seq < session.max_enqueued_seq or bool(session.dirty)
-            await self.queue_store.finish_turn_success(account_id, turn, now_ms, has_more=has_more)
-            await self._incr_metric("turn_succeeded")
+            if result.success:
+                # silent 分支没有 sender 二次闸门，提交前必须再次做 latest-wins 复核，
+                # 避免该轮在“首检通过后”被新输入覆盖却仍提交业务状态。
+                if await self.queue_store.is_turn_stale(turn):
+                    await self.queue_store.mark_turn_stale(conversation_key, turn, now_ms)
+                    await self._incr_metric("turn_stale")
+                    return
+
+                if self.commit_service is not None:
+                    committed = await self.commit_service.commit_turn(turn.turn_id, turn.profile_key, mutation_set)
+                    if not committed:
+                        await self.queue_store.mark_turn_failed(conversation_key, turn, now_ms)
+                        await self._incr_metric("turn_failed")
+                        return
+
+                silent_job = OutboxJob(
+                    job_id=f"silent:{turn.turn_id}",
+                    account_id=turn.profile_key,
+                    conversation_key=conversation_key,
+                    turn_id=turn.turn_id,
+                    generation=turn.generation,
+                    covered_end_seq=turn.end_seq,
+                    reply_text="",
+                    dialog_id=result.dialog_id or latest_dialog,
+                    retry_count=0,
+                    next_retry_at_ms=now_ms,
+                    mutation_set=TurnSandbox.serialize_mutation_set(mutation_set),
+                )
+                finalized = await self.queue_store.finalize_turn_commit(silent_job, now_ms)
+                if not finalized:
+                    await self.queue_store.mark_turn_stale(conversation_key, turn, now_ms)
+                    await self._incr_metric("turn_stale")
+                    return
+
+                await self._incr_metric("empty_response_business_silent")
+                session = await self.queue_store.get_session(conversation_key)
+                ack_seq = int(session.last_ack_seq)
+                has_more = int(session.max_enqueued_seq) > ack_seq or bool(session.dirty)
+                await self.queue_store.finish_turn_success(conversation_key, turn, now_ms, has_more=has_more)
+                await self._incr_metric("turn_succeeded")
+                return
+
+            await self._incr_metric("empty_response_error")
+            await self.queue_store.mark_turn_failed(conversation_key, turn, now_ms)
+            await self._incr_metric("turn_failed")
+            return
 
         except Exception:
-            logger.exception("[mq.turn] run_user_turn failed", extra={"account_id": account_id})
+            logger.exception("[mq.turn] run_user_turn failed", extra={"conversation_key": conversation_key})
             now_ms = self._now_ms()
             try:
                 if "turn" in locals() and turn is not None:
-                    await self.queue_store.mark_turn_failed(account_id, turn, now_ms)
+                    await self.queue_store.mark_turn_failed(conversation_key, turn, now_ms)
                     await self._incr_metric("turn_failed")
             except Exception:
-                logger.exception("[mq.turn] mark_turn_failed failed", extra={"account_id": account_id})
+                logger.exception("[mq.turn] mark_turn_failed failed", extra={"conversation_key": conversation_key})
         finally:
-            await self.queue_store.release_user_lock(account_id, lock_token)
+            await self.queue_store.release_user_lock(conversation_key, lock_token)
 
     @staticmethod
     def _last_non_empty(messages: List[dict], field: str) -> Optional[str]:
