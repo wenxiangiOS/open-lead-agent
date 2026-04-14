@@ -21,6 +21,7 @@ class UserProfile(BaseModel):
     account_id: str = Field(..., description="用户账号ID")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     updated_at: datetime = Field(default_factory=datetime.now, description="更新时间")
+    profile_version: int = Field(default=0, description="资料字段版本号，仅在真实资料字段变更时递增")
 
     # 待收集的信息（初始为 None）
     sex: Optional[str] = Field(None, description="性别（男/女）- 核心字段")
@@ -38,18 +39,21 @@ class UserProfile(BaseModel):
     location: Optional[str] = Field(None, description="工作地/所在地（城市/地区）")
     education: Optional[str] = Field(None, description="学历（核心字段）")
     marital_status: Optional[str] = Field(None, description="婚况（准核心字段）")
-    monthly_income: Optional[str] = Field(None, description="月薪（月收入范围，中等字段）")
+    monthly_income: Optional[str] = Field(None, description="收入信息（可收月薪/年薪/区间，中等字段）")
     occupation: Optional[str] = Field(None, description="职业（核心字段）")
     occupation_inference_candidate: Optional[str] = Field(None, description="职业弱推断候选（不作为正式已收集职业）")
     contact: Optional[str] = Field(None, description="联系方式状态显示（核心字段）")
     phone: Optional[str] = Field(None, description="电话号码（单独存储）")
     wechat: Optional[str] = Field(None, description="微信号")
-    partner_requirement: Optional[str] = Field(None, description="择偶要求（中等字段）")
+    partner_requirement: Optional[str] = Field(None, description="择偶要求聚合展示文本（中等字段，结构化子槽优先）")
     partner_gender_preference: Optional[str] = Field(None, description="择偶性别偏好（男/女）")
 
-    # Phase 2: 择偶要求子槽细分（更精细的去重）
+    # Phase 2: 择偶偏好结构化子槽（主链优先消费，partner_requirement 仅作聚合展示）
     partner_pref_location: Optional[str] = Field(None, description="择偶地区偏好")
     partner_pref_age: Optional[str] = Field(None, description="择偶年龄偏好")
+    partner_pref_industry: Optional[str] = Field(None, description="择偶行业偏好")
+    partner_pref_age_relation: Optional[str] = Field(None, description="择偶年龄关系偏好")
+    partner_pref_locality: Optional[str] = Field(None, description="择偶同城/本地偏好")
     partner_pref_height: Optional[str] = Field(None, description="择偶身高偏好")
     partner_pref_education: Optional[str] = Field(None, description="择偶学历偏好")
     partner_pref_personality: Optional[str] = Field(None, description="择偶性格偏好")
@@ -76,6 +80,9 @@ class UserProfile(BaseModel):
             # Phase 2: 择偶要求子槽
             "partner_pref_location": False,
             "partner_pref_age": False,
+            "partner_pref_industry": False,
+            "partner_pref_age_relation": False,
+            "partner_pref_locality": False,
             "partner_pref_height": False,
             "partner_pref_education": False,
             "partner_pref_personality": False,
@@ -174,6 +181,10 @@ class UserProfile(BaseModel):
     last_question_state: Dict[str, Any] = Field(
         default_factory=dict,
         description="上一轮结构化提问状态（question_intent/asked_fields/side_fields/expected_scope/allow_mixed_answer/resume_target）",
+    )
+    last_semantic_summary: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="上一轮统一语义摘要（primary_domain/acts/user_questions/observed_fields/pending_fields/resume_target）",
     )
     non_cooperation_turns: int = Field(default=0, description="连续不配合主流程的轮数")
     off_topic_turns: int = Field(default=0, description="连续偏离主流程的轮数")
@@ -351,25 +362,26 @@ class UserProfile(BaseModel):
                 # 姓氏字段直接使用提取的值，不经过额外验证
                 validated = value
             elif field_name == 'partner_requirement':
-                # 择偶要求字段：追加而不是覆盖，但要避免重复
+                # 择偶要求字段：按分片去重合并；当新值已覆盖旧值时，允许直接替换为更完整的结构化文本。
                 existing = getattr(self, 'partner_requirement', None)
+                normalized_value = str(value or "").strip()
                 if existing and existing != "":
-                    # 拆分现有值和新值，只添加不存在的部分
-                    existing_items = [item.strip() for item in existing.split(',')]
-                    new_items = [item.strip() for item in value.split(',')]
+                    existing_items = [item.strip() for item in re.split(r'[，,、]+', str(existing)) if item.strip()]
+                    new_items = [item.strip() for item in re.split(r'[，,、]+', normalized_value) if item.strip()]
+                    existing_norm = {item.replace(" ", "") for item in existing_items}
+                    new_norm = {item.replace(" ", "") for item in new_items}
 
-                    # 只添加现有值中没有的部分
-                    items_to_add = []
-                    for item in new_items:
-                        if item and item not in existing_items:
-                            items_to_add.append(item)
-
-                    if items_to_add:
-                        validated = f"{existing},{','.join(items_to_add)}"
+                    if new_items and existing_norm.issubset(new_norm):
+                        validated = normalized_value
                     else:
-                        validated = existing  # 所有内容都已存在，不更新
+                        merged_items = list(existing_items)
+                        for item in new_items:
+                            item_norm = item.replace(" ", "")
+                            if item_norm and item_norm not in {existing_item.replace(" ", "") for existing_item in merged_items}:
+                                merged_items.append(item)
+                        validated = "，".join(merged_items) if merged_items else normalized_value
                 else:
-                    validated = value
+                    validated = normalized_value
             elif field_name == 'partner_gender_preference':
                 normalized = str(value or '').strip()
                 if normalized in {'男生', '男', 'male'}:
@@ -403,6 +415,9 @@ class UserProfile(BaseModel):
                         self.birth_year_confirmation_closed = False
                 elif field_name == 'age_label':
                     age_label = str(validated or "").strip()
+                    derived_age = self.normalize_age(age_label)
+                    if isinstance(derived_age, int):
+                        self.age = derived_age
                     if re.search(r'^\d{2}后$', age_label):
                         self.pending_birth_year_bucket = age_label
                         self.birth_year_confirmation_closed = False
@@ -426,7 +441,7 @@ class UserProfile(BaseModel):
                     # 同时更新 contact 字段为状态显示
                     self.contact = self.get_contact_status()
 
-                self.updated_at = datetime.now()
+                self._touch_profile_data(increment_version=(field_name != 'occupation_inference_candidate'))
                 return True
 
         except Exception as e:
@@ -435,6 +450,11 @@ class UserProfile(BaseModel):
             return False
 
         return False
+
+    def _touch_profile_data(self, *, increment_version: bool = True) -> None:
+        self.updated_at = datetime.now()
+        if increment_version:
+            self.profile_version = int(getattr(self, "profile_version", 0) or 0) + 1
 
     def _validate_phone(self, value: Any) -> Optional[str]:
         """
@@ -861,6 +881,37 @@ class UserProfile(BaseModel):
         self.last_question_state = {}
         self.updated_at = datetime.now()
 
+    def set_last_semantic_summary(self, summary: Optional[Dict[str, Any]]) -> None:
+        normalized = dict(summary or {})
+        normalized["acts"] = [
+            str(item).strip()
+            for item in normalized.get("acts", [])
+            if str(item).strip()
+        ]
+        normalized["user_questions"] = [
+            str(item).strip()
+            for item in normalized.get("user_questions", [])
+            if str(item).strip()
+        ]
+        normalized["observed_fields"] = [
+            str(item).strip()
+            for item in normalized.get("observed_fields", [])
+            if str(item).strip()
+        ]
+        normalized["pending_fields"] = [
+            str(item).strip()
+            for item in normalized.get("pending_fields", [])
+            if str(item).strip()
+        ]
+        normalized["primary_domain"] = str(normalized.get("primary_domain") or "").strip() or "unknown"
+        normalized["resume_target"] = str(normalized.get("resume_target") or "").strip() or None
+        self.last_semantic_summary = normalized
+        self.updated_at = datetime.now()
+
+    def clear_last_semantic_summary(self) -> None:
+        self.last_semantic_summary = {}
+        self.updated_at = datetime.now()
+
     def get_expected_field_for_short_answer(self, current_turn_index: int, max_gap: int = 1) -> Optional[str]:
         """
         获取短答应该优先解析的字段。
@@ -905,6 +956,7 @@ class UserProfile(BaseModel):
             "account_id": self.account_id,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
+            "profile_version": self.profile_version,
             "sex": self.sex,
             "last_name": self.last_name,
             "age": self.age,
@@ -924,6 +976,16 @@ class UserProfile(BaseModel):
             "wechat": self.wechat,
             "partner_requirement": self.partner_requirement,
             "partner_gender_preference": self.partner_gender_preference,
+            "partner_pref_location": self.partner_pref_location,
+            "partner_pref_age": self.partner_pref_age,
+            "partner_pref_industry": self.partner_pref_industry,
+            "partner_pref_age_relation": self.partner_pref_age_relation,
+            "partner_pref_locality": self.partner_pref_locality,
+            "partner_pref_height": self.partner_pref_height,
+            "partner_pref_education": self.partner_pref_education,
+            "partner_pref_personality": self.partner_pref_personality,
+            "partner_pref_income": self.partner_pref_income,
+            "partner_pref_other": self.partner_pref_other,
             "extraction_evidence": self.extraction_evidence,
             "collection_progress": self.collection_progress,
             "progress_percentage": round(self.get_progress() * 100, 2),
@@ -959,6 +1021,7 @@ class UserProfile(BaseModel):
             "last_asked_side_field": self.last_asked_side_field,
             "last_asked_turn_index": self.last_asked_turn_index,
             "last_question_state": self.last_question_state,
+            "last_semantic_summary": self.last_semantic_summary,
             "pending_retry_field": self.pending_retry_field,
             "needs_bridge_back": self.needs_bridge_back,
             "last_side_topic_type": self.last_side_topic_type,

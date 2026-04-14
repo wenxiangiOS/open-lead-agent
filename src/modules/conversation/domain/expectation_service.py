@@ -19,6 +19,17 @@ class ExpectationService:
         '多久匹配', '多久有消息', '多久联系', '多久安排',
         '匹配时间', '出结果', '有结果'
     ]
+    _INCOME_TOKEN_PATTERN = re.compile(
+        r"([一二两三四五六七八九十百千\d]+(?:\.\d+)?(?:k|w|万|千|元|块)?)",
+        re.IGNORECASE,
+    )
+    _INCOME_RANGE_PATTERN = re.compile(
+        r"([一二两三四五六七八九十百千\d]+(?:\.\d+)?(?:k|w|万|千|元|块)?)"
+        r"(?:-|~|到|至|—|–)"
+        r"([一二两三四五六七八九十百千\d]+(?:\.\d+)?(?:k|w|万|千|元|块)?)",
+        re.IGNORECASE,
+    )
+    _INCOME_ANNUAL_MARKER = re.compile(r"(年薪|年收入|年包|一年|每年|年入|年赚)")
 
     def is_matching_timeline_question(self, text: str) -> bool:
         """判断用户是否在询问匹配时长。"""
@@ -33,26 +44,136 @@ class ExpectationService:
             return None
 
         raw_text = str(value).strip().lower()
-        text = raw_text.replace('月薪', '').replace('月收入', '').replace('收入', '')
-        match = re.search(r'(\d+(?:\.\d+)?)', text)
-        if not match:
+        compact = re.sub(r"\s+", "", raw_text)
+        if not compact:
             return None
 
-        amount = float(match.group(1))
-        if any(marker in raw_text for marker in ('年薪', '年收入', '年包')):
-            if 'k' in raw_text:
-                return amount * 1000 / 12
-            if 'w' in raw_text or '万' in raw_text:
-                return amount * 10000 / 12
-            # 口语里“年薪20左右”通常省略“万”，按 20 万年薪处理。
-            if amount <= 100:
-                return amount * 10000 / 12
-            return amount / 12
-        if 'w' in text or '万' in text:
-            return amount * 10000
-        if 'k' in text or '千' in text:
-            return amount * 1000
-        return amount
+        annual_context = bool(self._INCOME_ANNUAL_MARKER.search(compact))
+
+        range_match = self._INCOME_RANGE_PATTERN.search(compact)
+        if range_match:
+            left = self._parse_income_token_to_cny(
+                range_match.group(1),
+                annual_context=annual_context,
+                peer_token=range_match.group(2),
+            )
+            right = self._parse_income_token_to_cny(
+                range_match.group(2),
+                annual_context=annual_context,
+                peer_token=range_match.group(1),
+            )
+            if left is not None and right is not None:
+                averaged = (left + right) / 2
+                return averaged / 12 if annual_context else averaged
+
+        if re.search(r"(过万|上万)", compact):
+            return 10000 / 12 if annual_context else 10000
+
+        token_match = self._INCOME_TOKEN_PATTERN.search(compact)
+        if not token_match:
+            return None
+        amount = self._parse_income_token_to_cny(token_match.group(1), annual_context=annual_context)
+        if amount is None:
+            return None
+        return amount / 12 if annual_context else amount
+
+    @classmethod
+    def _parse_income_token_to_cny(
+        cls,
+        token: str,
+        *,
+        annual_context: bool,
+        peer_token: Optional[str] = None,
+    ) -> Optional[float]:
+        normalized = cls._normalize_income_token(token)
+        if not normalized:
+            return None
+
+        unit = cls._extract_income_unit(normalized)
+        if unit is None and peer_token:
+            unit = cls._extract_income_unit(cls._normalize_income_token(peer_token))
+
+        number_text = re.sub(r"(k|w|万|千|元|块)$", "", normalized, flags=re.IGNORECASE)
+        amount_number = cls._parse_income_number(number_text)
+        if amount_number is None:
+            return None
+
+        if unit in {"w", "万"}:
+            return amount_number * 10000
+        if unit in {"k", "千"}:
+            return amount_number * 1000
+        if unit in {"元", "块"}:
+            return amount_number
+
+        # 口语里“年薪20左右”常省略单位，按 20 万/年处理。
+        if annual_context and amount_number <= 100:
+            return amount_number * 10000
+        # 月收入短答里常省略单位，如“20+”，按 20k 处理。
+        if not annual_context and amount_number <= 100:
+            return amount_number * 1000
+        return amount_number
+
+    @staticmethod
+    def _normalize_income_token(token: Optional[str]) -> str:
+        text = str(token or "").strip().lower()
+        if not text:
+            return ""
+        cleaned = re.sub(r"[，,、。！？!?~～]", "", text)
+        cleaned = re.sub(r"(税前|税后|月薪|月收入|月入|收入|工资|年薪|年收入|年包|一年|每年)", "", cleaned)
+        cleaned = re.sub(r"(左右|上下|出头|以上|以下|以内|约|大概|差不多|不到|多点|多一点)", "", cleaned)
+        cleaned = cleaned.strip("+")
+        return cleaned
+
+    @staticmethod
+    def _extract_income_unit(token: str) -> Optional[str]:
+        match = re.search(r"(k|w|万|千|元|块)$", str(token or ""), re.IGNORECASE)
+        if not match:
+            return None
+        return match.group(1).lower()
+
+    @classmethod
+    def _parse_income_number(cls, text: str) -> Optional[float]:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return None
+        if re.fullmatch(r"\d+(?:\.\d+)?", normalized):
+            return float(normalized)
+        if not re.fullmatch(r"[一二两三四五六七八九十百千]+", normalized):
+            return None
+        return cls._parse_chinese_number(normalized)
+
+    @staticmethod
+    def _parse_chinese_number(text: str) -> Optional[float]:
+        digit_map = {
+            "一": 1,
+            "二": 2,
+            "两": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+        }
+        unit_map = {"十": 10, "百": 100, "千": 1000}
+        total = 0
+        current = 0
+        for char in str(text or ""):
+            if char in digit_map:
+                current = digit_map[char]
+                continue
+            if char in unit_map:
+                if current == 0:
+                    current = 1
+                total += current * unit_map[char]
+                current = 0
+                continue
+            return None
+        total += current
+        if total <= 0:
+            return None
+        return float(total)
 
     def parse_age_value(self, value: Optional[object]) -> Optional[int]:
         """将年龄字段稳健解析为整数，兼容 '28' / 28 / '98年' 这类混合值。"""

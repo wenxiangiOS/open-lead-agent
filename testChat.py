@@ -108,7 +108,7 @@ class ChatTester:
             result = await self.chat_service.process_chat_request(request)
 
             if result.get('success'):
-                response = result.get('response', '抱歉，我没有理解您的意思')
+                response = self._get_canonical_response(result)
                 # 如果回复为空，不显示（表示委婉结束话题）
                 if response and response.strip():
                     print(f"👧 小缘: {response}\n")
@@ -131,6 +131,27 @@ class ChatTester:
         except Exception as e:
             logger.error(f"处理消息失败: {e}")
             print(f"❌ 处理失败: {e}\n")
+
+    @staticmethod
+    def _get_canonical_response(result: dict) -> str:
+        """优先使用最终可见回复，避免控制台误打印中间态话术。"""
+        payload_response = str(result.get('response') or '').strip()
+        meta = result.get('meta') if isinstance(result.get('meta'), dict) else {}
+        unified_meta = meta.get('ai_response_unified_generation') if isinstance(meta.get('ai_response_unified_generation'), dict) else {}
+        final_display_response = str(unified_meta.get('final_display_response') or '').strip()
+
+        if final_display_response and payload_response and final_display_response != payload_response:
+            logger.warning(
+                "[testChat] 响应不一致，优先展示最终可见回复: payload=%r final=%r",
+                payload_response,
+                final_display_response,
+            )
+            return final_display_response
+
+        if final_display_response:
+            return final_display_response
+
+        return payload_response or '抱歉，我没有理解您的意思'
 
     async def show_token_stats(self):
         """显示Token使用统计"""

@@ -13,6 +13,7 @@ import logging
 import traceback
 import time
 import uuid
+import asyncio
 from typing import Callable, Optional, Any, Dict
 from fastapi import Request, Response, HTTPException
 from fastapi.responses import JSONResponse
@@ -122,6 +123,10 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
         except AppException as exc:
             # 应用自定义异常
             return await self._handle_app_exception(exc, request, trace_id)
+
+        except asyncio.CancelledError:
+            # 请求在服务停机或客户端断开时被取消，交还给 ASGI 服务器按正常取消处理。
+            raise
 
         except Exception as exc:
             # 未捕获的异常

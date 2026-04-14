@@ -90,7 +90,7 @@ class RedisService:
 
                 # 启动健康检查任务
                 self._health_check_task = asyncio.create_task(self._health_check_loop())
-                logger.info("Redis 健康检查任务已启动")
+                logger.debug("Redis 健康检查任务已启动")
 
                 return
             except Exception as e:
@@ -142,7 +142,7 @@ class RedisService:
         # 测试连接
         await asyncio.wait_for(self.client.ping(), timeout=self.DEFAULT_TIMEOUT)
 
-        logger.info(
+        logger.debug(
             f"Redis connected: {settings.redis_host}:{settings.redis_port}"
             f" (prefix={self.prefix}, ttl={settings.redis_ttl}s)"
         )

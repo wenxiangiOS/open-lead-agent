@@ -84,6 +84,24 @@
 - 程序只负责告诉模型“本轮必须顺着什么信息去问、工作和月薪要绑定”
 - 具体怎么说，仍然交给当前 AI 自然生成
 
+补充约束：
+
+- 如果当前计划追问字段是 `occupation`，且用户已给出 `location`，则优先使用“带地点承接”的职业追问
+- 不能退化成脱离上下文的泛问，例如只问“你现在主要做哪方面工作呀？”
+- 如果当前计划追问字段已经刷新成 `contact`，则本轮不能继续问择偶要求、兴趣爱好或其他未建模话题
+
+## 计划追问优先于漂移回复
+
+为了避免模型自由发挥把状态带偏，系统需要遵守下面两条：
+
+- `turn_decision.ask_field` 是本轮主目标的第一真相
+- 只要回复里仍然存在明确问句，本轮状态记录优先沿用计划字段，而不是被漂移后的文本问题反向改写
+
+这条规则主要用于防止两类回归：
+
+- 本轮原计划问 `contact`，模型却继续问“另一半要求 / 兴趣爱好”
+- 本轮原计划问 `occupation`，模型却退回到更生硬的泛化问法，或者顺手问到别的字段
+
 ## 开场识别开始条件
 
 只在下面条件满足时运行开场识别：
@@ -407,9 +425,10 @@
 
 ## 相关文档
 
-统一单轮理解的完整重构方案、当前实现边界说明和后续开发约束，已迁移到：
+统一单轮理解的现行架构规范与执行约束，统一维护在：
 
-- [09_TURN_UNDERSTANDING_REFACTOR_DESIGN.md](/Users/eric/Desktop/doubao_mcp_server/docs/09_TURN_UNDERSTANDING_REFACTOR_DESIGN.md)
+- [09_TURN_PRIORITY_POLICY_DESIGN.md](/Users/eric/Desktop/doubao_mcp_server/docs/09_TURN_PRIORITY_POLICY_DESIGN.md)
+- [10_UNIFIED_TURN_UNDERSTANDING_PIPELINE_DESIGN.md](/Users/eric/Desktop/doubao_mcp_server/docs/10_UNIFIED_TURN_UNDERSTANDING_PIPELINE_DESIGN.md)
 
 ## 最终结论
 

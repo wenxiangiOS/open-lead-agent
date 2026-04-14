@@ -56,6 +56,22 @@ class PreGenerationResolutionMeta:
 
 
 @dataclass
+class TurnPriorityDecision:
+    primary_task: str = "core_profile_collection"
+    priority_level: int = 5
+    decision_reason: str = ""
+    response_mode: str = "ask_only"
+    suppressed_tasks: List[str] = field(default_factory=list)
+    locked_field: Optional[str] = None
+    prioritized_question_intent: Optional[str] = None
+    collection_tier: str = "core"
+    allow_contact_target: bool = True
+    allow_medium_target: bool = True
+    prioritize_user_question: bool = False
+    defer_complementary_contact: bool = False
+
+
+@dataclass
 class TurnUnderstandingInput:
     user_message: str
     last_response: str
@@ -90,6 +106,7 @@ class TurnUnderstandingResult:
     context_ack_field_ack: Optional[str] = None
     soft_retry_field: Optional[str] = None
     pre_generation_resolution: Optional[PreGenerationResolutionMeta] = None
+    priority_decision: Optional[TurnPriorityDecision] = None
     confidence: float = 0.0
     notes: List[str] = field(default_factory=list)
 
@@ -185,6 +202,7 @@ class TurnUnderstandingResult:
             "context_ack_field_ack": self.context_ack_field_ack,
             "soft_retry_field": self.soft_retry_field,
             "pre_generation_resolution": asdict(self.pre_generation_resolution) if self.pre_generation_resolution else None,
+            "priority_decision": asdict(self.priority_decision) if self.priority_decision else None,
             "confidence": self.confidence,
             "notes": list(self.notes),
         }

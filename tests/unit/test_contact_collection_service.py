@@ -560,6 +560,19 @@ class TestContactCollectionService:
         assert profile.phone_effective_ask_count == 2
         assert profile.last_contact_request_type is None
 
+    def test_rollback_pending_request_state_rolls_back_one_unfulfilled_phone_ask(self):
+        """回滚 pending 状态时，应同步回退一轮未兑现的电话询问计数。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 2
+        profile.phone_effective_ask_count = 2
+        profile.last_contact_request_type = "phone"
+
+        self.service.rollback_pending_request_state(profile, "phone")
+
+        assert profile.phone_ask_count == 1
+        assert profile.phone_effective_ask_count == 1
+        assert profile.last_contact_request_type is None
+
     def test_is_contact_complete_false_after_wechat_collected_with_only_one_phone_effective_ask(self):
         """先收微信后第一次拒电话时，电话流程未完成，不应误判联系方式已完成。"""
         profile = UserProfile(account_id="test", location="北京")
@@ -591,6 +604,49 @@ class TestContactCollectionService:
         assert result.is_final is True
         assert profile.rejected_phone is True
         assert profile.rejected_wechat is False
+
+    def test_detect_refusal_treats_asr_jiu_variant_as_phone_final_refusal_after_wechat_collected(self):
+        profile = UserProfile(account_id="test", location="北京")
+        profile.wechat = "abc123"
+        profile.wechat_collected = True
+        profile.phone_ask_count = 2
+        profile.phone_effective_ask_count = 2
+        profile.last_contact_request_type = "phone"
+
+        result = self.service.detect_refusal(
+            "微信久可以了",
+            profile,
+            "你方便留个手机号吗？",
+        )
+
+        assert result is not None
+        assert result.contact_type == "phone"
+        assert result.is_final is True
+        assert profile.rejected_phone is True
+
+    def test_get_effective_contact_ask_count_prefers_effective_counter(self):
+        """有效询问次数应优先读取 effective_ask_count，而不是原始 ask_count。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.phone_ask_count = 2
+        profile.phone_effective_ask_count = 1
+
+        assert self.service.get_effective_contact_ask_count(profile, "phone") == 1
+
+    def test_is_contact_type_final_refused_reads_rejection_state(self):
+        """最终拒绝态应统一由 helper 判定。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.rejected_phone = True
+
+        assert self.service.is_contact_type_final_refused(profile, "phone") is True
+        assert self.service.is_contact_type_final_refused(profile, "wechat") is False
+
+    def test_should_end_conversation_uses_final_refusal_helper(self):
+        """结束对话应依赖统一 final refusal 判定，而不是散落地直接读字段。"""
+        profile = UserProfile(account_id="test", location="北京")
+        profile.rejected_phone = True
+        profile.rejected_wechat = True
+
+        assert self.service.should_end_conversation(profile) is True
 
     # ==================== get_status_display 测试 ====================
 
@@ -713,6 +769,37 @@ class TestContactCollectionService:
         """是否结束对话 - 都没有被拒绝"""
         profile = UserProfile(account_id="test", location="北京")
         assert self.service.should_end_conversation(profile) == False
+
+    def test_replay_phone_to_wechat_then_final_refuse_phone_completes_contact_flow(self):
+        """真实链路回归：电话 -> 微信 -> 用户坚持只留微信，应完成联系方式流程。"""
+        profile = UserProfile(account_id="test", location="深圳")
+
+        # 第一轮先问电话后，用户要求切微信
+        profile.phone_ask_count = 1
+        profile.phone_effective_ask_count = 1
+        assert self.service.get_next_action(profile, "微信可以吗") == NextAction.ASK_WECHAT
+
+        # 用户已留微信，系统后续进行第二次电话争取
+        profile.wechat = "wuweifuwej"
+        profile.wechat_collected = True
+        profile.wechat_ask_count = 1
+        profile.wechat_effective_ask_count = 1
+        profile.phone_ask_count = 2
+        profile.phone_effective_ask_count = 2
+        profile.last_contact_request_type = "phone"
+
+        result = self.service.detect_refusal(
+            "微信就可以了",
+            profile,
+            "微信我看到了。你要是方便的话，也可以补个常用手机号。",
+        )
+
+        assert result is not None
+        assert result.contact_type == "phone"
+        assert result.is_final is True
+        assert profile.rejected_phone is True
+        assert self.service.get_next_action(profile) == NextAction.NONE
+        assert self.service.is_contact_complete(profile) is True
 
     # ==================== record_* 方法测试 ====================
 

@@ -12,7 +12,9 @@ class _RecordingHost:
         self.calls: list[str] = []
         self.unified_response_draft_service = SimpleNamespace(build=lambda **kwargs: None)
         self.unified_response_validation_service = SimpleNamespace(validate=lambda **kwargs: None)
-        self.unified_response_safe_cleanup_service = SimpleNamespace(cleanup=lambda *args, **kwargs: ("", False))
+        self.unified_response_safe_cleanup_service = SimpleNamespace(
+            cleanup=lambda text: (str(text or ""), False)
+        )
         self.unified_response_delivery_service = SimpleNamespace(deliver=lambda **kwargs: None)
         self.unified_response_observability_service = SimpleNamespace(
             build_record=lambda **kwargs: {},
@@ -20,7 +22,9 @@ class _RecordingHost:
         )
         self.first_generation_delivery_service = FirstGenerationDeliveryService()
         self._last_unified_generation_record = None
+        self._last_turn_alignment_obs = None
         self._detect_asked_fields_in_response = lambda text: set()
+        self._detect_all_questioned_fields_in_response = lambda text: set()
         self._sanitize_forbidden_sales_phrases = lambda text: text
         self._sanitize_robotic_tone = lambda text: text
         self.contact_service = SimpleNamespace(
@@ -553,3 +557,67 @@ async def test_chat_service_finalize_service_keeps_valid_wechat_followup_that_on
     assert delivery_ok is True
     assert profile.account_id == "u_finalize_contact_no_false_regen"
     assert response == "没事呀，不愿留电话没关系，你方便说下微信不，后续联系起来也更顺畅。"
+
+
+def test_main_followup_alignment_records_mismatch_and_rewrite_obs():
+    host = _RecordingHost()
+    service = ChatServiceFinalizeService(host)
+
+    host._detect_asked_fields_in_response = lambda text: {"education"}
+    host._detect_all_questioned_fields_in_response = lambda text: set()
+    host._build_budget_guard_fallback_response = (
+        lambda **kwargs: "你目前是做哪方面工作的呀？"
+    )
+    host._build_style_preserving_followup_response = (
+        lambda **kwargs: str(kwargs.get("fallback_response") or "")
+    )
+
+    rewritten = service._maybe_enforce_main_followup_alignment(
+        user_profile=UserProfile(account_id="u_alignment_mismatch"),
+        user_message="本科呢",
+        final_response="你的学历是本科吗？",
+        turn_decision=SimpleNamespace(
+            ask_field="occupation",
+            prioritize_user_question=False,
+            allow_medium_target=False,
+        ),
+        collection_result={"all_fields": [{"field": "occupation", "value": "在编教师"}]},
+    )
+
+    assert rewritten == "你目前是做哪方面工作的呀？"
+    assert host._last_turn_alignment_obs == {
+        "ask_field": "occupation",
+        "asked_fields": "education",
+        "ask_field_mismatch_detected": True,
+        "ask_field_mismatch_rewritten": True,
+        "reask_after_commit_detected": False,
+    }
+
+
+def test_main_followup_alignment_records_reask_after_commit_obs():
+    host = _RecordingHost()
+    service = ChatServiceFinalizeService(host)
+
+    host._detect_asked_fields_in_response = lambda text: {"occupation"}
+    host._detect_all_questioned_fields_in_response = lambda text: set()
+
+    response = service._maybe_enforce_main_followup_alignment(
+        user_profile=UserProfile(account_id="u_alignment_reask"),
+        user_message="在编教师",
+        final_response="你目前是做哪方面工作的呀？",
+        turn_decision=SimpleNamespace(
+            ask_field="occupation",
+            prioritize_user_question=False,
+            allow_medium_target=False,
+        ),
+        collection_result={"all_fields": [{"field": "occupation", "value": "在编教师"}]},
+    )
+
+    assert response == "你目前是做哪方面工作的呀？"
+    assert host._last_turn_alignment_obs == {
+        "ask_field": "occupation",
+        "asked_fields": "occupation",
+        "ask_field_mismatch_detected": False,
+        "ask_field_mismatch_rewritten": False,
+        "reask_after_commit_detected": True,
+    }

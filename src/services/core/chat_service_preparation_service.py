@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from typing import Any, Dict, Optional
 
@@ -85,9 +86,15 @@ class ChatServicePreparationService:
             decision_profile=decision_profile,
             user_message=user_message,
         )
+        self._apply_contextual_short_reply_followup_override(
+            turn_decision=turn_decision,
+            understanding=understanding,
+            decision_profile=decision_profile,
+        )
         await self._sync_decision_profile_state(
             user_profile=user_profile,
             decision_profile=decision_profile,
+            understanding=understanding,
         )
         response_channel = turn_decision.response_channel
         if self.host._should_force_model_expression(
@@ -167,7 +174,8 @@ class ChatServicePreparationService:
         """确认类回答已成功写入字段时，当前轮直接恢复主线，不留空悬承接。"""
         if understanding.primary_turn_type != "confirmation":
             return
-        if not (understanding.resolved_slots or {}):
+        effective_resolved_slots = self._effective_resolved_slots(understanding)
+        if not effective_resolved_slots:
             return
         if turn_decision.ask_field:
             return
@@ -213,21 +221,82 @@ class ChatServicePreparationService:
         decision_profile.resume_profile_target = next_field
         logger.info(
             "[prepare_confirmation_followup_override] resolved=%s ask_field=%s",
-            sorted((understanding.resolved_slots or {}).keys()),
+            sorted(effective_resolved_slots.keys()),
             next_field,
         )
+
+    def _apply_contextual_short_reply_followup_override(
+        self,
+        *,
+        turn_decision: TurnDecision,
+        understanding: TurnUnderstandingResult,
+        decision_profile: UserProfile,
+    ) -> None:
+        """短答上下文补回 sex 后，优先回到 age 主线，避免被位置变体顺序打散。"""
+        resolution = understanding.pre_generation_resolution
+        if resolution is None or resolution.source != "contextual_short_reply_backfill":
+            return
+        resolved_slots = self._effective_resolved_slots(understanding)
+        if "sex" not in resolved_slots:
+            return
+        if not self.host.collection_policy.can_actively_ask(decision_profile, "age"):
+            return
+        if str(getattr(turn_decision, "ask_field", "") or "").strip() == "age":
+            return
+
+        turn_decision.intent = "general"
+        turn_decision.primary_move = "light_followup"
+        turn_decision.ask_field = "age"
+        turn_decision.prioritize_user_question = False
+        turn_decision.allow_contact_target = False
+        turn_decision.allow_medium_target = False
+        turn_decision.response_channel = "model"
+        turn_decision.user_concern_type = None
+        turn_decision.resume_target = "age"
+        turn_decision.resume_applied = True
+        decision_profile.resume_profile_target = "age"
+        logger.info(
+            "[prepare_contextual_short_reply_override] resolved=%s ask_field=age",
+            sorted(resolved_slots.keys()),
+        )
+
+    @staticmethod
+    def _effective_resolved_slots(understanding: TurnUnderstandingResult) -> Dict[str, str]:
+        resolved_slots: Dict[str, str] = dict(getattr(understanding, "resolved_slots", {}) or {})
+        persistence_plan = getattr(understanding, "persistence_plan", None)
+        if persistence_plan is None:
+            return resolved_slots
+
+        for field in list(getattr(persistence_plan, "accepted_fields", []) or []):
+            field_name = str(getattr(field, "field", "") or "").strip()
+            scope = str(getattr(field, "scope", "") or "").strip()
+            if not field_name or scope not in {"self", "contact", "partner"}:
+                continue
+            resolved_slots[field_name] = str(getattr(field, "normalized_value", "") or "")
+        return resolved_slots
 
     async def _sync_decision_profile_state(
         self,
         *,
         user_profile: UserProfile,
         decision_profile: UserProfile,
+        understanding: TurnUnderstandingResult,
     ) -> None:
         """把只在决策阶段产生、但后续轮次需要依赖的状态同步回真实 profile。"""
         changed = False
+        collection_policy = getattr(self.host, "collection_policy", None)
 
-        if getattr(user_profile, "resume_profile_target", None) != getattr(decision_profile, "resume_profile_target", None):
-            user_profile.resume_profile_target = decision_profile.resume_profile_target
+        def _resume_field_needs_followup(field_name: Any) -> bool:
+            candidate = str(field_name or "").strip()
+            if not candidate or collection_policy is None:
+                return bool(candidate)
+            return not collection_policy.is_field_covered(decision_profile, candidate)
+
+        decision_resume_target = getattr(decision_profile, "resume_profile_target", None)
+        if not _resume_field_needs_followup(decision_resume_target):
+            decision_resume_target = None
+        if getattr(user_profile, "resume_profile_target", None) != decision_resume_target:
+            user_profile.resume_profile_target = decision_resume_target
             changed = True
         if getattr(user_profile, "resume_profile_mode", None) != getattr(decision_profile, "resume_profile_mode", None):
             user_profile.resume_profile_mode = decision_profile.resume_profile_mode
@@ -236,14 +305,68 @@ class ChatServicePreparationService:
             user_profile.last_user_concern_type = decision_profile.last_user_concern_type
             changed = True
 
+        semantic_frame = getattr(understanding, "semantic_frame", None)
+        persistence_plan = getattr(understanding, "persistence_plan", None)
+        if semantic_frame is not None:
+            semantic_summary_payload = {
+                "primary_domain": getattr(semantic_frame, "primary_domain", None),
+                "acts": list(getattr(semantic_frame, "acts", []) or []),
+                "user_questions": [
+                    str(getattr(item, "topic", "") or "").strip()
+                    for item in list(getattr(semantic_frame, "user_questions", []) or [])
+                    if str(getattr(item, "topic", "") or "").strip()
+                ],
+                "observed_fields": [
+                    str(getattr(item, "field", "") or "").strip()
+                    for item in list(getattr(semantic_frame, "field_observations", []) or [])
+                    if str(getattr(item, "field", "") or "").strip()
+                ],
+                "pending_fields": [
+                    str(getattr(item, "field", "") or "").strip()
+                    for item in list(getattr(persistence_plan, "pending_fields", []) or [])
+                    if str(getattr(item, "field", "") or "").strip()
+                ],
+                "resume_target": getattr(persistence_plan, "next_resume_target", None) if persistence_plan is not None else None,
+            }
+            if dict(getattr(user_profile, "last_semantic_summary", {}) or {}) != semantic_summary_payload:
+                user_profile.set_last_semantic_summary(semantic_summary_payload)
+                changed = True
+
+        if persistence_plan is not None:
+            update_prompt_state = getattr(persistence_plan, "update_prompt_state", None)
+            if update_prompt_state is not None:
+                prompt_state_payload = {
+                    "question_intent": getattr(update_prompt_state, "prompt_type", None),
+                    "asked_fields": [getattr(update_prompt_state, "main_target", None)] if getattr(update_prompt_state, "main_target", None) else [],
+                    "side_fields": list(getattr(update_prompt_state, "side_targets", []) or []),
+                    "expected_scope": (
+                        (list(getattr(update_prompt_state, "expected_scopes", []) or []) or ["self"])[0]
+                    ),
+                    "allow_mixed_answer": bool(getattr(update_prompt_state, "allows_mixed_answer", True)),
+                    "resume_target": getattr(persistence_plan, "next_resume_target", None),
+                }
+                if dict(getattr(user_profile, "last_question_state", {}) or {}) != prompt_state_payload:
+                    user_profile.set_last_question_state(prompt_state_payload)
+                    changed = True
+            resume_target = getattr(persistence_plan, "next_resume_target", None)
+            if resume_target and _resume_field_needs_followup(resume_target) and getattr(user_profile, "resume_profile_target", None) != resume_target:
+                user_profile.resume_profile_target = resume_target
+                changed = True
+
+        current_resume_target = str(getattr(user_profile, "resume_profile_target", "") or "").strip()
+        if current_resume_target and not _resume_field_needs_followup(current_resume_target):
+            user_profile.clear_resume_profile_target()
+            changed = True
+
         if not changed:
             return
 
         logger.info(
-            "[decision_profile_sync] resume_target=%s resume_mode=%s concern=%s",
+            "[decision_profile_sync] resume_target=%s resume_mode=%s concern=%s semantic_primary=%s",
             getattr(user_profile, "resume_profile_target", None) or "-",
             getattr(user_profile, "resume_profile_mode", None) or "-",
             getattr(user_profile, "last_user_concern_type", None) or "-",
+            str((getattr(user_profile, "last_semantic_summary", {}) or {}).get("primary_domain") or "-"),
         )
         await self.host.user_service.save_user_profile(user_profile.account_id, user_profile)
 
@@ -310,6 +433,12 @@ class ChatServicePreparationService:
             return "risk_guard", payload, user_profile
 
         if turn_decision.risk == "boundary":
+            if self._is_model_generated_repair_enabled():
+                user_profile.needs_bridge_back = False
+                user_profile.last_side_topic_type = None
+                await self.host.user_service.save_user_profile(account_id, user_profile)
+                logger.info("[model_generated_repair] boundary handled by model route")
+                return None, None, user_profile
             final_response = self.host._get_boundary_pause_response(user_message)
             final_response = self.host._apply_context_ack_policy(
                 final_response,
@@ -360,6 +489,13 @@ class ChatServicePreparationService:
             return route_name, payload, user_profile
 
         if turn_decision.intent == "complaint":
+            if self._is_model_generated_repair_enabled():
+                user_profile.needs_bridge_back = False
+                user_profile.last_side_topic_type = None
+                user_profile.complaint_cooldown_until = message_count + 2
+                await self.host.user_service.save_user_profile(account_id, user_profile)
+                logger.info("[model_generated_repair] complaint handled by model route")
+                return None, None, user_profile
             final_response = self.host._get_complaint_repair_response(user_message)
             final_response = self.host._apply_context_ack_policy(
                 final_response,
@@ -384,6 +520,11 @@ class ChatServicePreparationService:
             return "complaint_repair", payload, user_profile
 
         return None, None, user_profile
+
+    @staticmethod
+    def _is_model_generated_repair_enabled() -> bool:
+        raw = str(os.getenv("MQ_MODEL_GENERATED_REPAIR_ENABLED", "1") or "").strip().lower()
+        return raw not in {"0", "false", "off", "no"}
 
     @staticmethod
     def _normalize_compact_text(text: str) -> str:
@@ -500,6 +641,7 @@ class ChatServicePreparationService:
             user_profile,
             repeat_count=1,
             recent_responses=recent_responses or (),
+            understanding_result=None,
         ):
             return "end_faq"
 
@@ -601,6 +743,8 @@ class ChatServicePreparationService:
                 user_profile=user_profile,
                 recent_responses=recent_responses,
             )
+            if ended_intent in {"end_reopen", "end_profile_update"} and self.host._can_end_with_contact_completion(user_profile):
+                ended_intent = "end_ack"
             if ended_intent in {"end_reopen", "end_profile_update"}:
                 logger.info("[already_ended_intent] reopen session: intent=%s", ended_intent)
                 user_profile.conversation_ended = False
@@ -742,6 +886,7 @@ class ChatServicePreparationService:
             decision_profile,
             repeat_count=1,
             recent_responses=conversation_context.get("recent_responses") or (),
+            understanding_result=turn_understanding,
         ) or self._build_quick_faq_direct_response(
             account_id=account_id,
             user_message=user_message,
@@ -778,6 +923,13 @@ class ChatServicePreparationService:
         if turn_decision.response_channel != "quick_faq":
             final_response = self.host._sanitize_robotic_tone(final_response)
 
+        user_profile, collection_result = await self._apply_quick_faq_collection(
+            account_id=account_id,
+            user_profile=user_profile,
+            user_message=user_message,
+            turn_understanding=turn_understanding,
+            conversation_context=conversation_context,
+        )
         user_profile.needs_bridge_back = True
         user_profile.last_side_topic_type = "faq"
         await self.host.user_service.save_user_profile(account_id, user_profile)
@@ -786,10 +938,77 @@ class ChatServicePreparationService:
             user_profile=user_profile,
             user_message=user_message,
             final_response=final_response,
-            collection_result={"all_fields": []},
+            collection_result=collection_result,
             dialog_id=dialog_id,
             response_route="quick_faq",
         )
+
+    async def _apply_quick_faq_collection(
+        self,
+        *,
+        account_id: str,
+        user_profile: UserProfile,
+        user_message: str,
+        turn_understanding: TurnUnderstandingResult,
+        conversation_context: Dict[str, Any],
+    ) -> tuple[UserProfile, Dict[str, Any]]:
+        last_response = str((conversation_context.get("recent_responses") or [""])[-1] or "")
+        rule_extracted_data = self.host._extract_turn_level_fields(  # noqa: SLF001
+            user_message,
+            understanding_result=turn_understanding,
+            last_response=last_response,
+        )
+        fused_extracted_data, extraction_meta = self.host._fuse_extracted_fields(  # noqa: SLF001
+            {},
+            {
+                **dict(rule_extracted_data or {}),
+                **(
+                    {"age": int(str((rule_extracted_data or {}).get("age") or "").strip())}
+                    if isinstance((rule_extracted_data or {}).get("age"), str)
+                    and str((rule_extracted_data or {}).get("age") or "").strip().isdigit()
+                    else {}
+                ),
+            },
+            user_message,
+            user_profile=user_profile,
+            last_response=last_response,
+            understanding_result=turn_understanding,
+        )
+        if not fused_extracted_data:
+            return user_profile, {"all_fields": []}
+
+        profile_result = await self.host.profile_collection_coordinator.process_collection(
+            account_id,
+            user_profile,
+            fused_extracted_data,
+            user_message,
+            extraction_meta=extraction_meta,
+            turn_id=int(conversation_context.get("message_count", 0)) + 1,
+            understanding_result=turn_understanding,
+        )
+        collection_result = self.host.generation_service._merge_persistence_plan_into_collection_result(  # noqa: SLF001
+            collection_result=profile_result.collection_result,
+            understanding_result=turn_understanding,
+            user_profile=getattr(profile_result, "user_profile", None) or user_profile,
+        )
+        rich_partner_requirement = str(fused_extracted_data.get("partner_requirement") or "").strip()
+        if rich_partner_requirement and not any(
+            isinstance(item, dict) and str(item.get("field") or "").strip() == "partner_requirement"
+            for item in list(collection_result.get("all_fields") or [])
+        ):
+            display_fields = dict(collection_result.get("display_fields") or {})
+            display_fields.setdefault("partner_requirement", rich_partner_requirement)
+            collection_result["display_fields"] = display_fields
+        refreshed_profile = await self.host.user_service.get_user_profile(account_id)
+        logger.info(
+            "[quick_faq_collection] applied_fields=%s",
+            [
+                str(item.get("field") or "").strip()
+                for item in list(collection_result.get("all_fields") or [])
+                if isinstance(item, dict) and str(item.get("field") or "").strip()
+            ],
+        )
+        return refreshed_profile, collection_result
 
     def _build_quick_faq_direct_response(
         self,

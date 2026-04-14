@@ -16,6 +16,15 @@ class CollectionConcernMatch:
 
 
 class CollectionConcernDetector:
+    CONTACT_REPEAT_PATTERNS = (
+        r"上面不是已经留(?:给)?过电话",
+        r"不是已经留(?:给)?过电话",
+        r"都已经留(?:给)?过电话",
+        r"电话不是已经留(?:给)?过",
+        r"上面不是已经给(?:过)?电话",
+        r"不是已经给(?:过)?电话",
+        r"(?:留过|给过)电话.*(?:为什么|为啥).*(?:还要问|还问|又问)",
+    )
     DIRECT_PATTERNS = (
         r"为什么要记(?:下)?我(?:的)?(?:信息|资料|情况)",
         r"为啥要记(?:下)?我(?:的)?(?:信息|资料|情况)",
@@ -56,6 +65,14 @@ class CollectionConcernDetector:
         text = str(message or "").strip()
         if not text:
             return None
+
+        if any(re.search(pattern, text) for pattern in self.CONTACT_REPEAT_PATTERNS):
+            return CollectionConcernMatch(
+                intent="contact_repeat_why",
+                confidence=0.96,
+                reasons=("contact_repeat_pattern", "context_field"),
+                context_field="contact",
+            )
 
         if any(re.search(pattern, text) for pattern in self.DIRECT_PATTERNS):
             context_field = self._normalize_context_field(last_asked_field)

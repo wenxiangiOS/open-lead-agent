@@ -95,6 +95,12 @@
 - 问句后半句裁切
 - 为了“更像产品风格”而重写正文
 
+补充约束：
+
+- 当 AI 空回复、连接失败或基础设施失败触发 fallback 时，如果当前轮已经有明确 `ask_field`，应直接退回该字段的稳定主问题
+- 不要先输出“我先换个更稳妥的说法”“我先把这条整理一下”这类过渡空话，再由后置 guard 拼接真实追问
+- 降级场景优先保留单一主问题，不额外混入 side question
+
 ## 当前问题全景
 
 当前项目里的最终回复并不是“AI 生成后直接展示”，而是：
@@ -596,6 +602,196 @@
 
 才允许 fallback。
 
+## 方案补强与边界澄清（本次新增）
+
+上面的设计方向是对的，但要真正落地成“AI 像真人聊天且原话直出”，还需要把下面这些执行边界写死。否则实现时很容易又滑回“后台觉得不够稳，于是偷偷改正文”。
+
+### 1. `display_response` 冻结点必须是可执行契约
+
+必须明确：
+
+- 冻结动作发生在 `response_delivery_service` 产出 `display_response` 的那一刻
+- 一旦冻结，当前 turn 内任何后续模块都只能读，不能写
+- 允许改动正文的阶段只剩两个：`safe cleanup` 之前的 AI 原文，以及 `safe cleanup` 本身的白名单级清洗
+
+禁止出现：
+
+- finalize 之后再覆盖 `final_response`
+- collection / decision refresh 完成后回写用户可见正文
+- contact / followup / ending guard 在 delivery 之后二次改文案
+
+### 2. 必须把“用户可见链路”和“后台状态链路”物理拆开
+
+用户可见链路固定为：
+
+1. AI draft
+2. validation
+3. safe cleanup
+4. delivery freeze
+
+后台状态链路固定为：
+
+1. 字段提取
+2. profile 刷新
+3. turn decision 刷新
+4. contact / progress / repair / resume 状态推进
+5. async backfill 调度与回写
+
+硬约束：
+
+- 后台链路可以继续运行
+- 后台链路可以影响下一轮状态
+- 后台链路不能改当前轮已经冻结的 `display_response`
+
+### 3. 风控、预算、追问控制必须前移到生成前
+
+像下面这些能力，本身仍然是需要的：
+
+- 问题预算护栏
+- 优先级护栏
+- followup alignment
+- contact followup policy
+- ending / handoff policy
+
+但这些能力的正确落点不是“生成后改文案”，而是：
+
+- 生成前进入 `ResponsePlan`
+- 生成前进入 prompt 约束
+- 生成前决定当前轮到底走 `model / quick_faq / deterministic answer`
+
+也就是说：
+
+- 规则层可以决定“AI 该怎么答”
+- 规则层不能在 AI 已经答完后，再把正文截断、替换、拼接成另一句话
+
+### 4. `safe cleanup` 必须改成白名单制，不允许语义级清洗
+
+允许项必须收口为：
+
+- trim 首尾空白
+- 合并异常空白
+- 去调试块、协议块、控制标记
+- 去极少量明确非法碎片
+
+明确禁止：
+
+- 裁掉最后一句追问
+- 保留前半句、替换后半句
+- 只保留 AI 前缀，再拼本地 followup
+- 因为“更像产品风格”而改语气、改语义、改推进方式
+
+### 5. validation 需要分级，但默认只记录不拦正文
+
+validation 至少要区分三类结果：
+
+- `warning`
+- `hard_block`
+- `fallback_required`
+
+其中：
+
+- `warning` 只记录，不改正文
+- `hard_block` 只用于安全、合规、明显异常文本
+- `fallback_required` 只允许在 AI 空回复、AI 调用失败、硬安全风险时触发
+
+像下面这些都只能是 `warning`，不能作为改正文理由：
+
+- 字段推进不够强
+- 追问不够理想
+- 风格不够像人工客服
+- 没有完全命中当前 ask field
+
+### 6. `AI_RAW_RESPONSE_MODE` 需要明确成灰度契约，而不是口头约定
+
+需要在设计里明确：
+
+- 开关名与默认值
+- 灰度范围
+- kill switch
+- 允许观测的核心指标
+
+至少要持续观察：
+
+- `raw_display_diff_rate`
+- `post_freeze_mutation_attempts`
+- `fallback_rate`
+- `delivery_warning_rate`
+
+目标不是只把开关打开，而是能证明：
+
+- 打开 raw mode 后，当前轮可见正文确实不再被后处理偷偷改写
+
+### 7. 可观测性必须能追到“谁改了正文”
+
+在现有日志基础上，建议再补这些字段：
+
+- `display_frozen_at`
+- `display_mutation_count`
+- `display_mutation_source`
+- `post_freeze_write_attempt`
+- `raw_display_diff_reason`
+
+硬要求：
+
+- 只要 `display_response != raw_ai_response`，就必须有明确理由
+- 只要冻结后仍有人尝试写正文，就必须记 error 级别日志
+
+### 8. 回归样本必须覆盖“真人感最容易被后处理毁掉”的场景
+
+至少要补齐这些样本：
+
+- FAQ + 资料 + 联系方式混合长句
+- 开场长句里自述信息和择偶要求并存
+- `做it呢` 这类极短回答
+- `98年呢？我离异过呢` / `办理好呢` 这类状态确认链
+- `我自己收入不高一年18左右` 这类口语化收入表达
+
+验收标准不只是“字段没丢”，还要包括：
+
+- 当前轮最终展示文本没有被后处理改写成模板腔
+- 当前轮最终展示文本没有被截成半句
+- 当前轮最终展示文本和 AI 原文之间的差异可解释、可回放
+
+### 9. 第二阶段若做 rewrite，也只能是“模型整段重写一次”
+
+后续如果真的进入第二阶段，允许的是：
+
+- validation 后，交给模型基于约束整段重写一次
+
+不允许的是：
+
+- 本地规则拼前缀
+- 本地规则替换最后一句
+- 本地规则裁半句再补一句
+- “保留 AI 风格前缀 + 本地模板追问” 这种半人工拼接
+
+第二阶段也必须继续满足：
+
+- rewrite 发生在 `display_response` 冻结之前
+- rewrite 最多一次
+- 原始 `raw_ai_response` 必须保留到 observability，便于回放审计
+
+### 10. complaint / boundary 统一走模型生成（2026-04 更新）
+
+根因回放显示：当 complaint / boundary 走固定短路模板时，容易出现“空悬收口”“脚本感”“记忆断裂”。
+
+因此新增硬约束：
+
+1. 默认不再把 complaint / boundary 交给本地固定文案短路。
+2. complaint / boundary 进入模型生成主链，但必须使用 response plan 约束。
+3. complaint 轮必须同时满足：
+   - 承认刚才问法问题
+   - 明确降压（本轮不继续追资料）
+   - 给出一个可执行下一步（不能只说“接着聊”）
+4. boundary 轮必须先接住边界，再给低压力承接句；禁止继续索要联系方式。
+5. 仍允许保留紧急 kill switch（环境开关）用于回退模板短路，但默认值必须是“模型生成”。
+
+验收标准：
+
+- complaint / boundary 轮 `prompt_chars > 0`（即走模型）。
+- 禁止再出现固定空悬句：“这个点先收住，我们接着往下聊”。
+- 该类轮次后，主线恢复时不能重复追问用户刚给过的字段。
+
 ## 未来第二阶段
 
 第一阶段先做到：
@@ -606,6 +802,14 @@
 
 - validation 失败后，不是直接 fallback
 - 而是先给 AI 一次 rewrite 机会
+
+这里的 rewrite 必须是：
+
+- 模型基于完整上下文重新生成整段可见正文
+
+而不是：
+
+- 本地规则对原文做截断、替换、拼接
 
 第二阶段主链可升级成：
 

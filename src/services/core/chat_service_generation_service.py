@@ -11,8 +11,99 @@ from src.services.core.chat_service_models import (
 
 
 class ChatServiceGenerationService:
+    _HIGH_RISK_FIELDS = {"occupation", "age", "monthly_income", "contact", "partner_requirement", "sex"}
+
     def __init__(self, host: Any) -> None:
         self.host = host
+
+    @staticmethod
+    def _merge_persistence_plan_into_collection_result(
+        *,
+        collection_result: Dict[str, Any],
+        understanding_result: TurnUnderstandingResult,
+        user_profile: UserProfile | None = None,
+    ) -> Dict[str, Any]:
+        persistence_plan = getattr(understanding_result, "persistence_plan", None)
+        if persistence_plan is None:
+            return collection_result
+
+        merged = dict(collection_result or {})
+        all_fields = list(merged.get("all_fields") or [])
+        existing_fields = {
+            str(item.get("field") or "").strip()
+            for item in all_fields
+            if isinstance(item, dict)
+        }
+
+        for field in list(getattr(persistence_plan, "accepted_fields", []) or []):
+            field_name = str(getattr(field, "field", "") or "").strip()
+            scope = str(getattr(field, "scope", "") or "").strip()
+            persistence_state = str(getattr(field, "persistence_state", "committed") or "committed").strip()
+            if not field_name or field_name in existing_fields:
+                continue
+            if scope not in {"self", "contact", "partner"}:
+                continue
+            if persistence_state != "committed":
+                continue
+            if (
+                field_name in ChatServiceGenerationService._HIGH_RISK_FIELDS
+                and not ChatServiceGenerationService._allows_high_risk_field_from_plan(field)
+            ):
+                continue
+            if not ChatServiceGenerationService._is_field_persisted_in_profile(
+                user_profile=user_profile,
+                field_name=field_name,
+                expected_value=getattr(field, "normalized_value", None),
+            ):
+                continue
+            all_fields.append(
+                {
+                    "field": field_name,
+                    "value": getattr(field, "normalized_value", None),
+                    "source": "persistence_plan",
+                }
+            )
+            existing_fields.add(field_name)
+
+        merged["all_fields"] = all_fields
+        if all_fields and "collected" not in merged:
+            merged["collected"] = True
+        return merged
+
+    @staticmethod
+    def _allows_high_risk_field_from_plan(field: Any) -> bool:
+        source_channel = str(getattr(field, "source_channel", "unknown") or "unknown").strip()
+        if source_channel == "ai":
+            return True
+        field_name = str(getattr(field, "field", "") or "").strip()
+        acceptance_reason = str(getattr(field, "acceptance_reason", "") or "").strip()
+        return field_name in {"sex", "age", "occupation", "monthly_income"} and acceptance_reason == "explicit_self_marker"
+
+    @staticmethod
+    def _is_field_persisted_in_profile(
+        *,
+        user_profile: UserProfile | None,
+        field_name: str,
+        expected_value: Any,
+    ) -> bool:
+        if user_profile is None:
+            return False
+
+        progress = dict(getattr(user_profile, "collection_progress", {}) or {})
+        if progress.get(field_name, False):
+            return True
+
+        current_value = getattr(user_profile, field_name, None)
+        if current_value in (None, "", [], {}, ()):
+            return False
+        if expected_value in (None, "", [], {}, ()):
+            return True
+
+        current_text = str(current_value).strip()
+        expected_text = str(expected_value).strip()
+        if not current_text or not expected_text:
+            return bool(current_text)
+        return current_text == expected_text
 
     async def generate_turn_response_text(
         self,
@@ -30,7 +121,12 @@ class ChatServiceGenerationService:
         ) and turn_decision.response_channel == "model"
         self.host._last_opening_intent_signal = None
         self.host._last_unified_generation_record = None
-        ai_response = await self.host._call_ai(main_prompt, account_id, user_message)
+        ai_response = await self.host._call_ai(
+            main_prompt,
+            account_id,
+            user_message,
+            turn_decision=turn_decision,
+        )
         infra_fail = False
         infra_fail_reason = ""
         if not ai_response:
@@ -67,7 +163,12 @@ class ChatServiceGenerationService:
             turn_id=message_count + 1,
             understanding_result=understanding_result,
         )
-        collection_result = profile_result.collection_result
+        profile_after_collection = getattr(profile_result, "user_profile", None) or user_profile
+        collection_result = self._merge_persistence_plan_into_collection_result(
+            collection_result=profile_result.collection_result,
+            understanding_result=understanding_result,
+            user_profile=profile_after_collection,
+        )
         extracted_fields_count = len(collection_result.get("all_fields", []))
 
         for field_info in collection_result.get("all_fields", []):

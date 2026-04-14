@@ -24,14 +24,38 @@ class ChatServiceDeliveryService:
             and str(field_info.get("value") or "").strip()
             for field_info in all_fields
         )
-        if has_contact_field:
-            return await self.host._handle_contact_validation(
+        has_invalid_contact_attempt = bool(str((collection_result or {}).get("invalid_contact_attempt") or "").strip())
+        has_active_contact_context = self.host.contact_context_service.has_active_contact_context(
+            user_profile,
+            collection_result=collection_result,
+            user_message=user_message,
+        )
+        raw_mode_enabled = True
+        raw_mode_checker = getattr(self.host, "_is_ai_raw_response_mode_enabled", None)
+        if callable(raw_mode_checker):
+            try:
+                raw_mode_enabled = bool(raw_mode_checker())
+            except Exception:
+                raw_mode_enabled = True
+        if has_contact_field or has_invalid_contact_attempt or has_active_contact_context:
+            rewritten = await self.host._handle_contact_validation(
                 account_id,
                 user_profile,
                 collection_result,
                 ai_response,
                 user_message,
             )
+            validation_meta = getattr(self.host, "_last_validation_feedback_meta", None)
+            retry_lock_response = bool(
+                isinstance(validation_meta, dict) and validation_meta.get("retry_lock_response")
+            )
+            if retry_lock_response and str(rewritten or "").strip():
+                return rewritten
+            rewritten_text = str(rewritten or "").strip()
+            ai_text = str(ai_response or "").strip()
+            if rewritten_text and rewritten_text != ai_text:
+                return rewritten
+            return ai_response if raw_mode_enabled else rewritten
         return ai_response
 
     async def sync_post_delivery_state(

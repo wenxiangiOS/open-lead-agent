@@ -4,6 +4,7 @@
 import logging
 import asyncio
 import os
+import time
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from openai import AsyncOpenAI
@@ -120,6 +121,9 @@ class AIService:
         max_tokens: int = 500,
         timeout: Optional[float] = None,
         model_name: Optional[str] = None,
+        disable_retry: bool = False,
+        use_max_completion_tokens: Optional[bool] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> str:
         """
         生成 AI 回复（带超时控制）
@@ -143,14 +147,26 @@ class AIService:
         max_retries = int(os.getenv("AI_CHAT_MAX_RETRIES", "1"))
         if max_retries < 1:
             max_retries = 1
+        if disable_retry:
+            max_retries = 1
         retry_delay = float(os.getenv("AI_CHAT_RETRY_DELAY_SECONDS", "0.5"))
+        effective_retry_count = max(0, max_retries - 1)
 
         last_error = None
         for attempt in range(max_retries):
             try:
+                attempt_started_at = time.monotonic()
                 async with asyncio.timeout(timeout):
                     return await self._do_generate_response(
-                        message, system_prompt, temperature, max_tokens, model_name
+                        message,
+                        system_prompt,
+                        temperature,
+                        max_tokens,
+                        model_name,
+                        use_max_completion_tokens=use_max_completion_tokens,
+                        reasoning_effort=reasoning_effort,
+                        attempt_timeout_seconds=timeout,
+                        attempt_started_at=attempt_started_at,
                     )
             except asyncio.TimeoutError as e:
                 last_error = e
@@ -160,7 +176,10 @@ class AIService:
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2  # 指数退避
                 else:
-                    logger.error(f"AI 调用超时（{timeout}秒），已重试 {max_retries} 次")
+                    if effective_retry_count > 0:
+                        logger.error(f"AI 调用超时（{timeout}秒），已重试 {effective_retry_count} 次")
+                    else:
+                        logger.error(f"AI 调用超时（{timeout}秒），未重试")
             except Exception as e:
                 last_error = e
                 status_code = self._extract_status_code(e)
@@ -183,6 +202,14 @@ class AIService:
                     )
                     break
 
+                if self._is_empty_response_exception(e):
+                    if attempt < max_retries - 1:
+                        logger.warning(f"AI 调用返回空响应，第 {attempt + 1} 次重试...")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    logger.error(f"AI 调用失败: {e}")
+                    continue
+
                 await self._reset_client(f"generate_response_error:{type(e).__name__}")
                 if attempt < max_retries - 1:
                     logger.warning(f"AI 调用失败: {e}，第 {attempt + 1} 次重试...")
@@ -191,7 +218,9 @@ class AIService:
                     logger.error(f"AI 调用失败: {e}")
 
         if isinstance(last_error, asyncio.TimeoutError):
-            raise AIServiceException(f"AI 服务响应超时（{timeout}秒），已重试 {max_retries} 次")
+            if effective_retry_count > 0:
+                raise AIServiceException(f"AI 服务响应超时（{timeout}秒），已重试 {effective_retry_count} 次")
+            raise AIServiceException(f"AI 服务响应超时（{timeout}秒），未重试")
         if last_error is not None:
             raise AIServiceException(
                 f"AI 服务错误: {str(last_error)}",
@@ -227,6 +256,13 @@ class AIService:
             return True
         return False
 
+    @staticmethod
+    def _is_empty_response_exception(exc: Exception) -> bool:
+        if not isinstance(exc, AIServiceException):
+            return False
+        details = getattr(exc, "details", {}) or {}
+        return str(details.get("reason") or "").strip() == "empty_response"
+
     async def _do_generate_response(
         self,
         message: str,
@@ -234,6 +270,10 @@ class AIService:
         temperature: float,
         max_tokens: int,
         model_name: Optional[str] = None,
+        use_max_completion_tokens: Optional[bool] = None,
+        reasoning_effort: Optional[str] = None,
+        attempt_timeout_seconds: Optional[float] = None,
+        attempt_started_at: Optional[float] = None,
     ) -> str:
         """实际执行 AI 调用"""
         # Create messages
@@ -248,33 +288,209 @@ class AIService:
             }
         ]
 
-        # Make API call using async client
-        response = await self.client.chat.completions.create(
-            model=model_name or self.model_name,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=0.9,
-            frequency_penalty=0.0,
-            presence_penalty=0.0
+        request_kwargs: Dict[str, Any] = {
+            "model": model_name or self.model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "top_p": 0.9,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0,
+        }
+        requested_token_param = "max_tokens"
+        if use_max_completion_tokens:
+            request_kwargs["max_completion_tokens"] = max_tokens
+            requested_token_param = "max_completion_tokens"
+        else:
+            request_kwargs["max_tokens"] = max_tokens
+        normalized_reasoning_effort = str(reasoning_effort or "").strip().lower()
+        if normalized_reasoning_effort:
+            request_kwargs["reasoning_effort"] = normalized_reasoning_effort
+
+        response = await self._create_chat_completion_with_compat_fallback(
+            request_kwargs=request_kwargs,
+            requested_token_param=requested_token_param,
         )
 
-        # Extract response
-        content = response.choices[0].message.content
+        content = self._extract_response_text(response)
+        if not content and self._should_retry_empty_response_with_token_fallback(
+            response=response,
+            requested_token_param=requested_token_param,
+        ):
+            remaining_budget = self._remaining_attempt_budget(
+                timeout_seconds=attempt_timeout_seconds,
+                started_at=attempt_started_at,
+            )
+            fallback_timeout = self._resolve_empty_response_fallback_timeout(remaining_budget)
+            if fallback_timeout is None:
+                logger.warning(
+                    "[AI空响应兼容降级] skipped: insufficient_budget remaining=%.2fs requested_token_param=%s",
+                    remaining_budget,
+                    requested_token_param,
+                )
+            else:
+                logger.warning(
+                    "[AI空响应兼容降级] finish_reason=length requested_token_param=%s retry_with=max_tokens timeout=%.2fs",
+                    requested_token_param,
+                    fallback_timeout,
+                )
+                try:
+                    async with asyncio.timeout(fallback_timeout):
+                        response = await self.client.chat.completions.create(
+                            **self._build_visible_output_fallback_kwargs(request_kwargs)
+                        )
+                    requested_token_param = "max_tokens"
+                    content = self._extract_response_text(response)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "[AI空响应兼容降级] fallback_timeout requested_token_param=%s timeout=%.2fs",
+                        requested_token_param,
+                        fallback_timeout,
+                    )
+
         if not content:
-            logger.warning("Empty response from AI model, will retry")
-            raise AIServiceException("AI 模型返回空响应")
+            self._log_empty_response_debug(
+                response=response,
+                model_name=model_name or self.model_name,
+                requested_max_tokens=max_tokens,
+                requested_token_param=requested_token_param,
+            )
+            raise AIServiceException(
+                "AI 模型返回空响应",
+                details={"reason": "empty_response"},
+            )
 
         self._log_raw_response_debug(
             response=response,
             content=content,
             requested_max_tokens=max_tokens,
             model_name=model_name or self.model_name,
+            requested_token_param=requested_token_param,
         )
 
         await self._record_token_usage(response)
 
         return content.strip()
+
+    async def _create_chat_completion_with_compat_fallback(
+        self,
+        *,
+        request_kwargs: Dict[str, Any],
+        requested_token_param: str,
+    ) -> Any:
+        advanced_fields: list[str] = []
+        if "max_completion_tokens" in request_kwargs:
+            advanced_fields.append("max_completion_tokens")
+        if request_kwargs.get("reasoning_effort"):
+            advanced_fields.append("reasoning_effort")
+
+        try:
+            return await self.client.chat.completions.create(**request_kwargs)
+        except Exception as exc:
+            status_code = self._extract_status_code(exc)
+            if not advanced_fields or status_code != 400:
+                raise
+
+            fallback_kwargs = dict(request_kwargs)
+            if "max_completion_tokens" in fallback_kwargs and "max_tokens" not in fallback_kwargs:
+                fallback_kwargs["max_tokens"] = fallback_kwargs.pop("max_completion_tokens")
+            fallback_kwargs.pop("reasoning_effort", None)
+
+            logger.warning(
+                "[AI请求兼容降级] status=%s requested_token_param=%s removed=%s",
+                status_code,
+                requested_token_param,
+                ",".join(advanced_fields),
+            )
+            return await self.client.chat.completions.create(**fallback_kwargs)
+
+    @staticmethod
+    def _build_visible_output_fallback_kwargs(request_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        fallback_kwargs = dict(request_kwargs)
+        if "max_completion_tokens" in fallback_kwargs and "max_tokens" not in fallback_kwargs:
+            fallback_kwargs["max_tokens"] = fallback_kwargs.pop("max_completion_tokens")
+        fallback_kwargs.pop("reasoning_effort", None)
+        return fallback_kwargs
+
+    @staticmethod
+    def _should_retry_empty_response_with_token_fallback(
+        *,
+        response: Any,
+        requested_token_param: str,
+    ) -> bool:
+        if requested_token_param != "max_completion_tokens":
+            return False
+        choices = list(getattr(response, "choices", []) or [])
+        if not choices:
+            return False
+        finish_reason = str(getattr(choices[0], "finish_reason", "") or "").strip().lower()
+        return finish_reason == "length"
+
+    @staticmethod
+    def _remaining_attempt_budget(
+        *,
+        timeout_seconds: Optional[float],
+        started_at: Optional[float],
+    ) -> float:
+        if timeout_seconds is None or started_at is None:
+            return 0.0
+        return max(0.0, float(timeout_seconds) - (time.monotonic() - float(started_at)))
+
+    @classmethod
+    def _resolve_empty_response_fallback_timeout(cls, remaining_budget: float) -> Optional[float]:
+        cap = float(os.getenv("AI_EMPTY_RESPONSE_FALLBACK_TIMEOUT_SECONDS", "5"))
+        safety_margin = float(os.getenv("AI_EMPTY_RESPONSE_FALLBACK_SAFETY_MARGIN_SECONDS", "0.5"))
+        min_timeout = float(os.getenv("AI_EMPTY_RESPONSE_FALLBACK_MIN_TIMEOUT_SECONDS", "1"))
+        fallback_timeout = min(cap, max(0.0, remaining_budget - safety_margin))
+        if fallback_timeout < min_timeout:
+            return None
+        return fallback_timeout
+
+    def _extract_response_text(self, response: Any) -> str:
+        for choice in list(getattr(response, "choices", []) or []):
+            direct_text = self._normalize_response_content(getattr(choice, "text", None))
+            if direct_text:
+                return direct_text
+
+            message = getattr(choice, "message", None)
+            if message is None:
+                continue
+
+            normalized = self._normalize_response_content(getattr(message, "content", None))
+            if normalized:
+                return normalized
+
+        return ""
+
+    def _normalize_response_content(self, payload: Any, *, _depth: int = 0) -> str:
+        if _depth > 6 or payload is None:
+            return ""
+        if isinstance(payload, str):
+            return payload.strip()
+        if isinstance(payload, (list, tuple)):
+            fragments = [
+                self._normalize_response_content(item, _depth=_depth + 1)
+                for item in payload
+            ]
+            return "\n".join(fragment for fragment in fragments if fragment).strip()
+        if isinstance(payload, dict):
+            payload_type = str(payload.get("type", "") or "").strip().lower()
+            if payload_type in {"reasoning", "refusal", "tool_call", "function_call"}:
+                return ""
+            for key in ("text", "output_text", "content", "value"):
+                normalized = self._normalize_response_content(payload.get(key), _depth=_depth + 1)
+                if normalized:
+                    return normalized
+            return ""
+
+        payload_type = str(getattr(payload, "type", "") or "").strip().lower()
+        if payload_type in {"reasoning", "refusal", "tool_call", "function_call"}:
+            return ""
+        for attr in ("text", "output_text", "content", "value"):
+            if hasattr(payload, attr):
+                normalized = self._normalize_response_content(getattr(payload, attr), _depth=_depth + 1)
+                if normalized:
+                    return normalized
+        return ""
 
     def _log_raw_response_debug(
         self,
@@ -283,11 +499,14 @@ class AIService:
         content: str,
         requested_max_tokens: int,
         model_name: str,
+        requested_token_param: str = "max_tokens",
     ) -> None:
         usage = getattr(response, "usage", None)
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
         total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+        completion_details = getattr(usage, "completion_tokens_details", None)
+        reasoning_tokens = int(getattr(completion_details, "reasoning_tokens", 0) or 0)
 
         choice = response.choices[0] if getattr(response, "choices", None) else None
         finish_reason = getattr(choice, "finish_reason", None) or "-"
@@ -296,14 +515,16 @@ class AIService:
         raw_chars = len(raw_text)
 
         logger.info(
-            "[AI原始响应] model=%s response_id=%s finish_reason=%s requested_max_tokens=%s raw_chars=%s usage_prompt=%s usage_completion=%s usage_total=%s",
+            "[AI原始响应] model=%s response_id=%s finish_reason=%s requested_token_param=%s requested_max_tokens=%s raw_chars=%s usage_prompt=%s usage_completion=%s usage_reasoning=%s usage_total=%s",
             model_name,
             response_id,
             finish_reason,
+            requested_token_param,
             requested_max_tokens,
             raw_chars,
             prompt_tokens,
             completion_tokens,
+            reasoning_tokens,
             total_tokens,
         )
 
@@ -324,11 +545,43 @@ class AIService:
             return
 
         preview = raw_text[:preview_chars]
-        logger.info(
+        logger.debug(
             "[AI原始响应预览] response_id=%s preview_chars=%s content=%r",
             response_id,
             min(preview_chars, raw_chars),
             preview,
+        )
+
+    def _log_empty_response_debug(
+        self,
+        *,
+        response: Any,
+        model_name: str,
+        requested_max_tokens: int,
+        requested_token_param: str = "max_tokens",
+    ) -> None:
+        choices = list(getattr(response, "choices", []) or [])
+        choice = choices[0] if choices else None
+        message = getattr(choice, "message", None) if choice is not None else None
+        raw_content = getattr(message, "content", None) if message is not None else None
+        finish_reason = getattr(choice, "finish_reason", None) or "-"
+        response_id = getattr(response, "id", None) or "-"
+        tool_calls = getattr(message, "tool_calls", None) if message is not None else None
+        refusal = getattr(message, "refusal", None) if message is not None else None
+
+        logger.warning(
+            "[AI空响应] model=%s response_id=%s finish_reason=%s requested_token_param=%s requested_max_tokens=%s choices=%s message_role=%s content_type=%s content_preview=%r tool_calls=%s refusal=%r",
+            model_name,
+            response_id,
+            finish_reason,
+            requested_token_param,
+            requested_max_tokens,
+            len(choices),
+            getattr(message, "role", None) or "-",
+            type(raw_content).__name__ if raw_content is not None else "NoneType",
+            str(raw_content)[:200] if raw_content is not None else None,
+            len(tool_calls) if isinstance(tool_calls, list) else (1 if tool_calls else 0),
+            refusal,
         )
 
     async def _record_token_usage(self, response: Any) -> None:
@@ -347,7 +600,7 @@ class AIService:
             AIService.total_tokens += total_tokens
             AIService.call_count += 1
 
-        logger.info(
+        logger.debug(
             "Token使用: 输入=%s, 输出=%s, 总计=%s",
             prompt_tokens,
             completion_tokens,
@@ -391,11 +644,17 @@ class AIService:
                     presence_penalty=0.0
                 )
 
-                # Extract response
-                content = response.choices[0].message.content
+                content = self._extract_response_text(response)
                 if not content:
-                    logger.warning("Empty response from AI model, will retry")
-                    raise AIServiceException("AI 模型返回空响应")
+                    self._log_empty_response_debug(
+                        response=response,
+                        model_name=self.model_name,
+                        requested_max_tokens=max_tokens,
+                    )
+                    raise AIServiceException(
+                        "AI 模型返回空响应",
+                        details={"reason": "empty_response"},
+                    )
 
                 await self._record_token_usage(response)
                 return content.strip()
@@ -451,7 +710,7 @@ class AIService:
                 )
                 await self._record_token_usage(response)
 
-                content = response.choices[0].message.content
+                content = self._extract_response_text(response)
                 if not content:
                     return {"positive": 0.3, "negative": 0.3, "neutral": 0.4}
 
@@ -496,7 +755,7 @@ class AIService:
                 )
                 await self._record_token_usage(response)
 
-                content = response.choices[0].message.content
+                content = self._extract_response_text(response)
                 if not content:
                     return []
 
@@ -544,7 +803,7 @@ class AIService:
                 )
                 await self._record_token_usage(response)
 
-                content = response.choices[0].message.content
+                content = self._extract_response_text(response)
                 if not content:
                     return {"intent": "other", "confidence": 0.1, "category": "未知"}
 

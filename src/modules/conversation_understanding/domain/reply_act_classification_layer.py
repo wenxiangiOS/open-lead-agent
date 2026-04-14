@@ -28,6 +28,19 @@ class ReplyActClassificationLayer:
         r"改为",
     )
 
+    @staticmethod
+    def _effective_resolved_fields(semantic_result: TurnUnderstandingResult) -> set[str]:
+        persistence_plan = getattr(semantic_result, "persistence_plan", None)
+        resolved_fields = set((semantic_result.resolved_slots or {}).keys())
+        if persistence_plan is not None:
+            resolved_fields = set()
+        accepted_fields = getattr(persistence_plan, "accepted_fields", None) or []
+        for field in accepted_fields:
+            field_name = str(getattr(field, "field", "") or "").strip()
+            if field_name:
+                resolved_fields.add(field_name)
+        return resolved_fields
+
     def classify(
         self,
         *,
@@ -53,8 +66,9 @@ class ReplyActClassificationLayer:
         if semantic_result.primary_turn_type == "invalid_input" and semantic_result.subtype == "soft_refusal_current_field":
             return ReplyActClassificationResult(reply_act="soft_refusal", confidence=0.92, reason="soft_refusal_current_field")
 
-        if semantic_result.resolved_slots and self._looks_like_preference_statement(message):
-            resolved_fields = set((semantic_result.resolved_slots or {}).keys())
+        resolved_fields = self._effective_resolved_fields(semantic_result)
+
+        if resolved_fields and self._looks_like_preference_statement(message):
             partner_fields = {"partner_requirement", "partner_gender_preference"}
             self_fields = resolved_fields - partner_fields
             if resolved_fields & partner_fields and self_fields:
@@ -66,7 +80,6 @@ class ReplyActClassificationLayer:
             return ReplyActClassificationResult(reply_act="preference_statement", confidence=0.8, reason="preference_markers")
 
         if semantic_result.primary_turn_type in {"opening", "profile_answer", "confirmation"}:
-            resolved_fields = set((semantic_result.resolved_slots or {}).keys())
             if asked_fields:
                 overlap = resolved_fields & set(asked_fields)
                 if overlap and len(resolved_fields - set(asked_fields)) <= 1:
@@ -75,14 +88,14 @@ class ReplyActClassificationLayer:
                     return ReplyActClassificationResult(reply_act="mixed_answer", confidence=0.88, reason="asked_field_overlap_with_extra")
                 if resolved_fields and not overlap:
                     return ReplyActClassificationResult(reply_act="off_target_answer", confidence=0.82, reason="resolved_slots_outside_asked_fields")
-            if semantic_result.resolved_slots:
-                if len(semantic_result.resolved_slots) >= 2:
+            if resolved_fields:
+                if len(resolved_fields) >= 2:
                     return ReplyActClassificationResult(reply_act="mixed_answer", confidence=0.78, reason="multi_slot_payload")
                 if semantic_result.primary_turn_type == "profile_answer":
                     return ReplyActClassificationResult(reply_act="direct_answer", confidence=0.76, reason="single_profile_slot")
 
         if semantic_result.primary_turn_type == "faq_concern" or any(re.search(pattern, message) for pattern in self._NEW_QUESTION_PATTERNS):
-            if semantic_result.resolved_slots:
+            if resolved_fields:
                 return ReplyActClassificationResult(reply_act="mixed_answer", confidence=0.74, reason="question_signal_with_payload")
             return ReplyActClassificationResult(reply_act="new_question", confidence=0.86, reason="question_signal")
 

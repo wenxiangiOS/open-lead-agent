@@ -2,6 +2,8 @@ import logging
 from typing import Any, Dict, Optional
 import re
 
+from src.services.core.chat_service_summary_helper_service import ChatServiceSummaryHelperService
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,6 +55,10 @@ class ChatServiceCollectionPostprocessService:
         if service is None:
             return {}
         return dict(service._extract_deterministic_profile_fields(str(user_message or "").strip()) or {})  # noqa: SLF001
+
+    @staticmethod
+    def _compose_structured_partner_preference_text(user_profile) -> str:
+        return ChatServiceSummaryHelperService.compose_structured_partner_preference_text(user_profile)
 
     @staticmethod
     def _upsert_collection_result_field(
@@ -113,10 +119,18 @@ class ChatServiceCollectionPostprocessService:
         user_profile,
         collection_result: Dict[str, Any],
         user_message: str,
+        understanding_result: Any = None,
     ) -> None:
+        if self._is_authoritative_field(field_name="age", understanding_result=understanding_result) or self._is_authoritative_field(
+            field_name="age_label",
+            understanding_result=understanding_result,
+        ):
+            return
         age = getattr(user_profile, "age", None)
         current_age_label = str(getattr(user_profile, "age_label", "") or "").strip()
         partner_requirement = str(getattr(user_profile, "partner_requirement", "") or "").strip()
+        if not partner_requirement:
+            partner_requirement = self._compose_structured_partner_preference_text(user_profile)
         if not age or not current_age_label or not partner_requirement:
             return
 
@@ -162,11 +176,16 @@ class ChatServiceCollectionPostprocessService:
         user_profile,
         collection_result: Dict[str, Any],
         user_message: str,
+        understanding_result: Any = None,
     ) -> None:
         extracted = self._extract_deterministic_self_fields(user_message)
         partner_requirement = str(getattr(user_profile, "partner_requirement", "") or "").strip()
+        if not partner_requirement:
+            partner_requirement = self._compose_structured_partner_preference_text(user_profile)
         extraction_service = getattr(self.host, "extraction_service", None)
         for field_name, rule in self.SELF_PARTNER_CONFLICT_RULES.items():
+            if self._is_authoritative_field(field_name=field_name, understanding_result=understanding_result):
+                continue
             current_value = str(getattr(user_profile, field_name, "") or "").strip()
             if not current_value:
                 continue
@@ -194,6 +213,18 @@ class ChatServiceCollectionPostprocessService:
                 resolved_value=resolved_value,
                 log_label=str(rule.get("label") or field_name),
             )
+
+    @staticmethod
+    def _is_authoritative_field(*, field_name: str, understanding_result: Any = None) -> bool:
+        persistence_plan = getattr(understanding_result, "persistence_plan", None)
+        if persistence_plan is None:
+            return False
+        return any(
+            str(getattr(field, "field", "") or "").strip() == field_name
+            and str(getattr(field, "scope", "") or "").strip() in {"self", "contact", "partner"}
+            and str(getattr(field, "persistence_state", "committed") or "committed").strip() == "committed"
+            for field in list(getattr(persistence_plan, "accepted_fields", []) or [])
+        )
 
     @staticmethod
     def _looks_like_tail_completion_reply(user_message: str) -> bool:
@@ -340,6 +371,7 @@ class ChatServiceCollectionPostprocessService:
         collection_result: Dict[str, Any],
         user_message: str,
         last_response: str,
+        understanding_result: Any = None,
     ) -> Dict[str, Any]:
         if self._should_hard_end_fake_info(
             user_message=user_message,
@@ -371,12 +403,14 @@ class ChatServiceCollectionPostprocessService:
             user_profile=user_profile,
             collection_result=collection_result,
             user_message=user_message,
+            understanding_result=understanding_result,
         )
         await self._repair_self_partner_simple_scope_conflicts(
             account_id=account_id,
             user_profile=user_profile,
             collection_result=collection_result,
             user_message=user_message,
+            understanding_result=understanding_result,
         )
 
         ending_info = self.host.ending_service.check_and_get_ending(

@@ -87,3 +87,73 @@ def test_summary_format_is_natural():
     assert summary.startswith("你")
     assert summary.endswith("。")
     assert "是吧" not in summary
+
+
+def test_extract_partner_requirement_hint_merges_profile_raw_and_structured_subslots():
+    profile = UserProfile(account_id="test_summary_structured_hint")
+    profile.partner_requirement = "同老家在深圳，最好深户，有房有车，不要92"
+    profile.partner_pref_location = "深圳"
+    profile.partner_pref_education = "学历本科及以上"
+
+    hint = ChatServiceSummaryHelperService.extract_partner_requirement_hint(profile=profile)
+
+    assert hint == "同老家在深圳，学历本科及以上，最好深户，有房有车，不要92"
+
+
+def test_extract_partner_requirement_hint_reads_structured_subslots_from_collection_result():
+    hint = ChatServiceSummaryHelperService.extract_partner_requirement_hint(
+        collection_result={
+            "all_fields": [
+                {"field": "partner_pref_location", "value": "深圳"},
+                {"field": "partner_pref_education", "value": "学历本科及以上"},
+            ]
+        }
+    )
+
+    assert hint == "深圳，学历本科及以上"
+
+
+def test_extract_partner_requirement_hint_merges_collection_result_raw_and_structured_subslots():
+    hint = ChatServiceSummaryHelperService.extract_partner_requirement_hint(
+        collection_result={
+            "all_fields": [
+                {"field": "partner_requirement", "value": "同老家在深圳，最好深户，有房有车，不要92"},
+                {"field": "partner_pref_location", "value": "深圳"},
+                {"field": "partner_pref_education", "value": "学历本科及以上"},
+            ]
+        }
+    )
+
+    assert hint == "同老家在深圳，学历本科及以上，最好深户，有房有车，不要92"
+
+
+def test_extract_partner_requirement_hint_ignores_generic_profile_blob_when_structured_exists():
+    profile = UserProfile(account_id="test_summary_structured_hint_generic")
+    profile.partner_requirement = "找对象"
+    profile.partner_pref_location = "深圳"
+    profile.partner_pref_education = "学历本科及以上"
+
+    hint = ChatServiceSummaryHelperService.extract_partner_requirement_hint(profile=profile)
+
+    assert hint == "深圳，学历本科及以上"
+
+
+def test_extract_partner_requirement_hint_hides_pure_gender_only_requirement():
+    profile = UserProfile(account_id="test_summary_gender_only_hint")
+    profile.partner_requirement = "找男朋友"
+
+    hint = ChatServiceSummaryHelperService.extract_partner_requirement_hint(profile=profile)
+
+    assert hint == ""
+
+
+def test_build_summary_line_prefers_structured_partner_preference_text():
+    profile = UserProfile(account_id="test_summary_structured_line")
+    profile.location = "深圳"
+    profile.partner_requirement = "最好深户，有房有车"
+    profile.partner_pref_locality = "同城优先"
+    profile.partner_pref_education = "学历本科及以上"
+
+    summary = ChatServiceSummaryHelperService.build_profile_summary_line(profile)
+
+    assert "偏同城" in summary

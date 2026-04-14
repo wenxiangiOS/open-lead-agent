@@ -12,6 +12,10 @@ class ChatServiceContactValidationFlowService:
     def __init__(self, host: Any) -> None:
         self.host = host
 
+    def _should_defer_complementary_contact_followup(self, user_profile) -> bool:
+        """拿到一种联系方式后，资料未收集完成时先不要立刻追另一种。"""
+        return not self.host._is_profile_collection_complete_or_exhausted(user_profile)
+
     @staticmethod
     def _resolve_contact_attempt_context(user_profile, next_action_value: str) -> str:
         action_value = str(next_action_value or "").strip()
@@ -208,6 +212,7 @@ class ChatServiceContactValidationFlowService:
             profile_complete_or_exhausted = self.host._is_profile_collection_complete_or_exhausted(user_profile)
             contact_collected = (
                 user_profile.collection_progress.get("contact", False)
+                or (user_profile.phone and user_profile.phone_collected)
                 or (user_profile.wechat and user_profile.wechat_collected)
             )
 
@@ -228,7 +233,7 @@ class ChatServiceContactValidationFlowService:
             return ai_response
 
         await self.host.input_fallback_service.reset_confirm_count(account_id)
-        logger.info("[联系方式验证] 用户提供了联系方式，重置确认词计数器")
+        logger.debug("[联系方式验证] 用户提供了联系方式，重置确认词计数器")
 
         if contact_value is None and collected_wechat:
             has_phone_already = bool(user_profile.phone_collected and user_profile.phone)
@@ -237,7 +242,7 @@ class ChatServiceContactValidationFlowService:
 
             if (
                 not has_phone_already
-                and not user_profile.rejected_phone
+                and not self.host.contact_service.is_contact_type_final_refused(user_profile, "phone")
                 and user_profile.phone_ask_count > 0
                 and not mentions_phone
             ):
@@ -245,24 +250,22 @@ class ChatServiceContactValidationFlowService:
                     "[微信收集] 用户主动先给微信，重置未兑现的电话询问计数: phone_ask_count=%s",
                     user_profile.phone_ask_count,
                 )
-                self.host.contact_service.clear_pending_request_state(user_profile, "phone")
+                self.host.contact_service.rollback_pending_request_state(user_profile, "phone")
                 await self.host.user_service.save_user_profile(account_id, user_profile)
 
             next_action = self.host.contact_service.get_next_action(user_profile)
             contact_collected = (
                 user_profile.collection_progress.get("contact", False)
+                or (user_profile.phone and user_profile.phone_collected)
                 or (user_profile.wechat and user_profile.wechat_collected)
             )
             profile_complete_or_exhausted = self.host._is_profile_collection_complete_or_exhausted(user_profile)
-
-            if next_action.value in {"ask_phone", "persuade_phone"}:
-                logger.info("[微信收集] 按状态机继续电话流程: next_action=%s", next_action.value)
-                return ChatServiceContactTextService.build_contact_followup_response(next_action.value, "wechat")
+            contact_complete = self.host.contact_service.is_contact_complete(user_profile)
 
             if (
                 profile_complete_or_exhausted
                 and contact_collected
-                and self.host.contact_service.is_contact_complete(user_profile)
+                and contact_complete
             ):
                 self.host.contact_service.clear_contact_context_state(user_profile)
                 logger.info("[微信收集] 联系方式流程已结束，进入统一收尾链: next_action=%s", next_action.value)
@@ -271,7 +274,7 @@ class ChatServiceContactValidationFlowService:
                 await self.host.user_service.save_user_profile(account_id, user_profile)
                 return self.host._get_contact_terminal_or_resume_response(user_profile, str(user_message or ""))
 
-            if self.host.contact_service.is_contact_complete(user_profile):
+            if contact_complete:
                 self.host.contact_service.clear_contact_context_state(user_profile)
                 await self.host.user_service.save_user_profile(account_id, user_profile)
                 return self.host._get_contact_terminal_or_resume_response(user_profile, str(user_message or ""))
@@ -279,6 +282,14 @@ class ChatServiceContactValidationFlowService:
             if not self.host.collection_policy.has_serviceable_profile(user_profile):
                 decision = self.host.collection_policy.decide(user_profile, allow_contact_target=False)
                 logger.info("[微信收集] 资料未达到可服务阈值，继续推进字段: target=%s", decision.main_target)
+                return ChatServiceContactTextService.build_contact_collection_ack("wechat")
+
+            should_defer_followup = self._should_defer_complementary_contact_followup(user_profile)
+            if next_action.value in {"ask_phone", "persuade_phone"} and not should_defer_followup:
+                logger.info("[微信收集] 按状态机继续电话流程: next_action=%s", next_action.value)
+                return ChatServiceContactTextService.build_contact_followup_response(next_action.value, "wechat")
+            if next_action.value in {"ask_phone", "persuade_phone"} and should_defer_followup:
+                logger.info("[微信收集] 已收微信但资料未完成，暂缓追问电话")
                 return ChatServiceContactTextService.build_contact_collection_ack("wechat")
 
             decision = self.host.collection_policy.decide(user_profile, allow_contact_target=False)
@@ -289,7 +300,7 @@ class ChatServiceContactValidationFlowService:
             )
             return ChatServiceContactTextService.build_contact_collection_ack("wechat")
 
-        logger.info("[联系方式验证] 开始验证电话: %s", contact_value)
+        logger.debug("[联系方式验证] 开始验证电话: %s", contact_value)
         is_valid, error_info, _success_msg = await self.host.validation_service.validate_contact(
             contact_value,
             user_profile,
@@ -298,7 +309,7 @@ class ChatServiceContactValidationFlowService:
         )
 
         if is_valid:
-            logger.info("[联系方式验证成功]")
+            logger.debug("[联系方式验证成功]")
             normalized_contact = str(contact_value or "").strip()
             _, contact_type, _ = ContactValidator.is_valid_contact(normalized_contact)
             normalized_phone = re.sub(r"\D", "", normalized_contact)
@@ -315,7 +326,7 @@ class ChatServiceContactValidationFlowService:
                 if next_action.value in {"ask_phone", "persuade_phone"}:
                     if ChatServiceContactTextService.response_mentions_phone_request(ai_response):
                         return ai_response
-                    logger.info("[微信收集] AI 原回复未顺带追问电话，改用联系方式 followup 回复")
+                    logger.debug("[微信收集] AI 原回复未顺带追问电话，改用联系方式 followup 回复")
                     return ChatServiceContactTextService.build_contact_followup_response(
                         next_action.value,
                         "wechat",
@@ -334,39 +345,42 @@ class ChatServiceContactValidationFlowService:
             self.host.contact_service.reset_invalid_input(user_profile, "phone")
             self.host.contact_service.is_contact_complete(user_profile)
             user_profile.contact = user_profile.get_contact_status()
-            logger.info("[联系方式验证] 设置 phone=%s, phone_collected=True", user_profile.phone)
+            logger.debug("[联系方式验证] 设置 phone=%s, phone_collected=True", user_profile.phone)
 
             user_profile.phone_ask_count = 0
             await self.host.user_service.save_user_profile(account_id, user_profile)
-            logger.info("[联系方式验证] 重置 phone_ask_count = 0 并保存")
+            logger.debug("[联系方式验证] 重置 phone_ask_count = 0 并保存")
 
             next_action = self.host.contact_service.get_next_action(user_profile)
-            logger.info("[联系方式验证] 下一步动作: %s", next_action)
+            logger.debug("[联系方式验证] 下一步动作: %s", next_action)
+            should_defer_followup = self._should_defer_complementary_contact_followup(user_profile)
 
-            if next_action.value == "ask_wechat":
-                logger.info(
+            if next_action.value == "ask_wechat" and not should_defer_followup:
+                logger.debug(
                     "[联系方式验证] 电话已收集，需要询问微信，wechat_ask_count=%s",
                     user_profile.wechat_ask_count,
                 )
                 if ChatServiceContactTextService.response_mentions_wechat_request(ai_response):
                     return ai_response
-                logger.info("[联系方式验证] AI 原回复未顺带追问微信，改用联系方式 followup 回复")
+                logger.debug("[联系方式验证] AI 原回复未顺带追问微信，改用联系方式 followup 回复")
                 return ChatServiceContactTextService.build_contact_followup_response(
                     next_action.value,
                     "phone",
                 )
-            if next_action.value == "persuade_wechat":
-                logger.info(
+            if next_action.value == "persuade_wechat" and not should_defer_followup:
+                logger.debug(
                     "[联系方式验证] 电话已收集，需要继续争取微信，wechat_ask_count=%s",
                     user_profile.wechat_ask_count,
                 )
                 if ChatServiceContactTextService.response_mentions_wechat_request(ai_response):
                     return ai_response
-                logger.info("[联系方式验证] AI 原回复未顺带争取微信，改用联系方式 followup 回复")
+                logger.debug("[联系方式验证] AI 原回复未顺带争取微信，改用联系方式 followup 回复")
                 return ChatServiceContactTextService.build_contact_followup_response(
                     next_action.value,
                     "phone",
                 )
+            if next_action.value in {"ask_wechat", "persuade_wechat"} and should_defer_followup:
+                logger.debug("[联系方式验证] 已收电话但资料未完成，暂缓追问微信")
 
             if user_profile.wechat_collected and user_profile.wechat and self.host.contact_service.is_contact_complete(user_profile):
                 self.host.contact_service.clear_contact_context_state(user_profile)
@@ -375,6 +389,7 @@ class ChatServiceContactValidationFlowService:
 
             contact_collected = (
                 user_profile.collection_progress.get("contact", False)
+                or (user_profile.phone and user_profile.phone_collected)
                 or (user_profile.wechat and user_profile.wechat_collected)
             )
             profile_complete_or_exhausted = self.host._is_profile_collection_complete_or_exhausted(user_profile)

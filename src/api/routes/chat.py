@@ -263,6 +263,26 @@ def _format_contact_display(profile: Dict[str, Any]) -> str:
     return "未留"
 
 
+def _format_structured_partner_requirement_display(profile: Dict[str, Any]) -> Optional[str]:
+    parts = []
+    for field in (
+        "partner_pref_age",
+        "partner_pref_age_relation",
+        "partner_pref_location",
+        "partner_pref_locality",
+        "partner_pref_height",
+        "partner_pref_education",
+        "partner_pref_industry",
+        "partner_pref_personality",
+        "partner_pref_income",
+        "partner_pref_other",
+    ):
+        text = str(profile.get(field) or "").strip()
+        if text and text not in parts:
+            parts.append(text)
+    return "，".join(parts) if parts else None
+
+
 def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_before: Dict[str, int] = None) -> str:
     """
     格式化用户已收集的信息为调试显示字符串
@@ -310,6 +330,8 @@ def _format_debug_info_with_ask_count(profile: Dict[str, Any], field_ask_count_b
                 if field == "occupation_inference_candidate"
                 else _format_occupation_display(profile)
                 if field == "occupation"
+                else _format_structured_partner_requirement_display(profile)
+                if field == "partner_requirement" and not profile.get("partner_requirement")
                 else profile.get(field)
             )
             if value is not None:
@@ -368,6 +390,8 @@ def _format_debug_info(profile: Dict[str, Any]) -> str:
                 if field == "occupation_inference_candidate"
                 else _format_occupation_display(profile)
                 if field == "occupation"
+                else _format_structured_partner_requirement_display(profile)
+                if field == "partner_requirement" and not profile.get("partner_requirement")
                 else profile.get(field)
             )
             if value is not None:

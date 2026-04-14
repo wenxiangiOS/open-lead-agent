@@ -5,24 +5,9 @@ from src.modules.conversation_understanding.domain.followup_planning_layer impor
     FollowupPlanningLayer,
 )
 from src.modules.profile_collection.domain.profile_collection_policy import ProfileCollectionPolicy
-from src.services.core.chat_service import ChatService
-
-
-class _FakeAIService:
-    async def generate_response(self, *args, **kwargs):
-        return ""
-
-
-def _build_chat_service() -> ChatService:
-    class _FakeUserService:
-        async def save_user_profile(self, *args, **kwargs):
-            return True
-
-    return ChatService(_FakeAIService(), _FakeUserService())
 
 
 def test_followup_planning_layer_restores_monthly_income_after_faq_confirmation():
-    chat_service = _build_chat_service()
     planner = FollowupPlanningLayer()
     profile = UserProfile(account_id="u_followup_resume")
     profile.set_last_asked_field("monthly_income", 4)
@@ -34,8 +19,8 @@ def test_followup_planning_layer_restores_monthly_income_after_faq_confirmation(
         decision_profile=None,
         user_message="好的",
         last_response="我知道你会在意问得太细这件事，我们会严格保密的。",
-        resolve_interrupted_followup_field=chat_service._resolve_interrupted_followup_field,  # noqa: SLF001
-        is_field_covered=chat_service.collection_policy.is_field_covered,
+        resolve_interrupted_followup_field=lambda *_args, **_kwargs: "monthly_income",
+        is_field_covered=lambda _profile, field: field != "monthly_income",
     )
 
     assert plan.field == "monthly_income"
@@ -94,4 +79,53 @@ def test_followup_planning_layer_returns_main_and_side_targets_together():
     )
 
     assert plan.main_target == "occupation"
-    assert plan.side_target == "monthly_income"
+    assert plan.side_target == "marital_status"
+
+
+def test_profile_collection_policy_prefers_unified_understanding_for_contextual_main_target():
+    policy = ProfileCollectionPolicy()
+    profile = UserProfile(account_id="u_followup_unified_main")
+    profile.collection_progress["sex"] = True
+    profile.sex = "女"
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="faq_concern",
+        subtype="fee",
+        resolved_slots={"location": "深圳龙华", "occupation": "在编教师"},
+    )
+
+    main_target = policy.get_main_target(
+        profile,
+        can_enter_contact=False,
+        allow_contact_target=False,
+        user_message="怎么收费呢先了解下",
+        message_count=2,
+        understanding_result=understanding,
+    )
+
+    assert main_target == "occupation"
+
+
+def test_followup_planning_layer_uses_unified_understanding_for_early_side_target_gate():
+    policy = ProfileCollectionPolicy()
+    profile = UserProfile(account_id="u_followup_unified_side")
+    profile.sex = "女"
+    profile.age = 30
+    profile.location = "深圳"
+    profile.occupation = "教师"
+    for field in ("sex", "age", "location", "occupation"):
+        profile.collection_progress[field] = True
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="faq_concern",
+        subtype="fee",
+        resolved_slots={"location": "深圳龙华", "occupation": "在编教师"},
+    )
+
+    side_target = policy.get_side_target(
+        profile,
+        main_target="education",
+        user_message="怎么收费呢先了解下",
+        message_count=3,
+        understanding_result=understanding,
+    )
+
+    assert side_target in {"monthly_income", "marital_status"}

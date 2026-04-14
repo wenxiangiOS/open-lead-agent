@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from src.models.user_profile import UserProfile
@@ -47,6 +49,8 @@ def test_normalize_extracted_value_filters_valuenull_variant():
 def test_normalize_occupation_value_strips_particle_and_noisy_prefix():
     assert ExtractionService._normalize_occupation_value("做美容吧") == "美容"
     assert ExtractionService._normalize_occupation_value("恶美容吧") == "美容"
+    assert ExtractionService._normalize_occupation_value("是u做新能源") == "新能源"
+    assert ExtractionService._normalize_occupation_value("现在是做程序员") == "程序员"
     assert ExtractionService._normalize_occupation_value("it") == "IT"
     assert ExtractionService._normalize_occupation_value("admin") == "行政"
     assert ExtractionService._normalize_occupation_value("做it的") == "IT"
@@ -77,6 +81,34 @@ def test_has_explicit_self_update_signal_accepts_additional_education_variants()
     assert ExtractionService._has_explicit_self_update_signal("education", "我专升本")
     assert ExtractionService._has_explicit_self_update_signal("education", "在读博")
     assert ExtractionService._has_explicit_self_update_signal("education", "博士后")
+
+
+def test_extract_deterministic_self_field_candidates_supports_linked_education_phrase():
+    extracted = ExtractionService._extract_deterministic_self_field_candidates(  # noqa: SLF001
+        "深圳龙华在编女教师，找同老家在深圳，一样本科"
+    )
+
+    assert extracted["education"] == "本科"
+
+
+def test_extract_deterministic_self_field_candidates_does_not_parse_trailing_question_fragment_as_occupation():
+    extracted = ExtractionService._extract_deterministic_self_field_candidates(  # noqa: SLF001
+        "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就 怎么多了"
+    )
+
+    assert extracted.get("occupation") is None
+    assert extracted.get("sex") == "女"
+    assert extracted.get("location") == "深圳"
+    assert extracted.get("education") == "本科"
+
+
+def test_remove_unspoken_partner_requirement_content_strips_trailing_repair_noise():
+    cleaned = ExtractionService._remove_unspoken_inferred_partner_requirement_content(  # noqa: SLF001
+        "90后工作稳定就行 暂时就 怎么多了",
+        "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就 怎么多了",
+    )
+
+    assert cleaned == "90后工作稳定就行"
 
 
 def test_low_quality_self_field_gate_rejects_question_fragments_and_dirty_education():
@@ -235,6 +267,113 @@ def test_extract_partner_requirement_from_user_message_preserves_partner_age_buc
     )
 
     assert extracted == "90后"
+
+
+def test_extract_partner_requirement_from_user_message_preserves_rich_preferences_with_age_bucket():
+    extracted = ExtractionService._extract_partner_requirement_from_user_message(
+        "90后，看重稳重，成熟，身高要180以上，然后多金"
+    )
+
+    assert extracted is not None
+    assert "90后" in extracted
+    assert ("身高180cm以上" in extracted) or ("身高至少180" in extracted)
+    assert "多金" in extracted
+    assert "成熟稳重" in extracted
+
+
+def test_extract_partner_requirement_from_user_message_supports_linked_education_phrase():
+    extracted = ExtractionService._extract_partner_requirement_from_user_message(
+        "深圳龙华在编女教师，找同老家在深圳，一样本科"
+    )
+
+    assert extracted == "学历本科及以上"
+
+
+def test_extract_partner_preference_subslots_supports_linked_education_phrase():
+    extracted = ExtractionService._extract_partner_preference_subslots("一样本科")  # noqa: SLF001
+
+    assert extracted["partner_pref_education"] == "学历本科及以上"
+
+
+def test_extract_partner_preference_subslots_does_not_leak_self_occupation_into_partner_industry():
+    extracted = ExtractionService._extract_partner_preference_subslots(  # noqa: SLF001
+        "深圳龙华在编女教师，找同老家在深圳 最好深户 有房有车，一样本科，不要92"
+    )
+
+    assert extracted["partner_pref_location"] == "深圳"
+    assert extracted["partner_pref_education"] == "学历本科及以上"
+    assert "partner_pref_industry" not in extracted
+
+
+def test_resolve_partner_requirement_from_message_prefers_structured_subslots():
+    resolved = ExtractionService._resolve_partner_requirement_from_message(  # noqa: SLF001
+        "想找深圳，本科及以上",
+        allow_legacy_fallback=False,
+    )
+
+    assert resolved == "深圳，学历本科及以上"
+
+
+def test_resolve_partner_requirement_from_message_disables_legacy_fallback_by_default():
+    resolved = ExtractionService._resolve_partner_requirement_from_message(  # noqa: SLF001
+        "温柔吧",
+        allow_legacy_fallback=False,
+    )
+
+    assert resolved is None
+
+
+def test_resolve_partner_requirement_from_message_allows_legacy_fallback_when_enabled():
+    resolved = ExtractionService._resolve_partner_requirement_from_message(  # noqa: SLF001
+        "温柔吧",
+        allow_legacy_fallback=True,
+    )
+
+    assert resolved == "温柔"
+
+
+def test_resolve_partner_requirement_from_message_keeps_unstructured_tail_in_mixed_intro():
+    resolved = ExtractionService._resolve_partner_requirement_from_message(  # noqa: SLF001
+        "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92 可以直接电话联系这边13526783627 对啦怎么收费呢先了解下",
+        allow_legacy_fallback=True,
+    )
+
+    assert resolved == "同老家在深圳，学历本科及以上，最好深户，有房有车，不要92"
+
+
+def test_compose_structured_partner_preference_text_builds_display_from_subslots():
+    profile = SimpleNamespace(
+        partner_pref_age="90后",
+        partner_pref_age_relation="比自己大",
+        partner_pref_location="深圳",
+        partner_pref_locality="同城优先",
+        partner_pref_height="身高175cm以上",
+        partner_pref_education="本科及以上",
+        partner_pref_industry="程序员",
+        partner_pref_personality="成熟稳重",
+        partner_pref_income="收入过万",
+        partner_pref_other="无特别要求",
+    )
+
+    assert (
+        ExtractionService._compose_structured_partner_preference_text(profile)
+        == "90后，比自己大，深圳，同城优先，身高175cm以上，本科及以上，程序员，成熟稳重，收入过万，无特别要求"
+    )
+
+
+def test_compose_partner_requirement_from_subslots_prefers_structured_parts_but_keeps_unstructured_tail():
+    subslots = {
+        "partner_pref_location": "深圳",
+        "partner_pref_education": "学历本科及以上",
+    }
+
+    assert (
+        ExtractionService._compose_partner_requirement_from_subslots(
+            subslots,
+            "深圳，最好深户，有房有车，学历本科及以上",
+        )
+        == "深圳，学历本科及以上，最好深户，有房有车"
+    )
 
 
 def test_extract_partner_requirement_from_user_message_supports_numeric_colloquial_variants():
@@ -637,6 +776,16 @@ def test_analyze_numeric_semantics_distinguishes_income_height_and_contact_candi
     assert analysis["has_multiple_numeric_roles"] is True
 
 
+def test_analyze_numeric_semantics_captures_income_range_and_approx_forms():
+    service = ExtractionService(_FakeUserService())
+
+    analysis = service.analyze_numeric_semantics("收入区间2万到3万，一年18-25左右，大概两万上下")
+
+    assert any("2万到3万" in candidate for candidate in analysis["income_candidates"])
+    assert any("18-25" in candidate for candidate in analysis["income_candidates"])
+    assert any("两万上下" in candidate for candidate in analysis["income_candidates"])
+
+
 def test_govern_role_consistent_fields_drops_partner_income_from_self_income():
     service = ExtractionService(_FakeUserService())
 
@@ -711,6 +860,11 @@ def test_govern_role_consistent_fields_drops_partner_scoped_location_without_sel
     assert "location" not in governed
 
 
+def test_is_low_quality_self_field_value_rejects_feedback_and_location_like_occupation_values():
+    assert ExtractionService._is_low_quality_self_field_value("occupation", "听不错", user_message="听不错")
+    assert ExtractionService._is_low_quality_self_field_value("occupation", "就是深圳南山呢", user_message="就是深圳南山呢")
+
+
 @pytest.mark.anyio
 async def test_process_extracted_data_allows_trailing_punct_sex_self_intro():
     user_service = _FakeUserService()
@@ -761,6 +915,23 @@ async def test_process_extracted_data_accepts_income_write_for_income_statement(
 
     refreshed = await user_service.get_user_profile("user_income_write")
     assert refreshed.monthly_income == "2万"
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_accepts_first_income_write_without_current_value_crash():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_income_first_write")
+
+    await service.process_extracted_data(
+        "user_income_first_write",
+        profile,
+        {"monthly_income": "20+"},
+        user_message="20+",
+    )
+
+    refreshed = await user_service.get_user_profile("user_income_first_write")
+    assert refreshed.monthly_income == "20+"
 
 
 @pytest.mark.anyio
@@ -1007,6 +1178,38 @@ async def test_process_extracted_data_allows_high_quality_value_to_override_low_
 
 
 @pytest.mark.asyncio
+async def test_process_extracted_data_partner_requirement_prefers_structured_message_compose_when_model_value_is_partial():
+    service = ExtractionService(_FakeUserService())
+    profile = UserProfile(account_id="user_partner_req_structured_priority")
+    service.user_service.profiles["user_partner_req_structured_priority"] = profile
+
+    result = await service.process_extracted_data(
+        "user_partner_req_structured_priority",
+        profile,
+        {"partner_requirement": "学历本科及以上"},
+        user_message="找深圳，本科及以上",
+        extraction_meta={
+            "partner_requirement": {
+                "scope": "partner",
+                "source": "llm",
+                "source_text": "找深圳，本科及以上",
+            }
+        },
+    )
+
+    refreshed = await service.user_service.get_user_profile("user_partner_req_structured_priority")
+    assert result["collected"] is True
+    normalized_parts = {
+        str(part).strip()
+        for part in str(refreshed.partner_requirement or "").split("，")
+        if str(part).strip()
+    }
+    assert normalized_parts == {"深圳", "学历本科及以上"}
+    assert refreshed.partner_pref_location == "深圳"
+    assert refreshed.partner_pref_education == "学历本科及以上"
+
+
+@pytest.mark.asyncio
 async def test_process_extracted_data_rejects_faq_scope_self_field_write():
     service = ExtractionService(_FakeUserService())
     profile = UserProfile(account_id="user_faq_scope")
@@ -1044,6 +1247,116 @@ async def test_process_extracted_data_derives_partner_preference_subslots_from_r
     assert refreshed.partner_requirement == "90后都可以，香港优先"
     assert refreshed.partner_pref_age == "90后"
     assert refreshed.partner_pref_location == "香港"
+
+
+@pytest.mark.asyncio
+async def test_process_extracted_data_derives_richer_partner_preference_subslots_from_requirement():
+    service = ExtractionService(_FakeUserService())
+    profile = UserProfile(account_id="user_partner_pref_rich_structured")
+    service.user_service.profiles["user_partner_pref_rich_structured"] = profile
+
+    result = await service.process_extracted_data(
+        "user_partner_pref_rich_structured",
+        profile,
+        {"partner_requirement": "同医疗体系，同在深圳发展，本地优先，比自己大"},
+        user_message="同医疗体系，同在深圳发展，本地优先，比自己大",
+        extraction_meta={
+            "partner_requirement": {
+                "scope": "partner",
+                "source_text": "同医疗体系，同在深圳发展，本地优先，比自己大",
+            }
+        },
+    )
+
+    refreshed = await service.user_service.get_user_profile("user_partner_pref_rich_structured")
+    assert result["collected"] is True
+    assert refreshed.partner_pref_industry == "同医疗体系"
+    assert refreshed.partner_pref_location == "深圳"
+    assert refreshed.partner_pref_locality == "本地优先"
+    assert refreshed.partner_pref_age_relation == "比自己大"
+
+
+@pytest.mark.asyncio
+async def test_process_extracted_data_composes_partner_requirement_from_structured_subslots_only():
+    service = ExtractionService(_FakeUserService())
+    profile = UserProfile(account_id="user_partner_pref_compose_only")
+    service.user_service.profiles["user_partner_pref_compose_only"] = profile
+
+    result = await service.process_extracted_data(
+        "user_partner_pref_compose_only",
+        profile,
+        {
+            "partner_pref_location": "深圳",
+            "partner_pref_education": "学历本科及以上",
+        },
+        user_message="深圳，本科及以上",
+        extraction_meta={
+            "partner_pref_location": {"scope": "partner", "source_text": "深圳"},
+            "partner_pref_education": {"scope": "partner", "source_text": "本科及以上"},
+        },
+    )
+
+    refreshed = await service.user_service.get_user_profile("user_partner_pref_compose_only")
+    assert result["collected"] is True
+    assert refreshed.partner_pref_location == "深圳"
+    assert refreshed.partner_pref_education == "学历本科及以上"
+    assert refreshed.partner_requirement == "深圳，学历本科及以上"
+
+
+@pytest.mark.asyncio
+async def test_process_extracted_data_composes_partner_requirement_from_subslots_and_user_message_tail():
+    service = ExtractionService(_FakeUserService())
+    profile = UserProfile(account_id="user_partner_pref_compose_message_tail")
+    service.user_service.profiles["user_partner_pref_compose_message_tail"] = profile
+
+    result = await service.process_extracted_data(
+        "user_partner_pref_compose_message_tail",
+        profile,
+        {
+            "partner_pref_location": "深圳",
+            "partner_pref_education": "学历本科及以上",
+        },
+        user_message="可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92 可以直接电话联系这边13526783627 对啦怎么收费呢先了解下",
+        extraction_meta={
+            "partner_pref_location": {"scope": "partner", "source_text": "同老家在深圳"},
+            "partner_pref_education": {"scope": "partner", "source_text": "一样本科"},
+        },
+    )
+
+    refreshed = await service.user_service.get_user_profile("user_partner_pref_compose_message_tail")
+    assert result["collected"] is True
+    assert refreshed.partner_pref_location == "深圳"
+    assert refreshed.partner_pref_education == "学历本科及以上"
+    assert refreshed.partner_requirement == "同老家在深圳，学历本科及以上，最好深户，有房有车，不要92"
+
+
+@pytest.mark.asyncio
+async def test_process_extracted_data_composes_partner_requirement_from_subslots_without_losing_existing_tail():
+    service = ExtractionService(_FakeUserService())
+    profile = UserProfile(
+        account_id="user_partner_pref_compose_existing_tail",
+        partner_requirement="最好深户，有房有车",
+    )
+    profile.collection_progress["partner_requirement"] = True
+    service.user_service.profiles["user_partner_pref_compose_existing_tail"] = profile
+
+    result = await service.process_extracted_data(
+        "user_partner_pref_compose_existing_tail",
+        profile,
+        {
+            "partner_pref_location": "深圳",
+            "partner_pref_education": "学历本科及以上",
+        },
+        user_message="深圳，学历本科及以上，最好深户，有房有车",
+        extraction_meta={
+            "partner_pref_location": {"scope": "partner", "source_text": "深圳"},
+            "partner_pref_education": {"scope": "partner", "source_text": "学历本科及以上"},
+        },
+    )
+
+    refreshed = await service.user_service.get_user_profile("user_partner_pref_compose_existing_tail")
+    assert result["collected"] is True
+    assert refreshed.partner_requirement == "深圳，学历本科及以上，最好深户，有房有车"
 
 
 @pytest.mark.anyio
@@ -1103,6 +1416,42 @@ async def test_process_extracted_data_does_not_pollute_occupation_with_partner_r
     assert refreshed.education == "本科"
     assert refreshed.partner_requirement == "气质"
     assert refreshed.occupation is None
+
+
+@pytest.mark.anyio
+async def test_process_extracted_data_opening_mixed_intro_blocks_relationship_and_income_age_pollution():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_opening_mixed_intro_pollution_guard")
+
+    message = "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就"
+
+    await service.process_extracted_data(
+        "user_opening_mixed_intro_pollution_guard",
+        profile,
+        {
+            "sex": "女",
+            "location": "深圳",
+            "education": "本科",
+            "marital_status": "未婚单身",
+            "monthly_income": "年薪18万左右",
+            "partner_requirement": "身高180cm以上、90后、工作稳定的男生",
+        },
+        user_message=message,
+        extraction_meta={
+            "partner_requirement": {
+                "scope": "partner",
+                "source": "llm",
+                "source_text": message,
+            }
+        },
+    )
+
+    refreshed = await user_service.get_user_profile("user_opening_mixed_intro_pollution_guard")
+    assert refreshed.occupation is None
+    assert "年龄18左右" not in str(refreshed.partner_requirement or "")
+    assert "找对象" not in str(refreshed.partner_requirement or "")
+    assert "女生找男朋友" not in str(refreshed.partner_requirement or "")
 
 
 @pytest.mark.anyio
@@ -1212,6 +1561,27 @@ async def test_process_extracted_data_keeps_self_education_and_marital_status_in
 
 
 @pytest.mark.anyio
+async def test_process_extracted_data_hydrates_linked_education_phrase_into_self_and_partner_fields():
+    user_service = _FakeUserService()
+    service = ExtractionService(user_service)
+    profile = await user_service.get_user_profile("user_linked_education_phrase")
+
+    await service.process_extracted_data(
+        "user_linked_education_phrase",
+        profile,
+        {
+            "occupation": "在编教师",
+        },
+        user_message="深圳龙华在编女教师，找同老家在深圳，一样本科",
+    )
+
+    refreshed = await user_service.get_user_profile("user_linked_education_phrase")
+    assert refreshed.sex == "女"
+    assert refreshed.education == "本科"
+    assert refreshed.partner_pref_education == "学历本科及以上"
+
+
+@pytest.mark.anyio
 async def test_process_extracted_data_does_not_pollute_self_fields_from_partner_only_preference():
     user_service = _FakeUserService()
     service = ExtractionService(user_service)
@@ -1280,7 +1650,7 @@ async def test_process_extracted_data_drops_unspoken_zodiac_inference_from_partn
 
 
 @pytest.mark.anyio
-async def test_process_extracted_data_sets_occupation_inference_candidate_from_partner_requirement():
+async def test_process_extracted_data_does_not_set_occupation_inference_candidate_from_partner_requirement():
     user_service = _FakeUserService()
     service = ExtractionService(user_service)
     profile = await user_service.get_user_profile("user_occ_candidate")
@@ -1294,9 +1664,8 @@ async def test_process_extracted_data_sets_occupation_inference_candidate_from_p
 
     refreshed = await user_service.get_user_profile("user_occ_candidate")
     assert refreshed.partner_requirement == "不要同财务行业，稳定行业"
-    assert refreshed.occupation_inference_candidate == "财务"
-    assert refreshed.extraction_evidence["occupation_inference_candidate"]["confidence"] == 0.82
-    assert refreshed.extraction_evidence["occupation_inference_candidate"]["reason"] == "same_industry_exclusion"
+    assert refreshed.occupation_inference_candidate is None
+    assert "occupation_inference_candidate" not in refreshed.extraction_evidence
 
 
 def test_infer_occupation_candidate_from_partner_requirement_prefers_explicit_self_industry():

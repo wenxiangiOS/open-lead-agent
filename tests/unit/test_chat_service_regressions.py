@@ -2,10 +2,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import Mock
 import importlib
+import uuid
 
 import pytest
 
 from src.config.settings import settings
+from src.models.requests import ChatRequest
 from src.models.user_profile import UserProfile
 from src.modules.conversation.domain.conversation_ending_service import ConversationEndingService
 from src.modules.conversation.domain.dialogue_expression_service import DialogueExpressionService
@@ -13,16 +15,27 @@ from src.modules.conversation.domain.expectation_service import ExpectationServi
 from src.modules.conversation.domain.turn_decision import TurnDecision
 from src.modules.conversation.domain.turn_understanding_models import (
     PreGenerationResolutionMeta,
+    TurnPriorityDecision,
     TurnUnderstandingInput,
     TurnUnderstandingResult,
 )
+from src.modules.conversation_understanding.domain.models import (
+    FieldObservation,
+    TurnPersistencePlan,
+    TurnSemanticFrame,
+)
 from src.modules.conversation_response.domain.ai_response_generator import AIResponseResult
+from src.modules.conversation_understanding.domain.models import AcceptedField
 from src.modules.conversation_response.domain.response_plan_builder import ResponsePlanBuilder
 from src.modules.profile_collection.domain.profile_collection_policy import ProfileCollectionPolicy
 from src.services.ai_service import AIService
 from src.services.core.chat_service import ChatService
+from src.services.data.user_service import UserService
 from src.services.prompts.prompts import CORE_PERSONALITY, MAIN_DIALOGUE, SYSTEM_WELCOME_MESSAGE, get_main_dialogue
 from src.services.core.chat_service import OpeningIntentSignal
+from src.services.core.chat_service_collection_extraction_service import (
+    ChatServiceCollectionExtractionService,
+)
 from src.services.core.chat_service_collection_postprocess_service import (
     ChatServiceCollectionPostprocessService,
 )
@@ -30,6 +43,7 @@ from src.services.core.chat_service_contact_context_service import (
     ChatServiceContactContextService,
 )
 from src.modules.profile_collection.domain.extraction_service import ExtractionService
+from src.modules.shared.models.chat_flow import ProfileCollectionResult
 
 
 class _FakeAIService:
@@ -65,6 +79,50 @@ class _FakeProfileUserService:
 
     async def get_user_profile(self, account_id: str):
         return self.profile
+
+
+@pytest.mark.asyncio
+async def test_collection_extraction_directly_applies_authoritative_persistence_plan_fields():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_collection_authoritative_merge")
+    chat_service.user_service = _FakeProfileUserService(profile)
+    service = ChatServiceCollectionExtractionService(chat_service)
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="方便简单说下自己的情况吗？")
+    chat_service.extraction_service.process_extracted_data = AsyncMock(return_value={"all_fields": []})
+
+    understanding_result = TurnUnderstandingResult(primary_turn_type="profile_answer")
+    setattr(
+        understanding_result,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="location",
+                    value="深圳龙华",
+                    normalized_value="深圳龙华",
+                    scope="self",
+                    evidence_text="深圳龙华在编女教师",
+                    confidence=0.96,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                    source_channel="ai",
+                )
+            ]
+        ),
+    )
+
+    _, collection_result, refreshed_profile = await service.run_extraction(
+        account_id="u_collection_authoritative_merge",
+        user_profile=profile,
+        extracted_data={"location": "深圳"},
+        user_message="深圳龙华在编女教师",
+        extraction_meta={"location": {"source": "rule"}},
+        understanding_result=understanding_result,
+    )
+
+    chat_service.extraction_service.process_extracted_data.assert_not_awaited()
+    assert refreshed_profile.location == "深圳龙华"
+    assert collection_result["all_fields"] == [{"field": "location", "value": "深圳龙华"}]
 
 
 def test_turn_understanding_treats_current_field_refusal_as_soft_retry_not_boundary():
@@ -124,6 +182,42 @@ def test_contact_context_turns_off_after_contact_complete_and_mainline_resume():
     service = ChatServiceContactContextService(chat_service)
 
     assert service.has_active_contact_context(profile, user_message="男的") is False
+
+
+def test_contact_context_recognizes_persistence_plan_contact_signal_without_legacy_slots():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_contact_context_plan_signal")
+    profile.phone_ask_count = 1
+    service = ChatServiceContactContextService(chat_service)
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="general",
+        resolved_slots={},
+        confidence=0.86,
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="phone",
+                    value="13526783627",
+                    normalized_value="13526783627",
+                    scope="contact",
+                    evidence_text="13526783627",
+                    confidence=0.98,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                )
+            ]
+        ),
+    )
+
+    assert service.has_active_contact_context(
+        profile,
+        user_message="13526783627",
+        understanding_result=understanding,
+    ) is True
 
 
 def test_turn_understanding_prefers_profile_answer_for_non_contact_slot_after_contact_complete():
@@ -475,6 +569,85 @@ async def test_process_after_extraction_repairs_self_partner_occupation_scope_co
 
 
 @pytest.mark.asyncio
+async def test_process_after_extraction_does_not_override_authoritative_persistence_plan_field():
+    chat_service = _build_chat_service()
+    service = ChatServiceCollectionPostprocessService(chat_service)
+    profile = UserProfile(account_id="u_postprocess_authoritative_occupation")
+    profile.occupation = "在编教师"
+    profile.partner_requirement = "找同医疗体系比自己大都可以同在深圳发展"
+    profile.collection_progress.update({"occupation": True, "partner_requirement": True})
+
+    fake_user_service = _FakeProfileUserService(profile)
+    fake_user_service.update_user_profile_field = AsyncMock(side_effect=fake_user_service.update_user_profile_field)
+    chat_service.user_service = fake_user_service
+
+    understanding_result = TurnUnderstandingResult(primary_turn_type="profile_answer")
+    setattr(
+        understanding_result,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="occupation",
+                    value="在编教师",
+                    normalized_value="在编教师",
+                    scope="self",
+                    evidence_text="深圳龙华在编女教师",
+                    confidence=0.96,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                )
+            ]
+        ),
+    )
+
+    result = await service.process_after_extraction(
+        account_id="u_postprocess_authoritative_occupation",
+        user_profile=profile,
+        collection_result={"collected": True, "all_fields": [{"field": "occupation", "value": "在编教师"}]},
+        user_message="90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地",
+        last_response="你好呀，可以简单介绍下自己情况和择偶要求。",
+        understanding_result=understanding_result,
+    )
+
+    assert profile.occupation == "在编教师"
+    fake_user_service.update_user_profile_field.assert_not_awaited()
+    assert any(
+        str(item.get("field") or "").strip() == "occupation" and str(item.get("value") or "").strip() == "在编教师"
+        for item in (result.get("all_fields") or [])
+    )
+
+
+@pytest.mark.asyncio
+async def test_replay_postprocess_repairs_self_age_label_for_95_find_90s_message():
+    chat_service = _build_chat_service()
+    service = ChatServiceCollectionPostprocessService(chat_service)
+    profile = UserProfile(account_id="u_replay_postprocess_95_find_90s")
+    profile.age = 31
+    profile.age_label = "90后"
+    profile.partner_requirement = "90后都可以"
+    profile.collection_progress.update({"age": True, "age_label": True, "partner_requirement": True})
+
+    fake_user_service = _FakeProfileUserService(profile)
+    chat_service.user_service = fake_user_service
+
+    result = await service.process_after_extraction(
+        account_id="u_replay_postprocess_95_find_90s",
+        user_profile=profile,
+        collection_result={"collected": True, "all_fields": [{"field": "partner_requirement", "value": "90后都可以"}]},
+        user_message="95想找90后都可以有不",
+        last_response="新能源行业现在发展势头很猛呀，挺不错的。那你今年多大啦？",
+    )
+
+    assert profile.age_label == "95年"
+    assert profile.partner_requirement == "90后都可以"
+    assert any(
+        str(item.get("field") or "").strip() == "age_label" and str(item.get("value") or "").strip() == "95年"
+        for item in (result.get("all_fields") or [])
+    )
+
+
+@pytest.mark.asyncio
 async def test_process_after_extraction_repairs_self_partner_location_scope_conflict():
     chat_service = _build_chat_service()
     service = ChatServiceCollectionPostprocessService(chat_service)
@@ -488,6 +661,33 @@ async def test_process_after_extraction_repairs_self_partner_location_scope_conf
 
     result = await service.process_after_extraction(
         account_id="u_postprocess_location_scope_conflict",
+        user_profile=profile,
+        collection_result={"collected": True, "all_fields": [{"field": "location", "value": "香港"}]},
+        user_message="深圳女生 想找香港的都可以",
+        last_response="你好呀，可以简单介绍下自己情况和择偶要求。",
+    )
+
+    assert profile.location == "深圳"
+    assert any(
+        str(item.get("field") or "").strip() == "location" and str(item.get("value") or "").strip() == "深圳"
+        for item in (result.get("all_fields") or [])
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_after_extraction_repairs_location_scope_conflict_from_structured_partner_pref_only():
+    chat_service = _build_chat_service()
+    service = ChatServiceCollectionPostprocessService(chat_service)
+    profile = UserProfile(account_id="u_postprocess_location_structured_only")
+    profile.location = "香港"
+    profile.partner_pref_location = "香港"
+    profile.collection_progress.update({"location": True, "partner_pref_location": True, "partner_requirement": True})
+
+    fake_user_service = _FakeProfileUserService(profile)
+    chat_service.user_service = fake_user_service
+
+    result = await service.process_after_extraction(
+        account_id="u_postprocess_location_structured_only",
         user_profile=profile,
         collection_result={"collected": True, "all_fields": [{"field": "location", "value": "香港"}]},
         user_message="深圳女生 想找香港的都可以",
@@ -528,8 +728,114 @@ async def test_process_after_extraction_repairs_self_partner_education_scope_con
     )
 
 
+def test_pre_generation_resolution_does_not_backfill_occupation_from_short_ack():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_pre_gen_ack")
+    profile.last_asked_field = "occupation"
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="single_slot_answer",
+        confidence=0.51,
+    )
+
+    chat_service.preparation_service.pre_generation_resolution_service.resolve_state_before_generation(
+        user_profile=profile,
+        user_message="听不错",
+        last_response="你现在从事什么工作呀？",
+        understanding=understanding,
+    )
+
+    assert not understanding.resolved_slots
+    assert understanding.pre_generation_resolution is None
+
+
+def test_pre_generation_resolution_does_not_backfill_occupation_from_partner_preference_short_reply():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_pre_gen_preference_no_occupation")
+    profile.last_asked_field = "partner_requirement"
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="invalid_input",
+        subtype="ambiguous_short_answer",
+        confidence=0.51,
+    )
+
+    chat_service.preparation_service.pre_generation_resolution_service.resolve_state_before_generation(
+        user_profile=profile,
+        user_message="看重稳重，成熟，身高要180以上，然后多金",
+        last_response="你找对象的时候更看重哪一点呢？",
+        understanding=understanding,
+    )
+
+    assert "occupation" not in understanding.resolved_slots
+    if understanding.pre_generation_resolution is not None:
+        assert "occupation" not in (understanding.pre_generation_resolution.resolved_fields or [])
+
+
+def test_pre_generation_resolution_skips_backfill_when_semantic_plan_already_has_progress():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_pre_gen_skip_when_plan_has_progress")
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="single_slot_answer",
+        confidence=0.91,
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            provisional_fields=[
+                AcceptedField(
+                    field="sex",
+                    value="女",
+                    normalized_value="女",
+                    scope="self",
+                    evidence_text="女生啊",
+                    confidence=0.91,
+                    acceptance_reason="high_risk_non_ai_guard",
+                    update_action="stage_as_provisional",
+                    persistence_state="provisional",
+                    risk_level="high",
+                    source_channel="hybrid",
+                )
+            ]
+        ),
+    )
+
+    chat_service.preparation_service.pre_generation_resolution_service.resolve_state_before_generation(
+        user_profile=profile,
+        user_message="女生啊，肯定的女的啊",
+        last_response="你是男生还是女生呀？",
+        understanding=understanding,
+    )
+
+    assert understanding.resolved_slots == {}
+    assert understanding.pre_generation_resolution is None
+
+
+def test_pre_generation_resolution_does_not_append_committed_fields_into_persistence_plan():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_pre_gen_no_plan_write")
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="invalid_input",
+        subtype="ambiguous_short_answer",
+        confidence=0.51,
+    )
+    setattr(understanding, "persistence_plan", TurnPersistencePlan(accepted_fields=[]))
+
+    chat_service.preparation_service.pre_generation_resolution_service.resolve_state_before_generation(
+        user_profile=profile,
+        user_message="我是女生",
+        last_response="你是男生还是女生呀？",
+        understanding=understanding,
+    )
+
+    assert understanding.resolved_slots["sex"] == "女"
+    assert understanding.pre_generation_resolution is not None
+    assert getattr(understanding, "persistence_plan").accepted_fields == []
+
+
 @pytest.mark.asyncio
-async def test_finalize_generated_response_repairs_noncompliant_contact_completion_ending():
+async def test_finalize_generated_response_keeps_ai_contact_completion_ending_in_raw_mode():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_finalize_contact_completion_repair")
     profile.sex = "男"
@@ -589,9 +895,8 @@ async def test_finalize_generated_response_repairs_noncompliant_contact_completi
     )
 
     assert delivery_ok is True
-    assert "等好消息" in final_response
-    assert "1-8小时" in final_response
-    chat_service._generate_ai_ending_response.assert_awaited_once()
+    assert final_response == "好的呀，你的基本情况和择偶偏好我都记清楚啦，之后有合适的人选我再跟你同步就好~"
+    chat_service._generate_ai_ending_response.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -952,6 +1257,71 @@ async def test_prepare_turn_execution_confirmation_with_resolved_slot_continues_
 
 
 @pytest.mark.asyncio
+async def test_prepare_turn_execution_confirmation_with_persistence_plan_field_continues_mainline():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_confirmation_continue_mainline_plan")
+    profile.age = 33
+    profile.age_label = "93年"
+    profile.collection_progress["age"] = True
+    profile.location = "深圳"
+    profile.collection_progress["location"] = True
+    profile.occupation = "自媒体"
+    profile.collection_progress["occupation"] = True
+    profile.education = "高中"
+    profile.collection_progress["education"] = True
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="confirmation",
+        subtype="weak_confirmation",
+        resolved_slots={},
+        confidence=0.85,
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="sex",
+                    value="女",
+                    normalized_value="女",
+                    scope="self",
+                    evidence_text="是的",
+                    confidence=0.95,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                )
+            ]
+        ),
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+    chat_service._build_turn_decision = AsyncMock(
+        return_value=TurnDecision(
+            intent="confirmation",
+            primary_move="light_followup",
+            ask_field=None,
+            prioritize_user_question=True,
+            allow_contact_target=False,
+            allow_medium_target=False,
+            response_channel="model",
+            user_concern_type="faq",
+        )
+    )
+
+    prepared = await chat_service.prepare_turn_execution(
+        user_message="是的",
+        user_profile=profile,
+        conversation_context={"message_count": 6, "recent_responses": ["你应该是女孩子对吧？"]},
+        last_response="你应该是女孩子对吧？",
+        message_count=6,
+    )
+
+    assert prepared.turn_decision.intent == "general"
+    assert prepared.turn_decision.ask_field is not None
+    assert prepared.turn_decision.ask_field != "contact"
+    assert prepared.turn_decision.resume_applied is True
+
+
+@pytest.mark.asyncio
 async def test_prepare_turn_execution_confirmation_can_jump_to_contact_when_only_contact_remains():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_confirmation_continue_contact")
@@ -1154,6 +1524,73 @@ async def test_prepare_turn_execution_keeps_birth_year_and_locks_divorce_confirm
 
 
 @pytest.mark.asyncio
+async def test_prepare_turn_execution_locks_divorce_confirmation_from_persistence_plan_marital_status():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_birth_year_divorce_compound_plan")
+    profile.sex = "女"
+    profile.collection_progress["sex"] = True
+    profile.pending_birth_year_bucket = "90后"
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="multi_slot_compound",
+        resolved_slots={},
+        confidence=0.91,
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="age",
+                    value="28",
+                    normalized_value="28",
+                    scope="self",
+                    evidence_text="98的，离异",
+                    confidence=0.9,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                ),
+                AcceptedField(
+                    field="age_label",
+                    value="98年",
+                    normalized_value="98年",
+                    scope="self",
+                    evidence_text="98的，离异",
+                    confidence=0.9,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                ),
+                AcceptedField(
+                    field="marital_status",
+                    value="离异",
+                    normalized_value="离异",
+                    scope="self",
+                    evidence_text="98的，离异",
+                    confidence=0.9,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                ),
+            ]
+        ),
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+
+    prepared = await chat_service.prepare_turn_execution(
+        user_message="98的，离异",
+        user_profile=profile,
+        conversation_context={"message_count": 4, "recent_responses": ["你具体是哪一年出生的呀？"]},
+        last_response="你具体是哪一年出生的呀？",
+        message_count=4,
+    )
+
+    assert prepared.pre_generation_resolution is not None
+    assert prepared.pre_generation_resolution.transition_reason == "lock_divorce_confirmation"
+    assert prepared.turn_decision.next_action == "confirm_divorce_status"
+    assert prepared.turn_decision.ask_field == "marital_status"
+
+
+@pytest.mark.asyncio
 async def test_prepare_turn_execution_prefers_occupation_after_generic_location_short_reply():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_prepare_location_short_reply")
@@ -1220,6 +1657,57 @@ async def test_prepare_turn_execution_backfills_invalid_input_location_short_rep
 
 
 @pytest.mark.asyncio
+async def test_prepare_turn_execution_backfill_syncs_semantic_frame_and_persistence_plan():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_prepare_backfill_semantic_sync")
+    profile.sex = "女"
+    profile.collection_progress["sex"] = True
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="invalid_input",
+        subtype="ambiguous_short_answer",
+        resolved_slots={},
+        confidence=0.51,
+    )
+    setattr(
+        understanding,
+        "semantic_frame",
+        TurnSemanticFrame(
+            version="v1",
+            source="hybrid_semantic_projection",
+            primary_domain="mixed",
+            field_observations=[],
+        ),
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(),
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+
+    prepared = await chat_service.prepare_turn_execution(
+        user_message="在南京呢",
+        user_profile=profile,
+        conversation_context={"message_count": 5, "recent_responses": ["你现在长期在哪个城市生活呀？"]},
+        last_response="你现在长期在哪个城市生活呀？",
+        message_count=5,
+    )
+
+    semantic_frame = getattr(prepared.understanding, "semantic_frame", None)
+    persistence_plan = getattr(prepared.understanding, "persistence_plan", None)
+    assert semantic_frame is not None
+    assert any(
+        isinstance(item, FieldObservation)
+        and str(getattr(item, "field", "") or "") == "location"
+        and str(getattr(item, "normalized_value", "") or "") == "南京"
+        for item in list(getattr(semantic_frame, "field_observations", []) or [])
+    )
+    assert persistence_plan is not None
+    assert list(getattr(persistence_plan, "accepted_fields", []) or []) == []
+    assert prepared.understanding.resolved_slots["location"] == "南京"
+
+
+@pytest.mark.asyncio
 async def test_prepare_turn_execution_backfills_invalid_input_confirmation_short_reply_before_decision():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_prepare_backfill_sex_confirm")
@@ -1248,6 +1736,64 @@ async def test_prepare_turn_execution_backfills_invalid_input_confirmation_short
     assert prepared.pre_generation_resolution.transition_reason == "contextual_short_reply_backfill"
     assert prepared.decision_profile.sex == "女"
     assert prepared.turn_decision.ask_field == "age"
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_execution_short_reply_followup_override_reads_persistence_plan_sex():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_prepare_backfill_sex_plan")
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="single_slot_answer",
+        resolved_slots={},
+        confidence=0.88,
+    )
+    understanding.set_pre_generation_resolution(
+        source="contextual_short_reply_backfill",
+        resolved_fields=["sex"],
+        default_transition_reason="contextual_short_reply_backfill",
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="sex",
+                    value="女",
+                    normalized_value="女",
+                    scope="self",
+                    evidence_text="是的",
+                    confidence=0.95,
+                    acceptance_reason="pre_generation_resolution",
+                    update_action="accept_as_new",
+                )
+            ]
+        ),
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+    chat_service._build_turn_decision = AsyncMock(
+        return_value=TurnDecision(
+            intent="general",
+            primary_move="ack_and_ask",
+            ask_field="location",
+            prioritize_user_question=False,
+            allow_contact_target=False,
+            allow_medium_target=False,
+            response_channel="model",
+        )
+    )
+
+    prepared = await chat_service.prepare_turn_execution(
+        user_message="是的",
+        user_profile=profile,
+        conversation_context={"message_count": 1, "recent_responses": ["你是女生对吧？"]},
+        last_response="你是女生对吧？",
+        message_count=1,
+    )
+
+    assert prepared.turn_decision.ask_field == "age"
+    assert prepared.turn_decision.resume_applied is True
 
 
 @pytest.mark.asyncio
@@ -1283,6 +1829,59 @@ async def test_prepare_turn_execution_backfills_invalid_input_birth_year_short_r
     assert prepared.pre_generation_resolution.transition_reason == "contextual_short_reply_backfill"
     assert prepared.decision_profile.age == 28
     assert prepared.decision_profile.collection_progress["age"] is True
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_execution_backfills_birth_year_for_compound_message_even_with_semantic_progress():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_prepare_backfill_birth_year_compound_progress")
+    profile.sex = "女"
+    profile.collection_progress["sex"] = True
+    profile.pending_birth_year_bucket = "90后"
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="single_slot_answer",
+        resolved_slots={"partner_requirement": "成熟稳重，多金，身高180+"},
+        confidence=0.91,
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            provisional_fields=[
+                AcceptedField(
+                    field="partner_requirement",
+                    value="成熟稳重，多金，身高180+",
+                    normalized_value="成熟稳重，多金，身高180+",
+                    scope="partner",
+                    evidence_text="喜欢成熟稳重，多金，身高180+",
+                    confidence=0.91,
+                    acceptance_reason="high_risk_non_ai_guard",
+                    update_action="stage_as_provisional",
+                    persistence_state="provisional",
+                    risk_level="high",
+                    source_channel="hybrid",
+                )
+            ]
+        ),
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+
+    prepared = await chat_service.prepare_turn_execution(
+        user_message="98年的，喜欢成熟稳重，多金，身高180+",
+        user_profile=profile,
+        conversation_context={"message_count": 5, "recent_responses": ["你具体是哪一年出生的呀？另外择偶方面你更看重哪一点呢？"]},
+        last_response="你具体是哪一年出生的呀？另外择偶方面你更看重哪一点呢？",
+        message_count=5,
+    )
+
+    assert prepared.understanding.resolved_slots["age"] == "28"
+    assert prepared.understanding.resolved_slots["age_label"] == "98年"
+    assert prepared.pre_generation_resolution is not None
+    assert prepared.pre_generation_resolution.source == "birth_year_confirmation_backfill"
+    assert set(prepared.pre_generation_resolution.resolved_fields) == {"age", "age_label"}
+    assert prepared.decision_profile.age == 28
+    assert prepared.turn_decision.ask_field != "age"
 
 
 @pytest.mark.asyncio
@@ -1383,6 +1982,82 @@ async def test_prepare_turn_execution_resumes_mainline_after_divorce_confirmatio
     assert prepared.pre_generation_resolution.transition_reason == "resume_after_divorce_confirmation_complete"
     assert prepared.turn_decision.next_action == "continue"
     assert prepared.turn_decision.ask_field == "location"
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_execution_ignores_stale_status_priority_after_divorce_confirmation_completion():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_divorce_done_resume_stale_priority")
+    profile.sex = "女"
+    profile.collection_progress["sex"] = True
+    profile.age = 28
+    profile.age_label = "98年"
+    profile.collection_progress["age"] = True
+    profile.marital_status = "离异"
+    profile.collection_progress["marital_status"] = True
+    profile.divorce_confirmation_pending = True
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="confirmation",
+        subtype="weak_confirmation",
+        resolved_slots={},
+        confidence=0.85,
+        priority_decision=TurnPriorityDecision(
+            primary_task="status_confirmation",
+            priority_level=3,
+            decision_reason="divorce_confirmation_pending",
+            response_mode="confirm_only",
+            locked_field="marital_status",
+            allow_contact_target=False,
+            allow_medium_target=False,
+        ),
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+
+    prepared = await chat_service.prepare_turn_execution(
+        user_message="办好了",
+        user_profile=profile,
+        conversation_context={"message_count": 6, "recent_responses": ["离婚手续已经都办妥了吗？"]},
+        last_response="离婚手续已经都办妥了吗？",
+        message_count=6,
+    )
+
+    assert profile.divorce_confirmation_pending is False
+    assert profile.divorce_confirmed is True
+    assert prepared.pre_generation_resolution is not None
+    assert prepared.pre_generation_resolution.transition_reason == "resume_after_divorce_confirmation_complete"
+    assert prepared.turn_decision.next_action == "continue"
+    assert prepared.turn_decision.ask_field != "marital_status"
+
+
+@pytest.mark.asyncio
+async def test_pre_generation_short_circuit_self_age_reads_persistence_plan_age():
+    chat_service = _build_chat_service()
+    understanding = TurnUnderstandingResult(primary_turn_type="profile_answer", resolved_slots={})
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="age",
+                    value="23",
+                    normalized_value="23",
+                    scope="self",
+                    evidence_text="我23岁",
+                    confidence=0.96,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                )
+            ]
+        ),
+    )
+
+    age = await chat_service.preparation_service.pre_generation_resolution_service._resolve_short_circuit_self_age(
+        user_message="我23岁",
+        understanding=understanding,
+    )
+
+    assert age == 23
 
 
 def test_turn_understanding_result_to_dict_includes_pre_generation_resolution():
@@ -1882,14 +2557,20 @@ async def test_generate_turn_response_text_preserves_raw_model_output():
     assert infra_fail_reason == ""
 
 
-def test_ai_raw_response_mode_is_always_enabled(monkeypatch):
+def test_ai_raw_response_mode_respects_mode_and_kill_switch(monkeypatch):
     chat_service = _build_chat_service()
 
     monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
+    monkeypatch.setenv("AI_RAW_RESPONSE_KILL_SWITCH", "0")
     assert chat_service._is_ai_raw_response_mode_enabled() is True  # noqa: SLF001
 
     monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "0")
-    assert chat_service._is_ai_raw_response_mode_enabled() is True  # noqa: SLF001
+    monkeypatch.setenv("AI_RAW_RESPONSE_KILL_SWITCH", "0")
+    assert chat_service._is_ai_raw_response_mode_enabled() is False  # noqa: SLF001
+
+    monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
+    monkeypatch.setenv("AI_RAW_RESPONSE_KILL_SWITCH", "1")
+    assert chat_service._is_ai_raw_response_mode_enabled() is False  # noqa: SLF001
 
 
 def test_helper_services_are_lazy_initialized():
@@ -2045,7 +2726,7 @@ async def test_finalize_generated_response_preserves_ai_text_in_raw_mode(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_finalize_generated_response_stays_silent_when_ai_text_is_empty(monkeypatch):
+async def test_finalize_generated_response_uses_minimal_fallback_when_ai_text_is_empty(monkeypatch):
     monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_finalize_fallback")
@@ -2065,13 +2746,53 @@ async def test_finalize_generated_response_stays_silent_when_ai_text_is_empty(mo
         message_count=1,
     )
 
-    assert final_response == ""
-    assert delivery_ok is False
+    assert final_response
+    assert "再发一句" in final_response
+    assert delivery_ok is True
     assert chat_service._last_unified_generation_record["first_generation_only"] is True
 
 
 @pytest.mark.asyncio
-async def test_finalize_generated_response_overrides_invalid_contact_ack_with_retry_feedback(monkeypatch):
+async def test_finalize_generated_response_uses_stable_followup_when_ai_text_is_empty_but_ask_field_known(monkeypatch):
+    monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_empty_ai_known_followup")
+    profile.sex = "女"
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "在编教师"
+    profile.collection_progress.update({"sex": True, "location": True, "education": True, "occupation": True})
+    chat_service._record_delivered_contact_ask_if_needed = AsyncMock(return_value=profile)
+
+    final_response, delivery_ok, _ = await chat_service.finalize_generated_response(
+        account_id="u_finalize_empty_ai_known_followup",
+        user_profile=profile,
+        user_message="在编教师呢",
+        turn_decision=SimpleNamespace(
+            ask_field="age",
+            prioritize_user_question=False,
+            primary_move="ack_and_ask",
+            allow_medium_target=True,
+        ),
+        turn_understanding=TurnUnderstandingResult(primary_turn_type="profile_answer"),
+        collection_result={"all_fields": [{"field": "occupation", "value": "在编教师"}]},
+        response_to_clean="ignored",
+        ai_response="",
+        bridge_prefix="",
+        contact_gate_before=False,
+        message_count=2,
+    )
+
+    assert delivery_ok is True
+    assert "几几年的" in final_response or "哪一年的" in final_response
+    assert "另一半" not in final_response
+    assert "我先换个更稳妥的说法" not in final_response
+    assert "刚刚这条没生成完整" not in final_response
+    assert chat_service._last_unified_generation_record["first_generation_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_finalize_generated_response_keeps_ai_text_for_invalid_contact_attempt_in_raw_mode(monkeypatch):
     monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_finalize_invalid_contact")
@@ -2103,7 +2824,7 @@ async def test_finalize_generated_response_overrides_invalid_contact_ack_with_re
 
 
 @pytest.mark.asyncio
-async def test_finalize_generated_response_enforces_wechat_followup_after_valid_phone(monkeypatch):
+async def test_finalize_generated_response_prefers_contact_followup_after_valid_phone_in_raw_mode(monkeypatch):
     monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_finalize_phone_then_wechat")
@@ -2112,6 +2833,7 @@ async def test_finalize_generated_response_enforces_wechat_followup_after_valid_
     profile.sex = "男"
     chat_service.contact_service.get_next_action = lambda *_args, **_kwargs: SimpleNamespace(value="ask_wechat")
     chat_service._record_delivered_contact_ask_if_needed = AsyncMock(return_value=profile)
+    chat_service._is_profile_collection_complete_or_exhausted = lambda _profile: True
 
     final_response, delivery_ok, returned_profile = await chat_service.finalize_generated_response(
         account_id="u_finalize_phone_then_wechat",
@@ -2120,13 +2842,14 @@ async def test_finalize_generated_response_enforces_wechat_followup_after_valid_
         turn_decision=SimpleNamespace(prioritize_user_question=False, primary_move="ack_and_ask"),
         turn_understanding=TurnUnderstandingResult(primary_turn_type="contact_answer", subtype="contact_context_reply"),
         collection_result={"all_fields": [{"field": "phone", "value": "17688765432"}]},
-        response_to_clean="ignored",
+        response_to_clean="电话这边我记下了。你要是方便，也可以顺手留个微信。",
         ai_response="这个号码我记下了哈，你是男生还是女生呀？",
         bridge_prefix="",
         contact_gate_before=False,
         message_count=1,
     )
 
+    assert final_response == "电话这边我记下了。你要是方便，也可以顺手留个微信。"
     assert "微信" in final_response
     assert "男生还是女生" not in final_response
     assert delivery_ok is True
@@ -2134,7 +2857,108 @@ async def test_finalize_generated_response_enforces_wechat_followup_after_valid_
 
 
 @pytest.mark.asyncio
-async def test_finalize_generated_response_prefers_rewritten_response_to_clean_over_raw_ai(monkeypatch):
+async def test_finalize_generated_response_falls_back_to_wechat_followup_after_valid_phone_in_raw_mode(monkeypatch):
+    monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_phone_then_wechat_fallback")
+    profile.phone = "17688765432"
+    profile.phone_collected = True
+    profile.sex = "女"
+    chat_service.contact_service.get_next_action = lambda *_args, **_kwargs: SimpleNamespace(value="ask_wechat")
+    chat_service._record_delivered_contact_ask_if_needed = AsyncMock(return_value=profile)
+    chat_service._is_profile_collection_complete_or_exhausted = lambda _profile: True
+
+    final_response, delivery_ok, returned_profile = await chat_service.finalize_generated_response(
+        account_id="u_finalize_phone_then_wechat_fallback",
+        user_profile=profile,
+        user_message="17688765432",
+        turn_decision=SimpleNamespace(prioritize_user_question=False, primary_move="ack_and_ask"),
+        turn_understanding=TurnUnderstandingResult(primary_turn_type="contact_answer", subtype="contact_context_reply"),
+        collection_result={"all_fields": [{"field": "phone", "value": "17688765432"}]},
+        response_to_clean="ignored",
+        ai_response="你说你想要找稳定的90后男生，那你平时更看重对方的性格多一些，还是工作发展呀？",
+        bridge_prefix="",
+        contact_gate_before=False,
+        message_count=1,
+    )
+
+    assert delivery_ok is True
+    assert returned_profile is profile
+    assert "微信" in final_response
+    assert "性格多一些" not in final_response
+
+
+@pytest.mark.asyncio
+async def test_finalize_generated_response_preserves_ai_faq_answer_when_user_question_priority_is_active(monkeypatch):
+    monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_faq_priority")
+    profile.phone = "17688765432"
+    profile.phone_collected = True
+    chat_service.contact_service.get_next_action = lambda *_args, **_kwargs: SimpleNamespace(value="ask_wechat")
+    chat_service._record_delivered_contact_ask_if_needed = AsyncMock(return_value=profile)
+    chat_service._is_profile_collection_complete_or_exhausted = lambda _profile: True
+
+    final_response, delivery_ok, returned_profile = await chat_service.finalize_generated_response(
+        account_id="u_finalize_faq_priority",
+        user_profile=profile,
+        user_message="怎么收费呢先了解下",
+        turn_decision=SimpleNamespace(prioritize_user_question=True, primary_move="answer_then_pause", ask_field="contact"),
+        turn_understanding=TurnUnderstandingResult(primary_turn_type="faq_concern", subtype="fee"),
+        collection_result={"all_fields": [{"field": "phone", "value": "17688765432"}]},
+        response_to_clean="ignored",
+        ai_response="收费这块你可以先放心，目前这边不额外收费，你先了解清楚就行。",
+        bridge_prefix="",
+        contact_gate_before=False,
+        message_count=1,
+    )
+
+    assert final_response == "收费这块你可以先放心，目前这边不额外收费，你先了解清楚就行。"
+    assert "微信" not in final_response
+    assert delivery_ok is True
+    assert returned_profile is profile
+
+
+@pytest.mark.asyncio
+async def test_finalize_generated_response_realigns_mismatched_followup_field_in_raw_mode(monkeypatch):
+    monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_realign_raw_mode")
+    profile.sex = "女"
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "在编教师"
+    profile.collection_progress.update({"sex": True, "location": True, "education": True, "occupation": True})
+    chat_service._record_delivered_contact_ask_if_needed = AsyncMock(return_value=profile)
+
+    final_response, delivery_ok, returned_profile = await chat_service.finalize_generated_response(
+        account_id="u_finalize_realign_raw_mode",
+        user_profile=profile,
+        user_message="在编教师",
+        turn_decision=SimpleNamespace(
+            ask_field="age",
+            prioritize_user_question=False,
+            primary_move="ack_and_ask",
+            allow_medium_target=False,
+            response_channel="model",
+        ),
+        turn_understanding=TurnUnderstandingResult(primary_turn_type="profile_answer", subtype="single_slot_answer"),
+        collection_result={"all_fields": [{"field": "occupation", "value": "在编教师"}]},
+        response_to_clean="ignored",
+        ai_response="在编教师工作挺稳定的呀，你是男生还是女生呀？",
+        bridge_prefix="",
+        contact_gate_before=False,
+        message_count=1,
+    )
+
+    assert delivery_ok is True
+    assert returned_profile is profile
+    assert "男生还是女生" not in final_response
+    assert any(marker in final_response for marker in ("多大", "年龄", "哪一年", "几几年", "90后"))
+
+
+@pytest.mark.asyncio
+async def test_finalize_generated_response_ignores_rewritten_response_to_clean_in_raw_mode(monkeypatch):
     monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_finalize_prefers_rewritten_text")
@@ -2158,13 +2982,51 @@ async def test_finalize_generated_response_prefers_rewritten_response_to_clean_o
         message_count=1,
     )
 
-    assert final_response == "ask:sex"
+    assert final_response == "好的，这个微信号我记下啦，后面有合适的对接方向时联系你也更方便~"
     assert delivery_ok is True
     assert returned_profile is profile
 
 
+def test_finalize_followup_alignment_rewrites_explicit_mismatch_even_when_response_not_low_info():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_alignment_hard_guard")
+    profile.sex = "女"
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "在编教师"
+    profile.collection_progress.update({"sex": True, "location": True, "education": True, "occupation": True})
+
+    rewritten = chat_service.finalize_service._maybe_enforce_main_followup_alignment(
+        user_profile=profile,
+        user_message="在编教师",
+        final_response="在编教师挺好的呀，你是男生还是女生呀？",
+        turn_decision=TurnDecision(
+            intent="general",
+            primary_move="light_followup",
+            ask_field="age",
+            allow_medium_target=False,
+            response_channel="model",
+        ),
+        collection_result={"all_fields": [{"field": "occupation", "value": "在编教师"}]},
+    )
+
+    assert "男生还是女生" not in rewritten
+    assert any(marker in rewritten for marker in ("多大", "年龄", "哪一年", "几几年", "90后"))
+
+
+def test_style_preserving_followup_drops_speculative_prefix_before_stable_question():
+    chat_service = _build_chat_service()
+
+    rewritten = chat_service._build_style_preserving_followup_response(
+        original_response="你本科学历找的工作应该还挺不错的吧，方便说下你现在是做什么方向的吗？",
+        fallback_response="那你现在在深圳主要做哪方面工作呀？",
+    )
+
+    assert rewritten == "那你现在在深圳主要做哪方面工作呀？"
+
+
 @pytest.mark.asyncio
-async def test_finalize_generated_response_strips_extract_from_rewritten_response_to_clean(monkeypatch):
+async def test_finalize_generated_response_strips_extract_from_raw_ai_response(monkeypatch):
     monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_finalize_strip_extract_from_rewritten")
@@ -2185,7 +3047,8 @@ async def test_finalize_generated_response_strips_extract_from_rewritten_respons
     )
 
     assert "<extract>" not in final_response
-    assert "微信也可以发我一下" in final_response
+    assert "微信也可以发我一下" not in final_response
+    assert "你是男生还是女生呀？" in final_response
     assert delivery_ok is True
     assert returned_profile is profile
 
@@ -2392,7 +3255,7 @@ def test_build_generation_prompt_does_not_treat_partner_age_gap_as_suspicious_ag
     assert "【异常资料澄清专用生成】" not in prompt
 
 
-def test_build_generation_prompt_instructs_same_turn_phone_ack_and_wechat_followup():
+def test_build_generation_prompt_does_not_instruct_same_turn_phone_ack_and_wechat_followup_before_profile_complete():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_contact_success_followup_prompt")
     profile.sex = "女"
@@ -2422,20 +3285,14 @@ def test_build_generation_prompt_instructs_same_turn_phone_ack_and_wechat_follow
         ),
     )
 
-    assert "【联系方式成功后顺带追问专用生成】" in prompt
-    assert "这轮核心动作是顺势轻问微信" in prompt
-    assert "不需要机械地先确认再追问" in prompt
-    assert "这轮最终文案里必须明确出现“微信”" in prompt
-    assert "不要为了显得自然去复述用户资料" in prompt
-    assert "不要拿职业、城市、收入、年龄起手" in prompt
-    assert "不要用“有合适的信息/有合适的方向/沟通起来更顺/信息沟通更顺”" in prompt
-    assert "我存好咯" in prompt
-    assert "后续有合适的匹配方向我会及时联系你" in prompt
-    assert "【联系方式动作专用生成】" not in prompt
-    assert "这轮只能围绕“电话”生成" not in prompt
+    assert "【联系方式成功后顺带追问专用生成】" not in prompt
+    assert "这轮核心动作是顺势轻问微信" not in prompt
+    assert "这轮最终文案里必须明确出现“微信”" not in prompt
+    assert "【联系方式动作专用生成】" in prompt
+    assert "这轮只能围绕“电话”生成" in prompt
 
 
-def test_build_generation_prompt_instructs_same_turn_wechat_followup_even_when_pre_validation_next_action_is_none():
+def test_build_generation_prompt_does_not_instruct_same_turn_wechat_followup_when_profile_incomplete():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_contact_success_followup_prompt_none_action")
     profile.sex = "男"
@@ -2466,11 +3323,9 @@ def test_build_generation_prompt_instructs_same_turn_wechat_followup_even_when_p
         ),
     )
 
-    assert "【联系方式成功后顺带追问专用生成】" in prompt
-    assert "这轮核心动作是顺势轻问微信" in prompt
-    assert "这轮最终文案里必须明确出现“微信”" in prompt
-    assert "不要为了显得自然去复述用户资料" in prompt
-    assert "不要拿职业、城市、收入、年龄起手" in prompt
+    assert "【联系方式成功后顺带追问专用生成】" not in prompt
+    assert "这轮核心动作是顺势轻问微信" not in prompt
+    assert "这轮最终文案里必须明确出现“微信”" not in prompt
     assert "【联系方式动作专用生成】" not in prompt
     assert "这轮只能围绕“电话”生成" not in prompt
 
@@ -2500,6 +3355,7 @@ async def test_build_final_turn_payload_keeps_frozen_response_and_exposes_unifie
 
     assert payload["response"] == "最终展示"
     assert payload["meta"]["ai_response_unified_generation"]["raw_ai_response"] == "AI原文"
+    assert payload["meta"]["ai_response_unified_generation"]["final_display_response"] == "最终展示"
 
 
 @pytest.mark.asyncio
@@ -2520,10 +3376,13 @@ async def test_build_enhanced_response_to_clean_keeps_ai_response_in_raw_mode(mo
 
 
 @pytest.mark.asyncio
-async def test_build_enhanced_response_to_clean_routes_contact_fields_through_validation_flow():
+async def test_build_enhanced_response_to_clean_keeps_contact_rewrite_in_raw_mode(monkeypatch):
+    monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_delivery_contact_flow")
-    chat_service._handle_contact_validation = AsyncMock(return_value="ask:sex")
+    chat_service._handle_contact_validation = AsyncMock(
+        return_value="电话我收到了。要是你方便的话，再补个微信也行。"
+    )
 
     response_to_clean = await chat_service.build_enhanced_response_to_clean(
         account_id="u_delivery_contact_flow",
@@ -2533,8 +3392,95 @@ async def test_build_enhanced_response_to_clean_routes_contact_fields_through_va
         ai_response="好的，微信我已经记下来啦，后续有合适的方向联系你也更方便。",
     )
 
-    assert response_to_clean == "ask:sex"
+    assert response_to_clean == "电话我收到了。要是你方便的话，再补个微信也行。"
     chat_service._handle_contact_validation.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_build_enhanced_response_to_clean_keeps_raw_ai_when_contact_validation_does_not_rewrite(monkeypatch):
+    monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_delivery_contact_flow_same")
+    chat_service._handle_contact_validation = AsyncMock(
+        return_value="好的，微信我已经记下来啦，后续有合适的方向联系你也更方便。"
+    )
+
+    response_to_clean = await chat_service.build_enhanced_response_to_clean(
+        account_id="u_delivery_contact_flow_same",
+        user_profile=profile,
+        user_message="wx7789789",
+        collection_result={"all_fields": [{"field": "wechat", "value": "wx7789789"}]},
+        ai_response="好的，微信我已经记下来啦，后续有合适的方向联系你也更方便。",
+    )
+
+    assert response_to_clean == "好的，微信我已经记下来啦，后续有合适的方向联系你也更方便。"
+    chat_service._handle_contact_validation.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_build_enhanced_response_to_clean_routes_active_contact_context_without_extracted_fields(monkeypatch):
+    monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_delivery_contact_context")
+    profile.phone_ask_count = 1
+    profile.last_contact_request_type = "phone"
+
+    async def _handle_contact_validation(*args, **kwargs):
+        chat_service._last_validation_feedback_meta = {
+            "error_code": "CONTACT_INVALID_FORMAT",
+            "field": "phone",
+            "attempt": 1,
+            "silent": False,
+            "retry_active": True,
+            "retry_lock_response": True,
+        }
+        return "这个号码我看着不太对，你再发个常用手机号。"
+
+    chat_service._handle_contact_validation = AsyncMock(side_effect=_handle_contact_validation)
+
+    response_to_clean = await chat_service.build_enhanced_response_to_clean(
+        account_id="u_delivery_contact_context",
+        user_profile=profile,
+        user_message="156778877665555",
+        collection_result={"all_fields": []},
+        ai_response="好的，我记下了。",
+    )
+
+    assert response_to_clean == "这个号码我看着不太对，你再发个常用手机号。"
+    chat_service._handle_contact_validation.assert_awaited_once()
+
+
+def test_followup_prompt_service_uses_contextual_occupation_prompt_without_inference_candidate():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_followup_contextual_occupation")
+    profile.location = "深圳"
+
+    prompt = chat_service.followup_prompt_service.build_local_field_fallback_prompt(
+        "occupation",
+        profile,
+        user_message="嗯",
+        stage="opening",
+    )
+
+    assert "深圳" in prompt
+    assert any(token in prompt for token in ("工作", "做什么"))
+
+
+def test_followup_prompt_service_uses_wechat_specific_prompt_after_phone_is_already_collected():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_contact_followup_seed")
+    profile.phone = "17688987654"
+    profile.phone_collected = True
+    profile.last_contact_request_type = "wechat"
+
+    prompt = chat_service._build_followup_seed_for_model_rewrite(
+        "contact",
+        profile,
+        user_message="17688987654",
+    )
+
+    assert "微信" in prompt
+    assert "手机号" not in prompt
 
 
 @pytest.mark.asyncio
@@ -2605,6 +3551,84 @@ async def test_handle_refusal_detection_rolls_back_pending_phone_when_faq_interr
     assert profile.phone_ask_count == 1
     assert profile.phone_effective_ask_count == 1
     assert profile.last_contact_request_type is None
+
+
+@pytest.mark.asyncio
+async def test_handle_refusal_detection_uses_unified_faq_understanding_for_contact_interrupt():
+    profile = UserProfile(account_id="u_contact_faq_interrupt_unified")
+    profile.location = "深圳"
+    profile.phone_ask_count = 2
+    profile.phone_effective_ask_count = 2
+    profile.last_contact_request_type = "phone"
+    user_service = _FakeProfileUserService(profile)
+    chat_service = ChatService(_FakeAIService(), user_service)
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="方便留个电话号码给我吗？")
+    chat_service.refusal_service = SimpleNamespace(is_refusing=lambda message: False)
+
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="faq_concern",
+        subtype="fee",
+        confidence=0.95,
+    )
+    await chat_service._handle_refusal_detection(
+        "这个我先了解下",
+        "u_contact_faq_interrupt_unified",
+        profile,
+        understanding_result=understanding,
+    )
+
+    assert profile.phone_ask_count == 1
+    assert profile.phone_effective_ask_count == 1
+    assert profile.last_contact_request_type is None
+
+
+def test_get_priority_question_response_prefers_unified_understanding_intent():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_priority_question_unified")
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="faq_concern",
+        subtype="fee",
+        confidence=0.95,
+    )
+
+    response = chat_service._get_priority_question_response(
+        "这个我先了解下",
+        profile,
+        understanding_result=understanding,
+    )
+
+    assert response
+
+
+def test_get_priority_question_response_accepts_answer_first_mixed_understanding_intent():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_priority_question_mixed")
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="contact_answer",
+        subtype="fee",
+        answer_first=True,
+        confidence=0.92,
+    )
+
+    response = chat_service._get_priority_question_response(
+        "这个我先了解下",
+        profile,
+        understanding_result=understanding,
+    )
+
+    assert response
+
+
+def test_has_faq_priority_signal_accepts_answer_first_mixed_understanding_intent():
+    chat_service = _build_chat_service()
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="contact_answer",
+        subtype="fee",
+        answer_first=True,
+        confidence=0.92,
+    )
+
+    assert chat_service._has_faq_priority_signal("这个我先了解下", understanding_result=understanding) is True
 
 
 def test_build_shadow_profile_for_decision_keeps_age_uncovered_for_bucket_only_age():
@@ -3236,6 +4260,28 @@ def test_expectation_service_contact_completion_response_supports_annual_income_
     assert "1-8小时" in response
 
 
+def test_expectation_service_parse_monthly_income_amount_supports_range_and_approx():
+    service = ExpectationService()
+
+    assert service.parse_monthly_income_amount("月收入8k-12k左右") == pytest.approx(10000.0)
+    assert service.parse_monthly_income_amount("大概收入2万到3万") == pytest.approx(25000.0)
+    assert service.parse_monthly_income_amount("两万上下") == pytest.approx(20000.0)
+    assert service.parse_monthly_income_amount("一年18-24左右") == pytest.approx(17500.0)
+
+
+def test_expectation_service_contact_completion_response_supports_annual_income_range_shorthand():
+    service = ExpectationService()
+    profile = UserProfile(account_id="u_expect_female_annual_range_fast")
+    profile.age = 29
+    profile.education = "本科"
+    profile.sex = "女"
+    profile.monthly_income = "一年18-24左右"
+
+    response = service.get_contact_completion_response(profile)
+
+    assert "1-8小时" in response
+
+
 def test_get_main_dialogue_contact_faq_copy_avoids_overpromising():
     prompt = get_main_dialogue(
         gender_instruction="用户性别未知",
@@ -3607,6 +4653,46 @@ def test_should_force_model_expression_for_composite_opening_matchmaking():
     assert forced is True
 
 
+def test_build_turn_decision_opening_matchmaking_does_not_take_light_consult_when_plan_has_profile_fields():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_opening_matchmaking_plan_fields")
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="opening",
+        subtype="matchmaking_intent",
+        secondary_signals=["opening_matchmaking_intent", "service_confirmation_like"],
+        resolved_slots={},
+        confidence=0.92,
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="location",
+                    value="深圳龙华",
+                    normalized_value="深圳龙华",
+                    scope="self",
+                    evidence_text="深圳龙华在编女教师",
+                    confidence=0.95,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                )
+            ]
+        ),
+    )
+    chat_service.unified_turn_understanding_service.analyze = AsyncMock(return_value=understanding)
+
+    decision = chat_service._build_turn_decision(
+        "可以哒 深圳龙华在编女教师，对啦怎么收费呢",
+        profile,
+        conversation_context={"message_count": 0},
+    )
+
+    assert decision.intent == "opening_self_intro"
+    assert decision.followup_topic != "opening_self_intro" or decision.prioritize_user_question is False
+
+
 def test_safe_quick_faq_keeps_pure_greeting_on_whitelist():
     chat_service = _build_chat_service()
     understanding = TurnUnderstandingResult(
@@ -3622,6 +4708,217 @@ def test_safe_quick_faq_keeps_pure_greeting_on_whitelist():
     )
 
     assert safe is True
+
+
+def test_should_force_model_expression_reads_persistence_plan_slots_for_non_opening():
+    chat_service = _build_chat_service()
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="faq_concern",
+        subtype="general_faq",
+        resolved_slots={},
+        confidence=0.9,
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="occupation",
+                    value="在编教师",
+                    normalized_value="在编教师",
+                    scope="self",
+                    evidence_text="深圳龙华在编女教师",
+                    confidence=0.94,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                    persistence_state="committed",
+                    source_channel="ai",
+                )
+            ]
+        ),
+    )
+    turn_decision = TurnDecision(response_channel="quick_faq", intent="general")
+
+    forced = chat_service._should_force_model_expression(  # noqa: SLF001
+        understanding=understanding,
+        turn_decision=turn_decision,
+        user_message="对啦怎么收费呢先了解下",
+    )
+
+    assert forced is True
+
+
+def test_should_not_force_model_expression_when_priority_question_is_answer_only_or_resume():
+    chat_service = _build_chat_service()
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="contact_answer",
+        subtype="contact_provided",
+        secondary_signals=["faq"],
+        resolved_slots={},
+        confidence=0.93,
+    )
+    semantic_frame = SimpleNamespace(
+        primary_domain="faq",
+        acts=[],
+        user_questions=[SimpleNamespace(topic="pricing")],
+        field_observations=[],
+    )
+    setattr(understanding, "semantic_frame", semantic_frame)
+    turn_decision = TurnDecision(
+        response_channel="quick_faq",
+        intent="fee",
+        priority_primary_task="user_question",
+        priority_response_mode="answer_then_resume",
+    )
+
+    forced = chat_service._should_force_model_expression(  # noqa: SLF001
+        understanding=understanding,
+        turn_decision=turn_decision,
+        user_message="可以直接电话联系这边13526783627，对啦怎么收费呢先了解下",
+    )
+
+    assert forced is False
+
+
+@pytest.mark.asyncio
+async def test_maybe_build_quick_faq_payload_applies_understanding_fields_before_short_circuit():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_quick_faq_collect")
+    user_service = _FakeProfileUserService(profile)
+    chat_service.user_service = user_service
+
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="contact_answer",
+        subtype="contact_provided",
+        confidence=0.93,
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="location",
+                    value="深圳龙华",
+                    normalized_value="深圳龙华",
+                    scope="self",
+                    evidence_text="深圳龙华",
+                    confidence=0.95,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                ),
+                AcceptedField(
+                    field="education",
+                    value="本科",
+                    normalized_value="本科",
+                    scope="self",
+                    evidence_text="一样本科",
+                    confidence=0.95,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                ),
+            ]
+        ),
+    )
+    turn_decision = TurnDecision(
+        response_channel="quick_faq",
+        intent="fee",
+        priority_primary_task="user_question",
+        priority_response_mode="answer_then_resume",
+    )
+    decision_profile = UserProfile(account_id="u_quick_faq_collect")
+
+    chat_service._get_priority_question_response = Mock(return_value="基础匹配免费。")
+    chat_service._build_resume_after_interrupt_response = Mock(side_effect=lambda response, *_args, **_kwargs: response)
+    chat_service._looks_like_strong_concern_interrupt = Mock(return_value=False)
+    chat_service._apply_priority_question_guard = Mock(side_effect=lambda response, *_args, **_kwargs: response)
+    chat_service._apply_context_ack_policy = Mock(side_effect=lambda response, *_args, **_kwargs: response)
+    chat_service._ensure_humanlike_memory_ack = Mock(side_effect=lambda _message, _profile, response: response)
+
+    async def _process_collection(*args, **kwargs):
+        user_service.profile.location = "深圳龙华"
+        user_service.profile.education = "本科"
+        user_service.profile.collection_progress["location"] = True
+        user_service.profile.collection_progress["education"] = True
+        return ProfileCollectionResult(
+            collection_result={
+                "all_fields": [
+                    {"field": "location", "value": "深圳龙华"},
+                    {"field": "education", "value": "本科"},
+                ]
+            },
+            user_profile=user_service.profile,
+        )
+
+    chat_service.profile_collection_coordinator.process_collection = AsyncMock(side_effect=_process_collection)
+
+    captured: dict[str, object] = {}
+
+    async def _build_short_circuit_payload(**kwargs):
+        captured["collection_result"] = kwargs["collection_result"]
+        captured["user_profile"] = kwargs["user_profile"]
+        return {
+            "success": True,
+            "response": kwargs["final_response"],
+            "dialogId": kwargs["dialog_id"],
+            "meta": {},
+        }
+
+    chat_service.build_short_circuit_payload = AsyncMock(side_effect=_build_short_circuit_payload)
+
+    payload = await chat_service.preparation_service.maybe_build_quick_faq_payload(
+        account_id="u_quick_faq_collect",
+        user_profile=profile,
+        user_message="深圳龙华在编女教师，一样本科，对啦怎么收费",
+        dialog_id="dlg_quick_faq_collect",
+        turn_decision=turn_decision,
+        turn_understanding=understanding,
+        decision_profile=decision_profile,
+        conversation_context={"recent_responses": [], "message_count": 0},
+    )
+
+    assert payload["response"] == "基础匹配免费。"
+    collection_result = captured["collection_result"]
+    assert isinstance(collection_result, dict)
+    assert {"field": "location", "value": "深圳龙华"} in collection_result["all_fields"]
+    assert {"field": "education", "value": "本科"} in collection_result["all_fields"]
+    assert user_service.profile.location == "深圳龙华"
+    assert user_service.profile.education == "本科"
+    assert user_service.profile.collection_progress["location"] is True
+    assert user_service.profile.collection_progress["education"] is True
+
+
+def test_is_contact_like_user_message_reads_persistence_plan_contact_fields():
+    chat_service = _build_chat_service()
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="general",
+        resolved_slots={},
+        confidence=0.87,
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="phone",
+                    value="13526783627",
+                    normalized_value="13526783627",
+                    scope="contact",
+                    evidence_text="13526783627",
+                    confidence=0.99,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                )
+            ]
+        ),
+    )
+
+    assert chat_service._is_contact_like_user_message(  # noqa: SLF001
+        "13526783627",
+        understanding_result=understanding,
+    ) is True
 
 
 def test_build_turn_decision_treats_service_confirmation_as_mid_conversation_reassurance():
@@ -4394,9 +5691,7 @@ def test_build_contact_followup_response_after_phone_asks_wechat_more_naturally(
 
 
 @pytest.mark.asyncio
-async def test_phone_collection_falls_through_to_wechat_followup_when_ai_reply_lacks_wechat(monkeypatch):
-    from src.services.core.chat_service_contact_text_service import ChatServiceContactTextService
-
+async def test_phone_collection_does_not_force_wechat_followup_when_profile_incomplete(monkeypatch):
     chat_service = _build_chat_service()
     monkeypatch.setattr("src.services.core.chat_service_contact_text_service.random.choice", lambda seq: seq[0])
     profile = UserProfile(account_id="u_phone_to_wechat_followup")
@@ -4414,9 +5709,7 @@ async def test_phone_collection_falls_through_to_wechat_followup_when_ai_reply_l
         user_message="17688987659",
     )
 
-    assert "电话" in response or "号码" in response
-    assert "微信" in response
-    assert ChatServiceContactTextService.response_mentions_wechat_request(response) is True
+    assert response == "好的，号码我已经存好了，之后碰到符合你要求的合适人选我会及时联系你哦。"
 
 
 @pytest.mark.asyncio
@@ -4740,6 +6033,217 @@ async def test_update_conversation_state_prefers_planned_ask_field_over_ack_ment
 
 
 @pytest.mark.anyio
+async def test_update_conversation_state_prefers_planned_contact_field_over_drifted_question():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_last_asked_contact")
+    chat_service.dialogue_manager.add_to_history = AsyncMock()
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
+    chat_service.dialogue_manager.update_recent_responses = AsyncMock()
+    chat_service.dialogue_manager.increment_message_count = AsyncMock()
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=9)
+    chat_service.ask_tracking_service.track_ai_asked_fields = AsyncMock()
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+
+    await chat_service._update_conversation_state(
+        "u_last_asked_contact",
+        "98年呢",
+        "你刚才说想找90后、身高180以上、工作稳定的男生对吧？那除了这些，你有没有什么特别在意的小细节呀？",
+        "",
+        turn_decision=TurnDecision(ask_field="contact"),
+        track_asked_fields=True,
+    )
+
+    assert profile.last_asked_field == "contact"
+    assert profile.last_asked_side_field is None
+    chat_service.user_service.save_user_profile.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_update_conversation_state_keeps_secondary_marital_status_question_as_side_field():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_last_asked_occupation_with_marital_side")
+    chat_service.dialogue_manager.add_to_history = AsyncMock()
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
+    chat_service.dialogue_manager.update_recent_responses = AsyncMock()
+    chat_service.dialogue_manager.increment_message_count = AsyncMock()
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=2)
+    chat_service.ask_tracking_service.track_ai_asked_fields = AsyncMock()
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+
+    await chat_service._update_conversation_state(
+        "u_last_asked_occupation_with_marital_side",
+        "找对象 女生找男朋友",
+        "你想找工作稳定的男生我能get~对了，你自己目前是做什么工作的呀？顺便问下，你现在感情状态是单身对吧？",
+        "",
+        turn_decision=TurnDecision(ask_field="occupation"),
+        track_asked_fields=True,
+    )
+
+    assert profile.last_asked_field == "occupation"
+    assert profile.last_asked_side_field == "marital_status"
+    assert profile.last_question_state.get("asked_fields") == ["occupation"]
+    assert profile.last_question_state.get("side_fields") == ["marital_status"]
+    assert profile.last_question_state.get("allow_mixed_answer") is True
+    chat_service.user_service.save_user_profile.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_update_conversation_state_keeps_secondary_monthly_income_question_as_side_field():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_last_asked_occupation_with_income_side")
+    chat_service.dialogue_manager.add_to_history = AsyncMock()
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
+    chat_service.dialogue_manager.update_recent_responses = AsyncMock()
+    chat_service.dialogue_manager.increment_message_count = AsyncMock()
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=2)
+    chat_service.ask_tracking_service.track_ai_asked_fields = AsyncMock()
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+
+    await chat_service._update_conversation_state(
+        "u_last_asked_occupation_with_income_side",
+        "找对象 女生找男朋友",
+        "你现在主要做什么工作的呀？顺便问下，你收入大概在哪个区间？",
+        "",
+        turn_decision=TurnDecision(ask_field="occupation"),
+        track_asked_fields=True,
+    )
+
+    assert profile.last_asked_field == "occupation"
+    assert profile.last_asked_side_field == "monthly_income"
+    assert profile.last_question_state.get("side_fields") == ["monthly_income"]
+    assert profile.last_question_state.get("allow_mixed_answer") is True
+    chat_service.user_service.save_user_profile.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_update_conversation_state_keeps_secondary_partner_requirement_question_after_age_prompt():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_last_asked_age_with_partner_side")
+    chat_service.dialogue_manager.add_to_history = AsyncMock()
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
+    chat_service.dialogue_manager.update_recent_responses = AsyncMock()
+    chat_service.dialogue_manager.increment_message_count = AsyncMock()
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=2)
+    chat_service.ask_tracking_service.track_ai_asked_fields = AsyncMock()
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+
+    await chat_service._update_conversation_state(
+        "u_last_asked_age_with_partner_side",
+        "98年",
+        "你大概是哪一年的呀？顺着这个聊，你对另一半更看重哪一点也可以一起说说。",
+        "",
+        turn_decision=TurnDecision(ask_field="age"),
+        track_asked_fields=True,
+    )
+
+    assert profile.last_asked_field == "age"
+    assert profile.last_asked_side_field == "partner_requirement"
+    assert profile.last_question_state.get("side_fields") == ["partner_requirement"]
+    assert profile.last_question_state.get("allow_mixed_answer") is True
+    chat_service.user_service.save_user_profile.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_finalize_generated_response_realigns_mismatched_contact_followup_in_raw_mode(monkeypatch):
+    monkeypatch.setenv("AI_RAW_RESPONSE_MODE", "1")
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_realign_contact_raw_mode")
+    profile.location = "深圳"
+    profile.occupation = "在编教师"
+    profile.collection_progress.update(
+        {"sex": True, "age": True, "location": True, "education": True, "occupation": True, "marital_status": True}
+    )
+    chat_service._record_delivered_contact_ask_if_needed = AsyncMock(return_value=profile)
+
+    final_response, delivery_ok, returned_profile = await chat_service.finalize_generated_response(
+        account_id="u_finalize_realign_contact_raw_mode",
+        user_profile=profile,
+        user_message="98年呢",
+        turn_decision=SimpleNamespace(
+            ask_field="contact",
+            prioritize_user_question=False,
+            primary_move="light_followup",
+            allow_medium_target=False,
+            response_channel="model",
+        ),
+        turn_understanding=TurnUnderstandingResult(primary_turn_type="profile_answer", subtype="single_slot_answer"),
+        collection_result={"all_fields": [{"field": "age", "value": 28}, {"field": "age_label", "value": "98年"}]},
+        response_to_clean="ignored",
+        ai_response="你刚才说想找90后、身高180以上、工作稳定的男生对吧？那除了这些，你有没有什么特别在意的小细节呀？",
+        bridge_prefix="",
+        contact_gate_before=False,
+        message_count=1,
+    )
+
+    assert delivery_ok is True
+    assert returned_profile is profile
+    assert "另一半" not in final_response
+    assert any(marker in final_response for marker in ("电话", "手机号", "联系"))
+
+
+def test_should_force_progress_followup_after_collection_skips_after_valid_contact_capture():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_skip_force_contact_after_capture")
+    profile.sex = "女"
+    profile.age = 27
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "在编教师"
+    profile.marital_status = "未婚"
+    profile.partner_requirement = "90后，180以上，稳定"
+    profile.phone = "17688987654"
+    profile.phone_collected = True
+    profile.collection_progress.update(
+        {
+            "sex": True,
+            "age": True,
+            "location": True,
+            "education": True,
+            "occupation": True,
+            "marital_status": True,
+            "partner_requirement": True,
+            "contact": True,
+        }
+    )
+
+    should_force = chat_service._should_force_progress_followup_after_collection(
+        refreshed_turn_decision=SimpleNamespace(
+            ask_field=None,
+            prioritize_user_question=False,
+            next_action="continue",
+            context_ack_payload={},
+            priority_primary_task="contact_record",
+        ),
+        collection_result={"all_fields": [{"field": "contact", "value": "17688987654"}]},
+        user_profile=profile,
+    )
+
+    assert should_force is False
+
+
+def test_get_priority_question_response_answers_repeated_contact_ask_complaint():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_contact_repeat_why")
+    profile.phone = "17688987654"
+    profile.phone_collected = True
+
+    response = chat_service._get_priority_question_response(
+        "上面不是已经留给过电话了嘛？为啥还要问？",
+        profile,
+        repeat_count=1,
+        recent_responses=(),
+    )
+
+    assert response is not None
+    assert "已经" in response or "前面" in response
+    assert "不用你再重复发" in response or "重复" in response
+
+
+@pytest.mark.anyio
 async def test_update_conversation_state_preserves_last_asked_field_on_quick_faq_turn():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_preserve_last_asked_on_faq")
@@ -4897,6 +6401,91 @@ def test_finalize_followup_alignment_rewrites_dangling_ack_when_progress_exists(
 
     assert rewritten != "原来是做客服相关工作的呀，我记下来啦。"
     assert "感情状态" in rewritten or "婚况" in rewritten or "单身" in rewritten or "离婚" in rewritten
+
+
+def test_question_budget_guard_preserves_ai_ack_prefix_when_falling_back():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_budget_guard_style_prefix")
+
+    guarded = chat_service._enforce_question_budget_guard(
+        "原来你是做IT的呀，挺厉害的。对了，你今年多大呀？",
+        user_profile=profile,
+        user_message="做it呢",
+        turn_decision=TurnDecision(
+            intent="general",
+            primary_move="light_followup",
+            ask_field="partner_requirement",
+            prioritize_user_question=False,
+            allow_contact_target=False,
+            allow_medium_target=False,
+            response_channel="model",
+        ),
+    )
+
+    assert guarded.startswith("原来你是做IT的呀，挺厉害的。")
+    assert "今年多大" not in guarded
+    assert "另一半" in guarded or "找对象" in guarded or "看重" in guarded
+
+
+def test_finalize_followup_alignment_preserves_ai_ack_prefix_when_rewriting():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_followup_style_prefix")
+    profile.sex = "女"
+    profile.age = 33
+    profile.location = "沈阳"
+    profile.education = "本科"
+    profile.collection_progress.update(
+        {"sex": True, "age": True, "location": True, "education": True}
+    )
+
+    rewritten = chat_service.finalize_service._maybe_enforce_main_followup_alignment(
+        user_profile=profile,
+        user_message="客服",
+        final_response="原来你是做客服相关工作的呀，我先记下啦。",
+        turn_decision=TurnDecision(
+            intent="general",
+            primary_move="light_followup",
+            ask_field="marital_status",
+            allow_medium_target=True,
+            response_channel="model",
+        ),
+        collection_result={"all_fields": [{"field": "occupation", "value": "客服"}]},
+    )
+
+    assert rewritten.startswith("原来你是做客服相关工作的呀")
+    assert "感情状态" in rewritten or "婚况" in rewritten or "单身" in rewritten or "离婚" in rewritten
+
+
+def test_finalize_followup_alignment_rewrites_contact_hobby_dangling_response():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_finalize_contact_alignment")
+    profile.sex = "女"
+    profile.age = 28
+    profile.age_label = "98年"
+    profile.location = "深圳"
+    profile.education = "本科"
+    profile.occupation = "在编教师"
+    profile.marital_status = "未婚单身"
+    profile.monthly_income = "18万左右"
+    profile.partner_requirement = "180cm及以上，90后，工作稳定"
+
+    rewritten = chat_service.finalize_service._maybe_enforce_main_followup_alignment(
+        user_profile=profile,
+        user_message="深圳啊",
+        final_response="我大概捋清楚你的情况啦，你平时有没有比较喜欢的兴趣爱好呀？",
+        turn_decision=TurnDecision(
+            intent="general",
+            primary_move="light_followup",
+            ask_field="contact",
+            allow_contact_target=True,
+            allow_medium_target=False,
+            response_channel="model",
+        ),
+        collection_result={"all_fields": [{"field": "location", "value": "深圳"}]},
+    )
+
+    assert "微信" not in rewritten
+    assert any(token in rewritten for token in ("手机号", "电话", "号码"))
 
 
 def test_budget_guard_fallback_uses_divorce_confirmation_question_instead_of_neutral_hold():
@@ -5116,6 +6705,59 @@ def test_build_generation_prompt_prefers_soft_gender_confirmation_for_handsome_t
     assert "女生" in prompt
 
 
+def test_build_generation_prompt_prefers_persistence_plan_partner_requirement_for_soft_gender_confirmation():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_soft_gender_prompt_plan_requirement")
+    profile.age = 28
+    profile.age_label = "98年"
+    profile.location = "深圳"
+    profile.occupation = "美容相关"
+    profile.monthly_income = "3万"
+    profile.education = "本科"
+    profile.marital_status = "单身"
+
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="multi_slot_compound",
+        resolved_slots={"education": "本科", "marital_status": "单身"},
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="partner_requirement",
+                    value="身高较高、外形帅气",
+                    normalized_value="身高较高、外形帅气",
+                    scope="partner",
+                    evidence_text="身高较高、外形帅气",
+                    confidence=0.96,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                )
+            ]
+        ),
+    )
+
+    prompt = chat_service.build_generation_prompt(
+        user_message="本科，单身呢",
+        user_profile=profile,
+        conversation_context={},
+        turn_decision=TurnDecision(
+            ask_field="sex",
+            response_channel="model",
+            primary_move="ack_and_ask",
+            allow_medium_target=False,
+            allow_contact_target=True,
+        ),
+        understanding_result=understanding,
+    )
+
+    assert "【性别软确认专用生成】" in prompt
+    assert "女生" in prompt
+
+
 @pytest.mark.anyio
 async def test_track_ai_asked_fields_does_not_close_medium_field_active_ask_on_simple_ask():
     chat_service = _build_chat_service()
@@ -5193,6 +6835,55 @@ async def test_build_chat_response_refreshes_latest_profile_before_collected_inf
     assert payload["collected_info"]["partner_requirement"] == "温柔"
     assert payload["collected_info"]["partner_gender_preference"] == "男生"
     assert payload["collected_info"]["education"] == "本科"
+
+
+@pytest.mark.anyio
+async def test_build_chat_response_prefers_current_turn_all_fields_in_collected_info():
+    chat_service = _build_chat_service()
+    latest_profile = UserProfile(account_id="u_current_turn_overlay")
+    latest_profile.education = None
+    latest_profile.location = None
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=latest_profile)
+
+    payload = await chat_service._build_chat_response(
+        "u_current_turn_overlay",
+        UserProfile(account_id="u_current_turn_overlay"),
+        "我们继续聊。",
+        {
+            "all_fields": [
+                {"field": "education", "value": "本科"},
+                {"field": "location", "value": "深圳龙华"},
+            ]
+        },
+        "dlg_overlay",
+        {},
+    )
+
+    assert payload["collected_info"]["education"] == "本科"
+    assert payload["collected_info"]["location"] == "深圳龙华"
+
+
+@pytest.mark.anyio
+async def test_build_chat_response_prefers_current_turn_contact_values_in_collected_info():
+    chat_service = _build_chat_service()
+    latest_profile = UserProfile(account_id="u_current_turn_contact_overlay")
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=latest_profile)
+
+    payload = await chat_service._build_chat_response(
+        "u_current_turn_contact_overlay",
+        UserProfile(account_id="u_current_turn_contact_overlay"),
+        "我们继续聊。",
+        {
+            "all_fields": [
+                {"field": "phone", "value": "17688765432"},
+                {"field": "wechat", "value": "wx7789789"},
+            ]
+        },
+        "dlg_contact_overlay",
+        {},
+    )
+
+    assert payload["collected_info"]["contact"] == "电话: 17688765432, 微信: wx7789789"
 
 
 @pytest.mark.anyio
@@ -5278,6 +6969,34 @@ async def test_build_chat_response_does_not_show_gender_preference_as_partner_re
 
     assert payload["collected_info"]["partner_gender_preference"] == "男生"
     assert payload["collected_info"]["partner_requirement"] == "未留"
+
+
+@pytest.mark.anyio
+async def test_build_chat_response_falls_back_to_structured_partner_preference_when_requirement_missing():
+    chat_service = _build_chat_service()
+    latest_profile = UserProfile(account_id="u_refresh_structured_partner_pref")
+    latest_profile.partner_gender_preference = "男"
+    latest_profile.collection_progress["partner_gender_preference"] = True
+    latest_profile.partner_requirement = None
+    latest_profile.partner_pref_age = "90后"
+    latest_profile.partner_pref_location = "深圳"
+    latest_profile.partner_pref_industry = "程序员"
+    latest_profile.collection_progress["partner_pref_age"] = True
+    latest_profile.collection_progress["partner_pref_location"] = True
+    latest_profile.collection_progress["partner_pref_industry"] = True
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=latest_profile)
+
+    payload = await chat_service._build_chat_response(
+        "u_refresh_structured_partner_pref",
+        UserProfile(account_id="u_refresh_structured_partner_pref"),
+        "我们继续聊。",
+        {},
+        "dlg_structured_pref",
+        {},
+    )
+
+    assert payload["collected_info"]["partner_gender_preference"] == "男生"
+    assert payload["collected_info"]["partner_requirement"] == "90后，深圳，程序员"
 
 
 @pytest.mark.anyio
@@ -5694,7 +7413,8 @@ async def test_process_chat_request_short_circuits_risk_guard_before_ai():
 
 
 @pytest.mark.anyio
-async def test_process_chat_request_boundary_pause_does_not_collect_or_call_ai():
+async def test_process_chat_request_boundary_uses_model_generated_repair_by_default(monkeypatch):
+    monkeypatch.setenv("MQ_MODEL_GENERATED_REPAIR_ENABLED", "1")
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="user_boundary_pause")
     chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
@@ -5710,7 +7430,7 @@ async def test_process_chat_request_boundary_pause_does_not_collect_or_call_ai()
         return_value=SimpleNamespace(handled=False, response_payload=None)
     )
     chat_service._handle_refusal_detection = AsyncMock(return_value=None)
-    chat_service._call_ai = AsyncMock(return_value="不该调用")
+    chat_service._call_ai = AsyncMock(return_value="我先接住你这句，这轮先不追问资料。你想先聊哪一块我顺着你来。")
 
     request = SimpleNamespace(
         accountId="user_boundary_pause",
@@ -5721,7 +7441,8 @@ async def test_process_chat_request_boundary_pause_does_not_collect_or_call_ai()
     )
     result = await chat_service.process_chat_request(request)
 
-    assert "电话" in result["response"] or "手机号" in result["response"]
+    assert "先不追问资料" in result["response"]
+    chat_service._call_ai.assert_awaited()
     chat_service._handle_refusal_detection.assert_awaited_once()
 
 
@@ -5783,7 +7504,8 @@ async def test_process_chat_request_prefers_contact_switch_over_boundary_pause()
     request = SimpleNamespace(accountId="user_contact_switch", question="电话不方便，留微信可以吗", dialogId="dlg_contact", sex=None, timestamp=None)
     result = await chat_service.process_chat_request(request)
 
-    assert result["response"] == ""
+    assert result["response"]
+    assert "再发一句" in result["response"]
     chat_service._call_ai.assert_awaited_once()
 
 
@@ -6761,10 +8483,10 @@ def test_profile_collection_policy_blocks_unrelated_side_target_in_opening_stage
         allow_medium_target=True,
     )
 
-    assert side_target is None
+    assert side_target == "marital_status"
 
 
-def test_profile_collection_policy_allows_income_side_target_with_occupation_in_opening_stage():
+def test_profile_collection_policy_no_longer_allows_income_side_target_with_occupation_in_opening_stage():
     policy = ProfileCollectionPolicy()
     profile = UserProfile(account_id="u_policy_opening_income_side")
 
@@ -6776,7 +8498,7 @@ def test_profile_collection_policy_allows_income_side_target_with_occupation_in_
         allow_medium_target=True,
     )
 
-    assert side_target == "monthly_income"
+    assert side_target == "marital_status"
 
 
 def test_profile_collection_policy_does_not_attach_income_side_target_to_education_after_occupation_cue():
@@ -6796,7 +8518,7 @@ def test_profile_collection_policy_does_not_attach_income_side_target_to_educati
     assert side_target != "monthly_income"
 
 
-def test_profile_collection_policy_prefers_monthly_income_as_side_target_after_occupation_cue():
+def test_profile_collection_policy_no_longer_prefers_monthly_income_as_side_target_after_occupation_cue():
     policy = ProfileCollectionPolicy()
     profile = UserProfile(account_id="u_policy_income_main_after_occupation")
     profile.location = "深圳"
@@ -6809,7 +8531,7 @@ def test_profile_collection_policy_prefers_monthly_income_as_side_target_after_o
     )
 
     assert decision.main_target == "occupation"
-    assert decision.side_target == "monthly_income"
+    assert decision.side_target is None
 
 
 def test_profile_collection_policy_recognizes_generic_location_phrase_as_location_cue():
@@ -7056,6 +8778,224 @@ def test_response_plan_builder_opening_prefers_soft_sex_confirmation_for_matchma
     assert any("不要默认退化成‘你是女生还是男生’" in item for item in opening_spec.plan.constraints)
 
 
+def test_response_plan_builder_prefers_persistence_plan_accepted_fields_over_legacy_slots():
+    builder = ResponsePlanBuilder(
+        collection_policy=ProfileCollectionPolicy(),
+        turn_understanding_service=SimpleNamespace(
+            _looks_like_greeting=lambda _message: False,
+            _is_service_confirmation_like=lambda _message: False,
+            _extract_partner_gender_preference=lambda _message: None,
+        ),
+    )
+    understanding = TurnUnderstandingResult(
+        primary_turn_type="opening",
+        subtype="matchmaking_intent",
+        resolved_slots={"partner_gender_preference": "女"},
+    )
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="partner_gender_preference",
+                    value="男",
+                    normalized_value="男",
+                    scope="partner",
+                    evidence_text="找男朋友",
+                    confidence=0.97,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                )
+            ]
+        ),
+    )
+
+    opening_spec = builder.build(
+        turn_decision=TurnDecision(
+            intent="general",
+            risk="none",
+            stage="opening",
+            next_action="continue",
+            primary_move="ack_and_ask",
+            response_channel="model",
+        ),
+        user_profile=UserProfile(account_id="u_plan_builder_persistence"),
+        user_message="你好，我找男朋友",
+        understanding_result=understanding,
+    )
+
+    assert opening_spec is not None
+    assert any("偏向找男生" in item for item in opening_spec.plan.ack_items)
+
+
+def test_response_plan_builder_builds_complaint_repair_spec_without_short_circuit_template():
+    builder = ResponsePlanBuilder(
+        collection_policy=ProfileCollectionPolicy(),
+        turn_understanding_service=SimpleNamespace(
+            _looks_like_greeting=lambda _message: False,
+            _is_service_confirmation_like=lambda _message: False,
+            _extract_partner_gender_preference=lambda _message: None,
+        ),
+    )
+    spec = builder.build(
+        turn_decision=TurnDecision(
+            intent="complaint",
+            risk="none",
+            stage="completing",
+            next_action="continue",
+            primary_move="repair_and_release",
+            ask_field=None,
+            response_channel="model",
+        ),
+        user_profile=UserProfile(account_id="u_plan_builder_complaint"),
+        user_message="不是说了吗？",
+        understanding_result=TurnUnderstandingResult(
+            primary_turn_type="refusal_boundary_complaint",
+            subtype="complaint",
+            secondary_signals=["needs_resume_mainline"],
+        ),
+    )
+
+    assert spec is not None
+    assert spec.plan.mode == "complaint_repair"
+    assert any("可执行" in item for item in spec.plan.constraints)
+    assert "投诉修复优先" in spec.header
+
+
+def test_response_plan_builder_builds_boundary_hold_spec_without_short_circuit_template():
+    builder = ResponsePlanBuilder(
+        collection_policy=ProfileCollectionPolicy(),
+        turn_understanding_service=SimpleNamespace(
+            _looks_like_greeting=lambda _message: False,
+            _is_service_confirmation_like=lambda _message: False,
+            _extract_partner_gender_preference=lambda _message: None,
+        ),
+    )
+    spec = builder.build(
+        turn_decision=TurnDecision(
+            intent="boundary",
+            risk="boundary",
+            stage="opening",
+            next_action="continue",
+            primary_move="soft_hold",
+            ask_field=None,
+            response_channel="model",
+        ),
+        user_profile=UserProfile(account_id="u_plan_builder_boundary"),
+        user_message="先不聊这些",
+        understanding_result=TurnUnderstandingResult(
+            primary_turn_type="refusal_boundary_complaint",
+            subtype="boundary_defensive",
+        ),
+    )
+
+    assert spec is not None
+    assert spec.plan.mode == "boundary_hold"
+    assert any("不要继续追问新资料" in item for item in spec.plan.constraints)
+
+
+def test_merge_collection_result_into_shadow_profile_keeps_explicit_self_marker_high_risk_fields():
+    chat_service = _build_chat_service()
+    shadow_profile = UserProfile(account_id="u_shadow_explicit_marker")
+    understanding_result = TurnUnderstandingResult(primary_turn_type="profile_answer")
+    setattr(
+        understanding_result,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="occupation",
+                    value="在编教师",
+                    normalized_value="在编教师",
+                    scope="self",
+                    evidence_text="在编教师",
+                    confidence=0.98,
+                    acceptance_reason="explicit_self_marker",
+                    update_action="accept_as_new",
+                    persistence_state="committed",
+                    source_channel="hybrid",
+                ),
+                AcceptedField(
+                    field="monthly_income",
+                    value="年薪20+",
+                    normalized_value="年薪20+",
+                    scope="self",
+                    evidence_text="年薪20+",
+                    confidence=0.98,
+                    acceptance_reason="explicit_self_marker",
+                    update_action="accept_as_new",
+                    persistence_state="committed",
+                    source_channel="hybrid",
+                ),
+            ]
+        ),
+    )
+
+    merged = chat_service._merge_collection_result_into_shadow_profile(  # noqa: SLF001
+        shadow_profile,
+        collection_result={"all_fields": []},
+        understanding_result=understanding_result,
+    )
+
+    assert merged.occupation == "在编教师"
+    assert merged.monthly_income == "年薪20+"
+    assert merged.collection_progress["occupation"] is True
+    assert merged.collection_progress["monthly_income"] is True
+
+
+def test_generation_prompt_service_prefers_persistence_plan_contact_fields_for_completion():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_generation_prompt_persistence")
+    profile.sex = "女"
+    profile.age = 28
+    profile.education = "本科"
+    profile.monthly_income = "3万"
+    profile.location = "深圳"
+    profile.occupation = "教师"
+    profile.marital_status = "未婚"
+    profile.partner_requirement = "聊得来"
+    profile.collection_progress.update(
+        {
+            "sex": True,
+            "age": True,
+            "education": True,
+            "monthly_income": True,
+            "location": True,
+            "occupation": True,
+            "marital_status": True,
+            "partner_requirement": True,
+        }
+    )
+    profile.rejected_wechat = True
+    understanding = TurnUnderstandingResult(primary_turn_type="contact_answer", resolved_slots={"phone": ""})
+    setattr(
+        understanding,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="phone",
+                    value="13526783627",
+                    normalized_value="13526783627",
+                    scope="contact",
+                    evidence_text="13526783627",
+                    confidence=0.99,
+                    acceptance_reason="direct_write",
+                    update_action="accept_as_new",
+                )
+            ]
+        ),
+    )
+
+    instruction = chat_service.generation_prompt_service._build_contact_completion_generation_instruction(
+        user_profile=profile,
+        understanding_result=understanding,
+    )
+
+    assert "联系方式已经满足收尾条件" in instruction
+
+
 def test_profile_collection_policy_prioritizes_marital_status_after_core_fields():
     policy = ProfileCollectionPolicy()
     profile = UserProfile(account_id="u_policy_marital_main")
@@ -7212,6 +9152,20 @@ def test_build_shadow_profile_for_decision_fallback_keeps_self_birth_year_withou
     assert shadow.pending_birth_year_bucket is None
 
 
+def test_build_shadow_profile_for_decision_treats_bare_90_as_specific_birth_year():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_shadow_bare_90")
+
+    shadow = chat_service._build_shadow_profile_for_decision(
+        profile,
+        "90",
+    )
+
+    assert shadow.age_label == "90年"
+    assert shadow.pending_birth_year_bucket in {None, ""}
+    assert shadow.collection_progress["age"] is True
+
+
 def test_build_turn_decision_uses_shadow_profile_to_skip_already_provided_location_and_age():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_shadow_decision")
@@ -7281,6 +9235,169 @@ def test_fuse_extracted_fields_keeps_composite_requirement_while_extracting_gend
     assert fused["partner_gender_preference"] == "男"
     assert meta["partner_gender_preference"]["source"] == "partner_requirement_normalized"
     assert meta["partner_requirement"]["source"] == "rich_partner_requirement_preserved"
+    assert fused["partner_pref_industry"] == "同财务行业"
+    assert meta["partner_pref_industry"]["source"] == "partner_requirement_subslot_normalized"
+
+
+def test_fuse_extracted_fields_hydrates_partner_age_subslot_from_requirement():
+    chat_service = _build_chat_service()
+
+    fused, meta = chat_service._fuse_extracted_fields(
+        {"partner_requirement": "90后"},
+        {},
+        user_message="96年女生找男朋友，目前在深圳单身未婚，本科学历，与收入1万左右，找90后",
+    )
+
+    assert fused["partner_requirement"] == "90后"
+    assert fused["partner_pref_age"] == "90后"
+    assert meta["partner_pref_age"]["source"] in {"partner_requirement_subslot_normalized", "ai"}
+
+
+def test_fuse_extracted_fields_composes_partner_requirement_from_structured_subslots_when_missing():
+    chat_service = _build_chat_service()
+
+    fused, meta = chat_service._fuse_extracted_fields(
+        {
+            "partner_pref_location": "深圳",
+            "partner_pref_education": "学历本科及以上",
+        },
+        {},
+        user_message="想找深圳，本科及以上",
+    )
+
+    assert fused["partner_requirement"] == "深圳，学历本科及以上"
+    assert meta["partner_requirement"]["source"] == "structured_partner_requirement_compose"
+
+
+def test_fuse_extracted_fields_composes_partner_requirement_from_structured_subslots_and_message_tail():
+    chat_service = _build_chat_service()
+
+    fused, meta = chat_service._fuse_extracted_fields(
+        {
+            "partner_pref_location": "深圳",
+            "partner_pref_education": "学历本科及以上",
+        },
+        {},
+        user_message="可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92 可以直接电话联系这边13526783627 对啦怎么收费呢先了解下",
+    )
+
+    assert fused["partner_requirement"] == "同老家在深圳，学历本科及以上，最好深户，有房有车，不要92"
+    assert meta["partner_requirement"]["source"] == "structured_partner_requirement_compose"
+
+
+def test_user_profile_roundtrip_keeps_structured_partner_preference_subslots():
+    profile = UserProfile(account_id="u_partner_pref_roundtrip")
+    profile.partner_pref_location = "深圳"
+    profile.partner_pref_education = "学历本科及以上"
+    profile.partner_pref_locality = "同城优先"
+
+    restored = UserProfile.from_dict(profile.to_dict())
+
+    assert restored.partner_pref_location == "深圳"
+    assert restored.partner_pref_education == "学历本科及以上"
+    assert restored.partner_pref_locality == "同城优先"
+
+
+@pytest.mark.anyio
+async def test_process_chat_request_quick_faq_keeps_rich_partner_requirement_in_collected_info():
+    chat_service = ChatService(_FakeAIService(), UserService())
+    account_id = f"u_quick_faq_partner_requirement_rich_{uuid.uuid4().hex}"
+    chat_service.user_service.reset_conversation(account_id)
+
+    payload = await chat_service.process_chat_request(
+        ChatRequest(
+            question="可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92 可以直接电话联系这边13526783627 对啦怎么收费呢先了解下",
+            accountId=account_id,
+            dialogId="dlg_quick_faq_partner_requirement_rich",
+        )
+    )
+
+    assert payload["collected_info"]["sex"] == "女"
+    assert payload["collected_info"]["occupation"] == "在编教师"
+    partner_requirement = payload["collected_info"]["partner_requirement"]
+    assert "学历本科及以上" in partner_requirement
+    assert "同老家在深圳" in partner_requirement
+    assert "最好深户" in partner_requirement
+    assert "有房有车" in partner_requirement
+    assert "不要92" in partner_requirement
+
+
+def test_replay_opening_mixed_self_intro_keeps_self_age_and_partner_age_separate():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_replay_opening_mixed_intro")
+
+    understanding = chat_service.turn_understanding_service.analyze(
+        TurnUnderstandingInput(
+            user_message="96年女生找男朋友，目前在深圳单身未婚，本科学历，与收入1万左右，找90后",
+            last_response="",
+            message_count=1,
+            user_profile=profile,
+            conversation_context={},
+            in_contact_flow=False,
+        )
+    )
+
+    fused, meta = chat_service._fuse_extracted_fields(
+        dict(getattr(understanding, "resolved_slots", {}) or {}),
+        {},
+        user_message="96年女生找男朋友，目前在深圳单身未婚，本科学历，与收入1万左右，找90后",
+    )
+
+    assert understanding.primary_turn_type == "opening"
+    assert fused["age_label"] == "96年"
+    assert fused["age"] in {"30", 30}
+    assert fused["partner_requirement"] == "90后"
+    assert fused["partner_pref_age"] == "90后"
+    assert fused["monthly_income"] == "1万左右"
+    assert meta["partner_pref_age"]["source"] in {"partner_requirement_subslot_normalized", "ai"}
+
+
+def test_replay_rich_nanshan_mixed_intro_keeps_self_and_partner_fields_separate():
+    chat_service = _build_chat_service()
+    understanding = chat_service.turn_understanding_service.analyze(
+        TurnUnderstandingInput(
+            user_message="南山女生找男盆友，就是93未婚找未婚，卡学历身高，起码本科或者以上，比较倾向于大厂程序员，自己也是从事互联网有不",
+            last_response="",
+            message_count=1,
+            user_profile=UserProfile(account_id="u_replay_nanshan_mixed"),
+            conversation_context={},
+            in_contact_flow=False,
+        )
+    )
+
+    fused, meta = chat_service._fuse_extracted_fields(
+        dict(getattr(understanding, "resolved_slots", {}) or {}),
+        {},
+        user_message="南山女生找男盆友，就是93未婚找未婚，卡学历身高，起码本科或者以上，比较倾向于大厂程序员，自己也是从事互联网有不",
+    )
+
+    assert fused["sex"] == "女"
+    assert fused["marital_status"] == "未婚"
+    assert fused["partner_gender_preference"] == "男"
+    assert fused["partner_requirement"] == "未婚，学历本科及以上，大厂程序员"
+    assert fused["partner_pref_education"] == "学历本科及以上"
+    assert fused["partner_pref_industry"] == "大厂程序员"
+    assert "education" not in fused
+    assert "occupation" not in fused
+    assert meta["partner_pref_education"]["source"] in {"partner_requirement_subslot_normalized", "ai"}
+
+
+def test_turn_understanding_occupation_inference_prefers_structured_partner_preference_subslots():
+    service = _build_chat_service().turn_understanding_service
+    partner_requirement = service._compose_partner_requirement_text_for_inference(  # noqa: SLF001
+        resolved_slots={
+            "partner_pref_industry": "程序员",
+            "partner_pref_location": "深圳",
+            "partner_pref_education": "学历本科及以上",
+        },
+        message="希望对方是程序员，深圳，本科以上",
+    )
+    candidate = service.chat_service.extraction_service._infer_occupation_candidate_from_partner_requirement(  # noqa: SLF001
+        partner_requirement
+    )[0]
+
+    assert partner_requirement == "深圳，学历本科及以上，程序员"
+    assert candidate is None
 
 
 def test_build_service_confirmation_resume_response_prefers_unresolved_core_field():
@@ -7347,7 +9464,7 @@ def test_resolve_effective_followup_field_prefers_occupation_after_location_coll
     assert next_field == "occupation"
 
 
-def test_resolve_effective_followup_field_prefers_monthly_income_after_occupation():
+def test_resolve_effective_followup_field_no_longer_prefers_monthly_income_after_occupation():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_followup_occupation")
     profile.location = "深圳"
@@ -7363,7 +9480,7 @@ def test_resolve_effective_followup_field_prefers_monthly_income_after_occupatio
         allow_medium_target=True,
     )
 
-    assert next_field == "monthly_income"
+    assert next_field == "marital_status"
 
 
 def test_build_interleaving_followup_does_not_force_income_onto_education():
@@ -7404,6 +9521,52 @@ def test_build_interleaving_followup_can_fuse_income_with_location_after_occupat
 
     assert "城市" in response or "深圳" in response or "哪" in response
     assert "收入" in response
+
+
+def test_question_budget_guard_strips_invalid_side_pair_when_two_questions_present():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_question_budget_invalid_pair")
+
+    updated = chat_service._enforce_question_budget_guard(
+        "你是什么学历呀？另外月收入大概多少呢？",
+        user_profile=profile,
+        user_message="嗯",
+        turn_decision=TurnDecision(
+            ask_field="education",
+            response_channel="model",
+            allow_medium_target=True,
+            allow_contact_target=False,
+        ),
+    )
+
+    asked_fields = chat_service._detect_asked_fields_in_response(updated) | chat_service._detect_all_questioned_fields_in_response(updated)
+
+    assert "学历" in updated
+    assert "收入" not in updated
+    assert asked_fields == {"education"}
+
+
+def test_question_budget_guard_keeps_whitelisted_main_and_side_pair():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_question_budget_valid_pair")
+
+    updated = chat_service._enforce_question_budget_guard(
+        "你现在主要做哪方面工作呀？月收入大概在哪个区间呢？",
+        user_profile=profile,
+        user_message="嗯",
+        turn_decision=TurnDecision(
+            ask_field="occupation",
+            response_channel="model",
+            allow_medium_target=True,
+            allow_contact_target=False,
+        ),
+    )
+
+    asked_fields = chat_service._detect_asked_fields_in_response(updated) | chat_service._detect_all_questioned_fields_in_response(updated)
+
+    assert "工作" in updated
+    assert "收入" in updated
+    assert asked_fields == {"occupation", "monthly_income"}
 
 
 @pytest.mark.asyncio

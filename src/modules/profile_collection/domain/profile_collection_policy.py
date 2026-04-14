@@ -56,9 +56,14 @@ class ProfileCollectionPolicy:
         self.followup_planning_layer = FollowupPlanningLayer(policy=self)
 
     SIDE_TARGET_HOST_ORDERS: Dict[str, tuple[str, ...]] = {
-        "monthly_income": ("occupation", "location", "age", "education"),
         "marital_status": ("age", "location", "occupation", "education", "sex"),
         "partner_requirement": ("age", "location", "occupation", "education", "marital_status", "sex"),
+    }
+    SIDE_TARGET_PAIR_PRIORITY: Dict[str, tuple[str, ...]] = {
+        "education": ("marital_status",),
+        "occupation": ("marital_status",),
+        "location": ("marital_status", "partner_requirement"),
+        "age": ("partner_requirement", "marital_status"),
     }
 
     CORE_FIELDS = ["sex", "age", "education", "occupation", "location", "contact"]
@@ -68,6 +73,18 @@ class ProfileCollectionPolicy:
     CORE_CONTACT_FIELDS = ["sex", "age", "education", "occupation", "location"]
     MEDIUM_COVERAGE_FIELDS = ["marital_status", "partner_requirement", "monthly_income"]
     MEDIUM_PRIORITY_ORDER = ["marital_status", "partner_requirement", "monthly_income"]
+    STRUCTURED_PARTNER_PREFERENCE_FIELDS = [
+        "partner_pref_age",
+        "partner_pref_location",
+        "partner_pref_industry",
+        "partner_pref_age_relation",
+        "partner_pref_locality",
+        "partner_pref_height",
+        "partner_pref_education",
+        "partner_pref_personality",
+        "partner_pref_income",
+        "partner_pref_other",
+    ]
 
     PRIORITY_ORDER = [
         "sex",
@@ -270,6 +287,7 @@ class ProfileCollectionPolicy:
                 user_message=user_message,
                 message_count=message_count,
                 allow_medium_target=effective_allow_medium_target,
+                understanding_result=understanding_result,
             )
             main_target = followup_plan.main_target
             side_target = followup_plan.side_target
@@ -391,6 +409,7 @@ class ProfileCollectionPolicy:
         allow_contact_target: bool = True,
         user_message: str = "",
         message_count: int = 0,
+        understanding_result: TurnUnderstandingResult | None = None,
     ) -> Optional[str]:
         """获取当前主目标字段"""
         can_enter_contact = self.can_enter_contact(profile) if can_enter_contact is None else can_enter_contact
@@ -400,6 +419,7 @@ class ProfileCollectionPolicy:
             allow_contact_target=allow_contact_target,
             user_message=user_message,
             message_count=message_count,
+            understanding_result=understanding_result,
         )
 
     def get_side_target(
@@ -409,17 +429,21 @@ class ProfileCollectionPolicy:
         user_message: str = "",
         message_count: int = 0,
         allow_medium_target: bool = True,
+        understanding_result: TurnUnderstandingResult | None = None,
     ) -> Optional[str]:
         """获取顺带字段。
 
         核心字段始终是主线；婚况、择偶要求、月薪只能自然穿插，不能抢主线。
         """
+        if not allow_medium_target:
+            return None
         return self.followup_planning_layer.choose_side_target(
             profile=profile,
             main_target=main_target,
             user_message=user_message,
             message_count=message_count,
             allow_medium_target=allow_medium_target,
+            understanding_result=understanding_result,
         )
 
     def _allow_early_side_target(
@@ -429,17 +453,18 @@ class ProfileCollectionPolicy:
         main_target: Optional[str],
         user_message: str = "",
         message_count: int = 0,
+        understanding_result: TurnUnderstandingResult | None = None,
     ) -> bool:
         """在核心字段未收完时，仅放开少量高相关拼接问。"""
         if not main_target:
             return False
         if message_count > 4:
             return False
-        if not self._message_contains_profile_context(user_message):
+        if not self._has_profile_context_signal(user_message, understanding_result=understanding_result):
             return False
 
-        cue_order = self._extract_message_field_cue_order(user_message)
-        for field in ("monthly_income", "marital_status", "partner_requirement"):
+        cue_order = self._get_profile_context_cue_order(user_message, understanding_result=understanding_result)
+        for field in ("marital_status", "partner_requirement"):
             score = self._score_side_target_candidate(
                 profile,
                 field=field,
@@ -474,8 +499,7 @@ class ProfileCollectionPolicy:
             return -1
 
         if field == "monthly_income":
-            if not self.can_use_as_side_target(profile, field):
-                return -1
+            return -1
         elif not self.can_actively_ask(profile, field):
             return -1
 
@@ -486,21 +510,23 @@ class ProfileCollectionPolicy:
         latest_cue = cue_order[-1] if cue_order else ""
         profile_sufficient = self.is_profile_sufficient_for_contact(profile)
         trigger_map = {
-            "monthly_income": self.INCOME_TRIGGER_KEYWORDS,
             "marital_status": self.MARITAL_STATUS_TRIGGER_KEYWORDS,
             "partner_requirement": self.PARTNER_REQUIREMENT_TRIGGER_KEYWORDS,
         }
         score = 0
 
+        if field == "partner_requirement" and main_target == "age":
+            strong_partner_age_context = bool(set(cue_order) & {"age", "education", "location", "occupation", "marital_status"})
+            explicit_preference_trigger = any(keyword in message for keyword in trigger_map.get(field, []))
+            if not (strong_partner_age_context or explicit_preference_trigger or message_count >= 5 or profile_sufficient):
+                return -1
+
         if any(keyword in message for keyword in trigger_map.get(field, [])):
             score += 100
 
-        if field == "monthly_income" and main_target == "occupation" and (
-            message_count == 0 or message_count >= 2 or self._message_contains_profile_context(message)
-        ):
-            score += 90
-        if field == "partner_requirement" and main_target in {"age", "location", "occupation"}:
-            score += 90
+        pair_priority = self.SIDE_TARGET_PAIR_PRIORITY.get(main_target or "", ())
+        if field in pair_priority:
+            score += max(0, 80 - pair_priority.index(field) * 30)
 
         host_order = self.SIDE_TARGET_HOST_ORDERS.get(field, ())
         if main_target in host_order:
@@ -525,12 +551,8 @@ class ProfileCollectionPolicy:
         if field == "partner_requirement" and main_target in {"age", "location", "occupation", "education"} and (
             message_count >= 5 or profile_sufficient
         ):
-            score += 24
-
-        if field == "monthly_income" and main_target in {"location", "age"}:
-            if self.is_collected(profile, "occupation") or profile.collection_progress.get("occupation"):
-                score += 28
-            elif "occupation" in cue_order:
+            score += 16
+            if main_target == "age":
                 score += 18
 
         if early_phase:
@@ -551,22 +573,19 @@ class ProfileCollectionPolicy:
         cue_order: List[str],
     ) -> bool:
         """opening 阶段只放开少数高相关拼接，避免泛化到不相邻字段。"""
-        if field == "monthly_income":
+        if field == "marital_status":
+            if main_target in {"age", "location", "education"}:
+                return True
             if main_target == "occupation":
-                return True
-            if main_target in {"location", "age"} and (
-                self.is_collected(profile, "occupation")
-                or profile.collection_progress.get("occupation")
-                or "occupation" in cue_order
-            ):
-                return True
+                return "location" in cue_order
             return False
 
-        if field == "marital_status":
-            return main_target in {"age", "location", "occupation"}
-
         if field == "partner_requirement":
-            return main_target in {"age", "location", "occupation"}
+            if main_target == "location":
+                return True
+            if main_target == "age":
+                return bool(set(cue_order) & {"age", "education", "location", "occupation"})
+            return False
 
         return False
 
@@ -638,13 +657,14 @@ class ProfileCollectionPolicy:
         *,
         user_message: str = "",
         message_count: int = 0,
+        understanding_result: TurnUnderstandingResult | None = None,
     ) -> Optional[str]:
         """根据用户刚给出的资料，优先选择更像顺着聊的下一个核心字段。"""
         message = str(user_message or "").strip()
         if not message:
             return None
 
-        cue_order = self._extract_message_field_cue_order(message)
+        cue_order = self._get_profile_context_cue_order(message, understanding_result=understanding_result)
         if not cue_order:
             return None
         cues = {field: True for field in cue_order}
@@ -703,6 +723,26 @@ class ProfileCollectionPolicy:
     def _message_contains_profile_context(user_message: str) -> bool:
         return bool(ProfileCollectionPolicy._extract_message_field_cue_order(user_message))
 
+    def _has_profile_context_signal(
+        self,
+        user_message: str,
+        *,
+        understanding_result: TurnUnderstandingResult | None = None,
+    ) -> bool:
+        return bool(self._get_profile_context_cue_order(user_message, understanding_result=understanding_result))
+
+    def _get_profile_context_cue_order(
+        self,
+        user_message: str,
+        *,
+        understanding_result: TurnUnderstandingResult | None = None,
+    ) -> List[str]:
+        if understanding_result is not None:
+            fields = self._extract_understanding_field_cue_order(user_message, understanding_result)
+            if fields:
+                return fields
+        return self._extract_message_field_cue_order(user_message)
+
     @staticmethod
     def _extract_message_field_cues(user_message: str) -> Dict[str, bool]:
         cue_order = ProfileCollectionPolicy._extract_message_field_cue_order(user_message)
@@ -756,6 +796,50 @@ class ProfileCollectionPolicy:
         found.sort(key=lambda item: item[0])
         ordered_fields: List[str] = []
         for _, field in found:
+            if field not in ordered_fields:
+                ordered_fields.append(field)
+        return ordered_fields
+
+    @staticmethod
+    def _extract_understanding_field_cue_order(
+        user_message: str,
+        understanding_result: TurnUnderstandingResult,
+    ) -> List[str]:
+        message = str(user_message or "")
+        if not understanding_result:
+            return []
+
+        slot_fields = {"sex", "age", "location", "education", "occupation"}
+        evidence_map = getattr(understanding_result, "resolved_field_evidence", {}) or {}
+        resolved_slots = getattr(understanding_result, "resolved_slots", {}) or {}
+        positioned: List[tuple[int, str]] = []
+        fallback_fields: List[str] = []
+
+        for field in slot_fields:
+            if field not in resolved_slots:
+                continue
+            evidence = evidence_map.get(field)
+            position: Optional[int] = None
+            for candidate in (
+                getattr(evidence, "source_span", None),
+                getattr(evidence, "source_text", None),
+                str(resolved_slots.get(field) or "").strip(),
+            ):
+                text = str(candidate or "").strip()
+                if not text:
+                    continue
+                idx = message.find(text)
+                if idx != -1:
+                    position = idx
+                    break
+            if position is None:
+                fallback_fields.append(field)
+                continue
+            positioned.append((position, field))
+
+        positioned.sort(key=lambda item: item[0])
+        ordered_fields = [field for _, field in positioned]
+        for field in fallback_fields:
             if field not in ordered_fields:
                 ordered_fields.append(field)
         return ordered_fields
@@ -842,15 +926,20 @@ class ProfileCollectionPolicy:
         return self.is_collected(profile, field) or profile.get_effective_ask_count(field) >= 2
 
     def is_medium_field_covered(self, profile: UserProfile, field: str) -> bool:
-        if profile.skipped_fields.get(field, False) or profile.is_active_ask_closed(field):
-            return True
         if self._has_pending_resume_for_field(profile, field):
             return False
+        if field == "monthly_income" and not self.should_ask_monthly_income(profile):
+            return True
+        if profile.skipped_fields.get(field, False) or profile.is_active_ask_closed(field):
+            return True
         return self.is_collected(profile, field) or profile.get_effective_ask_count(field) >= 1
 
-    @staticmethod
-    def _has_pending_resume_for_field(profile: UserProfile, field: str) -> bool:
+    def _has_pending_resume_for_field(self, profile: UserProfile, field: str) -> bool:
         if not field:
+            return False
+        # 已收集字段不应被旧的 resume 标记反复拉回主线。
+        # 这能避免“婚况/职业已收集却被重复追问”的循环。
+        if self.is_collected(profile, field):
             return False
         if str(getattr(profile, "resume_profile_target", "") or "").strip() == field:
             return True
@@ -1080,7 +1169,6 @@ class ProfileCollectionPolicy:
             self.get_core_success_count(profile) >= 4
             and self.is_collected(profile, "marital_status")
             and self.is_collected(profile, "partner_requirement")
-            and self.is_collected(profile, "monthly_income")
         ):
             return True
         return self.is_coverage_complete(profile) and self.is_profile_sufficient_for_contact(profile)
@@ -1140,6 +1228,8 @@ class ProfileCollectionPolicy:
             return self.DISABLED
         if self.is_collected(profile, field):
             return self.DISABLED
+        if field == "monthly_income" and not self.should_ask_monthly_income(profile):
+            return self.PASSIVE_ONLY
         if (
             field == "age"
             and str(getattr(profile, "pending_birth_year_bucket", "") or "").strip()
@@ -1168,6 +1258,32 @@ class ProfileCollectionPolicy:
             return self.PASSIVE_ONLY if field in self.MEDIUM_FIELDS else self.DISABLED
         return self.ACTIVE
 
+    def should_ask_monthly_income(self, profile: UserProfile) -> bool:
+        """收入字段后置：核心字段全部完成且无明确核心拒绝时，才允许主动问一次。"""
+        if self.is_collected(profile, "monthly_income"):
+            return False
+        if profile.skipped_fields.get("monthly_income", False):
+            return False
+        if profile.is_active_ask_closed("monthly_income"):
+            return False
+        if self.has_ongoing_contact_flow(profile):
+            return False
+        if getattr(profile, "non_cooperation_turns", 0) >= 2 or getattr(profile, "off_topic_turns", 0) >= 2:
+            return False
+        if self.get_effective_income_gate_status(profile) != "open":
+            return False
+        return True
+
+    def get_effective_income_gate_status(self, profile: UserProfile) -> str:
+        """返回收入字段当前 gate 状态：open / blocked_by_core / blocked_by_refusal。"""
+        unresolved_core = self.get_uncovered_core_fields(profile)
+        if unresolved_core:
+            return "blocked_by_core"
+        for field in self.CORE_CONTACT_FIELDS:
+            if profile.is_active_ask_closed(field) and not self.is_collected(profile, field) and not profile.skipped_fields.get(field, False):
+                return "blocked_by_refusal"
+        return "open"
+
     def can_passively_extract_only(self, profile: UserProfile, field: str) -> bool:
         """字段是否已关闭主动追问，只允许被动提取。"""
         return self.get_field_mode(profile, field) == self.PASSIVE_ONLY
@@ -1175,6 +1291,15 @@ class ProfileCollectionPolicy:
     def is_missing(self, profile: UserProfile, field: str) -> bool:
         """判断字段是否缺失"""
         return not self.is_collected(profile, field) and not profile.skipped_fields.get(field, False)
+
+    def has_structured_partner_preference(self, profile: UserProfile) -> bool:
+        """结构化择偶偏好命中后，应视为 partner_requirement 已覆盖。"""
+        for field in self.STRUCTURED_PARTNER_PREFERENCE_FIELDS:
+            if str(getattr(profile, field, "") or "").strip():
+                return True
+            if bool(profile.collection_progress.get(field, False)):
+                return True
+        return False
 
     def is_collected(self, profile: UserProfile, field: str) -> bool:
         """统一判断字段是否已收集"""
@@ -1184,11 +1309,31 @@ class ProfileCollectionPolicy:
                 (profile.phone and profile.phone_collected) or
                 (profile.wechat and profile.wechat_collected)
             )
+        if field == "partner_requirement":
+            return bool(
+                profile.collection_progress.get("partner_requirement", False)
+                or str(getattr(profile, "partner_requirement", "") or "").strip()
+                or self.has_structured_partner_preference(profile)
+            )
         if field == "age":
             pending_bucket = str(getattr(profile, "pending_birth_year_bucket", "") or "").strip()
             if pending_bucket and not getattr(profile, "birth_year_confirmation_closed", False):
                 return False
-        return bool(profile.collection_progress.get(field, False))
+            age_value = getattr(profile, "age", None)
+            age_label = str(getattr(profile, "age_label", "") or "").strip()
+            return bool(
+                profile.collection_progress.get("age", False)
+                or isinstance(age_value, int)
+                or bool(age_label)
+            )
+
+        raw_value = getattr(profile, field, None)
+        if isinstance(raw_value, str):
+            value_present = bool(raw_value.strip())
+        else:
+            value_present = raw_value is not None
+
+        return bool(profile.collection_progress.get(field, False) or value_present)
 
     def should_block_preference_ask(self, profile: UserProfile, user_message: str = "") -> bool:
         """

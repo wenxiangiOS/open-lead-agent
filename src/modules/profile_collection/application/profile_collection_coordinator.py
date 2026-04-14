@@ -32,6 +32,7 @@ class ProfileCollectionCoordinator:
             user_message,
             extraction_meta=extraction_meta,
             turn_id=turn_id,
+            understanding_result=understanding_result,
         )
         refreshed_profile = await self.chat_service.user_service.get_user_profile(account_id)
         policy_decision = self.chat_service.collection_policy.decide(

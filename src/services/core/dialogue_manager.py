@@ -193,6 +193,7 @@ class DialogueManager:
         primary_move: str = "ack_and_ask",
         allow_contact_target: bool = True,
         allow_medium_target: bool = True,
+        include_extraction_prompt: bool = True,
     ) -> str:
         """
         构建主对话提示词
@@ -222,14 +223,14 @@ class DialogueManager:
         is_hong_user = self.contact_service.is_hongkong_user(user_profile)
 
         # 调试日志：香港用户场景
-        logger.info(f"[联系方式状态] 香港用户={is_hong_user}({user_profile.location}), 电话={user_profile.phone}(已收集={user_profile.phone_collected}), 微信={user_profile.wechat}(已收集={user_profile.wechat_collected})")
+        logger.debug(f"[联系方式状态] 香港用户={is_hong_user}({user_profile.location}), 电话={user_profile.phone}(已收集={user_profile.phone_collected}), 微信={user_profile.wechat}(已收集={user_profile.wechat_collected})")
 
         # 获取联系方式指令（使用新的服务）
         contact_instruction, next_action_enum = self.contact_service.build_instruction(user_profile, user_message)
         next_action = self.contact_service.get_action_dict(next_action_enum)
 
         # 调试日志：显示下一步动作
-        logger.info(f"[联系方式指令] 下一步动作: {next_action_enum.value}, phone_ask_count={user_profile.phone_ask_count}, wechat_ask_count={user_profile.wechat_ask_count}")
+        logger.debug(f"[联系方式指令] 下一步动作: {next_action_enum.value}, phone_ask_count={user_profile.phone_ask_count}, wechat_ask_count={user_profile.wechat_ask_count}")
 
         # 调试日志：只显示指令类型，不显示完整内容
         if contact_instruction:
@@ -277,11 +278,11 @@ class DialogueManager:
         # 显式禁止切联系方式时，直接压制联系方式提示，避免主线轮次被旧提示带偏。
         if not allow_contact_target:
             contact_instruction = ""
-            logger.info("[联系方式指令] 当前轮次禁止切联系方式，已压制联系方式提示")
+            logger.debug("[联系方式指令] 当前轮次禁止切联系方式，已压制联系方式提示")
         # 未到联系方式进入时机时，压制联系方式主动提示，避免旧逻辑抢跑
         elif not self.collection_policy.should_allow_contact_instruction(user_profile, next_action_enum.name):
             contact_instruction = ""
-            logger.info(
+            logger.debug(
                 "[联系方式指令] 暂不进入联系方式逻辑: "
                 f"reason={policy_decision.reason}, "
                 f"unresolved_core={policy_decision.unresolved_core_fields}, "
@@ -488,6 +489,9 @@ class DialogueManager:
         expected_field = user_profile.get_expected_field_for_short_answer(message_count)
         if expected_field:
             logger.debug(f"[短答槽位绑定] 期望字段: {expected_field}, 当前轮次: {message_count}")
+
+        if not include_extraction_prompt:
+            return main_prompt
 
         # 添加信息提取提示词（传递 last_question 和 expected_field 用于上下文感知）
         extraction_prompt = get_extraction(

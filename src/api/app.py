@@ -18,6 +18,7 @@ from src.core.error_handler import global_exception_handler
 from src.modules.message_queue.application.message_orchestrator import MessageOrchestrator
 from src.modules.message_queue.infrastructure.queue_store import QueueStore
 from src.modules.platform_xiaohongshu.infrastructure.xhs_reply_client import ReplyDeliveryService
+from src.services.queue.turn_commit_service import TurnCommitService
 
 # Import route modules
 from src.api.routes import (
@@ -101,7 +102,12 @@ ai_service = AIService()
 user_service = UserService()
 chat_service = ChatService(ai_service, user_service)
 queue_store = QueueStore()
-message_orchestrator = MessageOrchestrator(chat_service=chat_service, queue_store=queue_store)
+turn_commit_service = TurnCommitService(user_service=user_service, queue_store=queue_store)
+message_orchestrator = MessageOrchestrator(
+    chat_service=chat_service,
+    queue_store=queue_store,
+    commit_service=turn_commit_service,
+)
 reply_delivery_service = ReplyDeliveryService()
 message_queue_worker = MessageQueueWorker(
     orchestrator=message_orchestrator,
@@ -113,12 +119,14 @@ message_queue_worker = MessageQueueWorker(
 reply_sender_worker = ReplySenderWorker(
     queue_store=queue_store,
     delivery_service=reply_delivery_service,
+    commit_service=turn_commit_service,
     batch_size=_int_setting("mq_outbox_batch_size", 100),
     poll_ms=_int_setting("mq_sender_poll_ms", 100),
     max_retries=_int_setting("mq_outbox_max_retries", 8),
     job_concurrency=_int_setting("mq_sender_job_concurrency", 8),
 )
 worker_tasks: list[asyncio.Task] = []
+shutdown_completed = False
 
 # ============================================================================
 # Route Registration
@@ -172,6 +180,11 @@ async def async_cleanup_resources():
 
 def cleanup_resources():
     """Cleanup function to close AI service client"""
+    global shutdown_completed
+
+    if shutdown_completed:
+        return
+
     try:
         try:
             loop = asyncio.get_event_loop()
@@ -246,6 +259,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Shutdown event handler"""
+    global shutdown_completed
     logger.info("Shutting down application...")
     message_queue_worker.stop()
     reply_sender_worker.stop()
@@ -255,6 +269,7 @@ async def shutdown_event():
         await asyncio.gather(*worker_tasks, return_exceptions=True)
         worker_tasks.clear()
     await async_cleanup_resources()
+    shutdown_completed = True
     logger.info("Application shutdown complete")
 
 

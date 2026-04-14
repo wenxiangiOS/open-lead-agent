@@ -93,6 +93,8 @@ python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verb
   消息队列主设计
 - `docs/08_OPENING_GUARD_DESIGN.md`
   开场保护层设计
+- `docs/09_TURN_PRIORITY_POLICY_DESIGN.md`
+  单轮优先级策略设计
 - 其他文档
   作为专题说明、实现细节、运维说明或历史材料
 
@@ -167,8 +169,10 @@ python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verb
 1. `docs/05_PROFILE_COLLECTION_STRATEGY.md`（资料收集与 AI 对话主设计）
 2. `docs/06_CONTACT_COLLECTION.md`（联系方式规则权威）
 3. `docs/08_OPENING_GUARD_DESIGN.md`（开场保护层设计）
-4. `docs/contact_collection_cheatsheet.md`（速查，不作为规则源）
-5. `docs/ai_dialog_policy.md`（迁移说明，不再作为规则源）
+4. `docs/09_TURN_PRIORITY_POLICY_DESIGN.md`（单轮优先级策略）
+5. `docs/10_UNIFIED_TURN_UNDERSTANDING_PIPELINE_DESIGN.md`（统一理解与写库架构）
+6. `docs/contact_collection_cheatsheet.md`（速查，不作为规则源）
+7. `docs/ai_dialog_policy.md`（迁移说明，不再作为规则源）
 
 ## 2.1 当前权威类
 
@@ -184,6 +188,9 @@ python3 scripts/run_random_user_simulation.py --cover-scenarios --seed 42 --verb
 
 - `docs/07_MESSAGE_QUEUE_DESIGN.md`
 - `docs/08_OPENING_GUARD_DESIGN.md`
+- `docs/09_TURN_PRIORITY_POLICY_DESIGN.md`
+- `docs/10_UNIFIED_TURN_UNDERSTANDING_PIPELINE_DESIGN.md`
+- `docs/14_ROOT_CAUSE_REMEDIATION_EXECUTION_20260413.md`
 - `docs/IMPLEMENTATION_TASKS.md`
 - `docs/05_PROFILE_COLLECTION_STRATEGY.md`
 - `docs/06_CONTACT_COLLECTION.md`

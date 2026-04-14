@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from src.modules.conversation.application.process_chat_turn import ProcessChatTurnUseCase
@@ -212,7 +214,7 @@ class _ModelChatService:
         self.short_circuit_kwargs = kwargs
         return None, None, kwargs["user_profile"]
 
-    async def handle_refusal_detection(self, user_message, account_id, user_profile):
+    async def handle_refusal_detection(self, user_message, account_id, user_profile, understanding_result=None):
         return None
 
     async def maybe_build_quick_faq_payload(self, **kwargs):
@@ -501,6 +503,18 @@ class _ShortCircuitModelChatService(_ModelChatService):
         }
 
 
+class _ModelChatServiceWithAlignmentObs(_ModelChatService):
+    async def finalize_generated_response(self, **kwargs):
+        self._last_turn_alignment_obs = {
+            "ask_field": "age",
+            "asked_fields": "age",
+            "ask_field_mismatch_detected": False,
+            "ask_field_mismatch_rewritten": False,
+            "reask_after_commit_detected": True,
+        }
+        return await super().finalize_generated_response(**kwargs)
+
+
 def test_sync_payload_response_keeps_matching_response_unchanged():
     use_case = ProcessChatTurnUseCase(chat_service=object())
 
@@ -559,6 +573,32 @@ async def test_execute_attaches_pre_generation_resolution_meta_to_short_circuit_
         "resolved_fields": ["location"],
         "transition_reason": "contextual_short_reply_backfill",
     }
+
+
+@pytest.mark.asyncio
+async def test_execute_short_circuit_route_still_enters_async_backfill_scheduler(monkeypatch):
+    use_case = ProcessChatTurnUseCase(_ShortCircuitModelChatService())
+    scheduled_calls = []
+
+    def _fake_schedule_async_semantic_backfill(**kwargs):
+        scheduled_calls.append(kwargs)
+
+    monkeypatch.setattr(use_case, "_schedule_async_semantic_backfill", _fake_schedule_async_semantic_backfill)
+
+    payload = await use_case.execute(
+        ChatRequest(
+            question="还没办好",
+            accountId="u_model",
+            dialogId="dlg_pre_gen_short_schedule",
+            sex=None,
+            timestamp=None,
+        )
+    )
+
+    assert payload["meta"]["route"] == "divorce_incomplete"
+    assert len(scheduled_calls) == 1
+    assert scheduled_calls[0]["route_name"] == "divorce_incomplete"
+    assert scheduled_calls[0]["turn_understanding"] is not None
 
 
 def test_sync_payload_response_overrides_payload_with_final_response():
@@ -695,6 +735,35 @@ async def test_execute_returns_quick_faq_payload_without_falling_through_generat
 
 
 @pytest.mark.asyncio
+async def test_execute_quick_faq_route_still_enters_async_backfill_scheduler(monkeypatch):
+    chat_service = _QuickFaqChatService(
+        response_text="这个我先说清楚，主要是怕后面把你的情况理解偏了。",
+        recent_responses=["本科学历挺好的~你现在的月收入大概在什么范围呀？"],
+        message_count=4,
+    )
+    use_case = ProcessChatTurnUseCase(chat_service=chat_service)
+    scheduled_calls = []
+
+    def _fake_schedule_async_semantic_backfill(**kwargs):
+        scheduled_calls.append(kwargs)
+
+    monkeypatch.setattr(use_case, "_schedule_async_semantic_backfill", _fake_schedule_async_semantic_backfill)
+
+    payload = await use_case.execute(
+        ChatRequest(
+            question="为啥要问这么清晰呢",
+            accountId="u_quick_faq_schedule",
+            dialogId="dlg_quick_faq_schedule",
+        )
+    )
+
+    assert payload["meta"]["route"] == "quick_faq"
+    assert len(scheduled_calls) == 1
+    assert scheduled_calls[0]["route_name"] == "quick_faq"
+    assert scheduled_calls[0]["turn_understanding"] is not None
+
+
+@pytest.mark.asyncio
 async def test_execute_model_route_still_runs_after_quick_faq_turn():
     quick_faq_service = _QuickFaqChatService(
         response_text="这个我先说清楚，主要是怕后面把你的情况理解偏了。",
@@ -727,6 +796,30 @@ async def test_execute_model_route_still_runs_after_quick_faq_turn():
     assert model_payload["success"] is True
     assert model_payload["meta"]["route"] == "model"
     assert model_payload["response"] == "最终展示"
+
+
+@pytest.mark.asyncio
+async def test_execute_logs_alignment_observability_into_obs_turn(caplog):
+    chat_service = _ModelChatServiceWithAlignmentObs()
+    use_case = ProcessChatTurnUseCase(chat_service=chat_service)
+
+    caplog.set_level(logging.INFO)
+    payload = await use_case.execute(
+        ChatRequest(
+            question="我在深圳",
+            accountId="u_model_alignment_obs",
+            dialogId="dlg_model_alignment_obs",
+        )
+    )
+
+    assert payload["success"] is True
+    obs_logs = [record.message for record in caplog.records if "[obs.turn]" in record.message]
+    assert obs_logs
+    assert "ask_field=age" in obs_logs[-1]
+    assert "asked_fields=age" in obs_logs[-1]
+    assert "ask_field_mismatch=0" in obs_logs[-1]
+    assert "ask_field_rewritten=0" in obs_logs[-1]
+    assert "reask_after_commit=1" in obs_logs[-1]
 
 
 @pytest.mark.asyncio
@@ -791,4 +884,4 @@ async def test_execute_suppresses_under_limit_short_circuit_for_partner_age_rang
     assert payload["success"] is True
     assert payload["meta"]["route"] == "model"
     assert chat_service.short_circuit_kwargs is not None
-    assert chat_service.short_circuit_kwargs["parsed_age"] is None
+    assert "parsed_age" not in chat_service.short_circuit_kwargs

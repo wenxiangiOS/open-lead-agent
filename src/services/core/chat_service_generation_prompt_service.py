@@ -2,12 +2,27 @@ import copy
 import re
 from typing import Any, Dict
 
+from src.services.core.chat_service_summary_helper_service import ChatServiceSummaryHelperService
 from src.utils.validators import PhoneValidator, WechatValidator
 
 
 class ChatServiceGenerationPromptService:
     def __init__(self, host: Any) -> None:
         self.host = host
+
+    @staticmethod
+    def _effective_resolved_slots(understanding_result) -> Dict[str, str]:
+        resolved_slots: Dict[str, str] = dict(getattr(understanding_result, "resolved_slots", {}) or {})
+        persistence_plan = getattr(understanding_result, "persistence_plan", None)
+        if persistence_plan is None:
+            return resolved_slots
+        for field in list(getattr(persistence_plan, "accepted_fields", []) or []):
+            field_name = str(getattr(field, "field", "") or "").strip()
+            scope = str(getattr(field, "scope", "") or "").strip()
+            if not field_name or scope not in {"self", "contact", "partner"}:
+                continue
+            resolved_slots[field_name] = getattr(field, "normalized_value", None)
+        return resolved_slots
 
     def _build_contact_candidate_generation_instruction(
         self,
@@ -62,7 +77,7 @@ class ChatServiceGenerationPromptService:
         user_profile,
         understanding_result,
     ) -> str:
-        resolved_slots = dict(getattr(understanding_result, "resolved_slots", {}) or {})
+        resolved_slots = self._effective_resolved_slots(understanding_result)
 
         projected_profile = copy.deepcopy(user_profile)
         for field in (
@@ -151,6 +166,8 @@ class ChatServiceGenerationPromptService:
 
         projected_next_action = self.host.contact_service.get_next_action(projected_profile, user_message)
         projected_action_value = str(getattr(projected_next_action, "value", projected_next_action) or "").strip()
+        if not self.host._is_profile_collection_complete_or_exhausted(projected_profile):
+            return ""
 
         followup_map = {
             ("phone", "ask_wechat"): "微信",
@@ -191,7 +208,7 @@ class ChatServiceGenerationPromptService:
         if str(getattr(user_profile, "sex", "") or "").strip():
             return False
 
-        resolved_slots = dict(getattr(understanding_result, "resolved_slots", {}) or {})
+        resolved_slots = self._effective_resolved_slots(understanding_result)
         inferred_preference = str(
             resolved_slots.get("partner_gender_preference")
             or getattr(user_profile, "partner_gender_preference", "")
@@ -453,6 +470,7 @@ class ChatServiceGenerationPromptService:
             primary_move=turn_decision.primary_move,
             allow_contact_target=turn_decision.allow_contact_target,
             allow_medium_target=turn_decision.allow_medium_target,
+            include_extraction_prompt=False,
         )
         bridge_instruction = self.host._build_profile_bridge_generation_instruction(
             user_message=user_message,
@@ -473,6 +491,7 @@ class ChatServiceGenerationPromptService:
             turn_decision=turn_decision,
             understanding_result=understanding_result,
         )
+        resolved_slots = self._effective_resolved_slots(understanding_result)
         retry_instruction = ""
         ask_field = str(getattr(turn_decision, "ask_field", "") or "").strip()
         pending_retry_field = str(getattr(user_profile, "pending_retry_field", "") or "").strip()
@@ -510,8 +529,8 @@ class ChatServiceGenerationPromptService:
         primary_followup_instruction = ""
         if ask_field == "sex":
             preference_hint = str(
-                dict(getattr(understanding_result, "resolved_slots", {}) or {}).get("partner_requirement")
-                or getattr(user_profile, "partner_requirement", "")
+                resolved_slots.get("partner_requirement")
+                or ChatServiceSummaryHelperService.extract_partner_requirement_hint(profile=user_profile)
                 or self.host.turn_understanding_service._extract_simple_partner_requirement(user_message)  # noqa: SLF001
                 or ""
             ).strip()

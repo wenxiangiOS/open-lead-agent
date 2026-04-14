@@ -17,6 +17,10 @@ rejected_phone && !wechat_collected → 询问微信 💬
 phone_collected && !wechat_collected → 询问微信 💬
 ```
 
+补充说明：
+- 非香港用户收集到电话后，微信流程还没结束；如果当轮资料已经够完整，回复里应继续顺带补问一次微信。
+- 只有电话和微信两条子流程都完成后，`contact_complete` 才会变成 `True`。
+
 ### 微信最多问几次？
 ```
 香港用户 → 2 次
@@ -29,11 +33,17 @@ phone_collected && !wechat_collected → 询问微信 💬
 ## 核心代码位置
 
 ```
-src/services/contact_collection_service.py
+src/services/collection/contact_collection_service.py
 ├── get_next_action()      # 决策下一步
 ├── detect_refusal()       # 检测拒绝
 ├── build_instruction()    # 构建指令
 └── get_status_display()   # 状态显示
+
+src/services/core/chat_service_contact_validation_flow_service.py
+└── handle_contact_validation()   # 联系方式验证成功后的补追问/收尾
+
+src/services/core/chat_service_delivery_service.py
+└── build_enhanced_response_to_clean()   # raw mode 下的联系方式回复落地
 ```
 
 ---

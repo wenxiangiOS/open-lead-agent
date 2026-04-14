@@ -56,7 +56,17 @@ class ResponsePlanBuilder:
         primary_turn_type = understanding_result.primary_turn_type or ""
         subtype = understanding_result.subtype or ""
         secondary_signals = set(understanding_result.secondary_signals or [])
-        resolved_slots = {k: str(v) for k, v in (understanding_result.resolved_slots or {}).items()}
+        resolved_slots = self._effective_resolved_slots(understanding_result)
+
+        repair_spec = self._build_repair_or_hold_spec(
+            turn_decision=turn_decision,
+            primary_turn_type=primary_turn_type,
+            subtype=subtype,
+            secondary_signals=secondary_signals,
+            resolved_slots=resolved_slots,
+        )
+        if repair_spec:
+            return repair_spec
 
         opening_spec = self._build_opening_spec(
             primary_turn_type=primary_turn_type,
@@ -82,6 +92,76 @@ class ResponsePlanBuilder:
                 resolved_slots=resolved_slots,
             )
 
+        return None
+
+    def _build_repair_or_hold_spec(
+        self,
+        *,
+        turn_decision: TurnDecision,
+        primary_turn_type: str,
+        subtype: str,
+        secondary_signals: set[str],
+        resolved_slots: dict[str, str],
+    ) -> ResponsePlanPromptSpec | None:
+        intent = str(getattr(turn_decision, "intent", "") or "").strip()
+        risk = str(getattr(turn_decision, "risk", "") or "").strip()
+        primary_move = str(getattr(turn_decision, "primary_move", "") or "").strip()
+
+        if intent == "complaint" or primary_move == "repair_and_release":
+            plan = ResponsePlan(
+                mode="complaint_repair",
+                ack_items=[
+                    "先明确承认刚才问法让用户不舒服或有重复感",
+                    "用一小句降压，说明这轮先不继续追资料",
+                ],
+                next_move="给出一个明确可执行的继续方式，避免空悬收口",
+                resolved_slots=resolved_slots,
+                secondary_signals=sorted(secondary_signals),
+                constraints=[
+                    "最终只生成一段自然回复，1-2句为主，不要分条。",
+                    "禁止复用固定模板句式，不能输出“这个点先收住，我们接着往下聊”这类空悬收口。",
+                    "必须包含一个可执行的下一步，例如让用户先说最在意的择偶点或想先聊的方向。",
+                    "这轮不要继续追问新资料字段，不要索要联系方式。",
+                    "语气像真人修复，不要流程腔或策略泄漏。",
+                ],
+            )
+            return ResponsePlanPromptSpec(
+                header="RESPONSE_PLAN（投诉修复优先）",
+                context_summary=(
+                    "当前轮命中 complaint 修复模式，必须以体验修复优先。\n"
+                    f"结构化理解：turn={primary_turn_type}/{subtype}；"
+                    f"secondary={','.join(sorted(secondary_signals)) or '-'}；"
+                    f"slots={json.dumps(resolved_slots, ensure_ascii=False) if resolved_slots else '{}'}。"
+                ),
+                plan=plan,
+            )
+
+        if risk == "boundary" or intent == "boundary" or primary_move == "soft_hold":
+            plan = ResponsePlan(
+                mode="boundary_hold",
+                ack_items=[
+                    "先接住用户边界或顾虑，明确这轮不强推资料",
+                ],
+                next_move="给一个低压力承接句，允许用户按自己节奏继续",
+                resolved_slots=resolved_slots,
+                secondary_signals=sorted(secondary_signals),
+                constraints=[
+                    "最终只生成一段自然回复，1-2句为主，不要分条。",
+                    "不要继续追问新资料，不要索要电话或微信。",
+                    "禁止使用固定模板化边界句式，避免重复客服腔。",
+                    "必须保持轻口语，像真人接住边界，不要教育用户。",
+                ],
+            )
+            return ResponsePlanPromptSpec(
+                header="RESPONSE_PLAN（边界承接优先）",
+                context_summary=(
+                    "当前轮命中 boundary 承接模式，必须先稳住用户体验。\n"
+                    f"结构化理解：turn={primary_turn_type}/{subtype}；"
+                    f"secondary={','.join(sorted(secondary_signals)) or '-'}；"
+                    f"slots={json.dumps(resolved_slots, ensure_ascii=False) if resolved_slots else '{}'}。"
+                ),
+                plan=plan,
+            )
         return None
 
     def _build_opening_spec(
@@ -291,3 +371,18 @@ class ResponsePlanBuilder:
         if preference == "女":
             return "男生"
         return ""
+
+    @staticmethod
+    def _effective_resolved_slots(understanding_result: TurnUnderstandingResult) -> dict[str, str]:
+        persistence_plan = getattr(understanding_result, "persistence_plan", None)
+        if persistence_plan is None:
+            return {k: str(v) for k, v in (getattr(understanding_result, "resolved_slots", {}) or {}).items()}
+        resolved_slots: dict[str, str] = {}
+
+        for field in list(getattr(persistence_plan, "accepted_fields", []) or []):
+            field_name = str(getattr(field, "field", "") or "").strip()
+            scope = str(getattr(field, "scope", "") or "").strip()
+            if not field_name or scope not in {"self", "contact", "partner"}:
+                continue
+            resolved_slots[field_name] = str(getattr(field, "normalized_value", "") or "")
+        return resolved_slots

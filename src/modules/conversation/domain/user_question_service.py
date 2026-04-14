@@ -97,6 +97,23 @@ class UserQuestionService:
             ),
         ),
         (
+            "contact_repeat_why",
+            (
+                r"上面不是已经留(?:给)?过电话",
+                r"不是已经留(?:给)?过电话",
+                r"都已经留(?:给)?过电话",
+                r"电话不是已经留(?:给)?过",
+                r"上面不是已经给(?:过)?电话",
+                r"不是已经给(?:过)?电话",
+                r"(?:留过|给过)电话.*(?:为什么|为啥).*(?:还要问|还问|又问)",
+            ),
+            (
+                "你说得对，电话这边其实已经记到了，刚刚那句是我这边没接稳，不用你再重复发。",
+                "你这个提醒对，号码前面已经收到了，刚刚那句属于我这边重复追问了，你不用再发一次。",
+                "你说得没错，电话前面已经留过了，刚刚那句我这边问重复了，这个号码我按已收到处理。",
+            ),
+        ),
+        (
             "contact_why",
             (
                 r"为啥要留电话",
@@ -247,6 +264,7 @@ class UserQuestionService:
         "store_location": ("门店", "线下", "地址", "位置", "在哪", "哪里", "到店", "实体店", "定位"),
         "how_match": ("匹配", "流程", "牵线", "怎么安排", "怎么找", "怎么做", "怎么介绍"),
         "contact_exchange": ("加微信", "直接联系", "直接加", "互换联系方式", "能加", "对方微信", "直接加对方"),
+        "contact_repeat_why": ("已经留过电话", "已经给过电话", "还要问", "怎么还问", "为什么还要问", "为啥还要问"),
         "contact_why": ("为什么留电话", "为啥留电话", "留电话干嘛", "电话用途", "为什么留微信", "留微信干嘛", "微信用途"),
         "clarification": ("没看懂", "看不懂", "听不懂", "啥意思", "什么意思", "解释下", "解释一下"),
         "specific_target": ("只想要", "就要他", "就要她", "指定", "这个人", "这个男生", "这个女生"),
@@ -350,6 +368,21 @@ class UserQuestionService:
         未命中时返回 None，保持原有 AI 流程。
         """
         intent = self.detect_quick_faq_intent(text)
+        if not intent:
+            return None
+        return self.get_quick_faq_response_by_intent(
+            intent,
+            repeat_count=repeat_count,
+            recent_responses=recent_responses,
+        )
+
+    def get_quick_faq_response_by_intent(
+        self,
+        intent: str,
+        *,
+        repeat_count: int = 1,
+        recent_responses: tuple[str, ...] | list[str] | None = None,
+    ) -> str | None:
         if not intent:
             return None
 

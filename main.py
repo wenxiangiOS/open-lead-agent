@@ -56,13 +56,18 @@ def main():
     logger.info(f"Server starting on http://0.0.0.0:8000")
 
     # 监听所有网络接口，允许局域网/手机访问
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        reload=False,  # 禁用 reload，避免导入问题
-        log_level=settings.log_level.lower()
-    )
+    try:
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=8000,
+            reload=False,  # 禁用 reload，避免导入问题
+            log_level=settings.log_level.lower()
+        )
+    except KeyboardInterrupt:
+        # Uvicorn 在第二次 Ctrl+C 强制退出时会重新抛出 KeyboardInterrupt；
+        # 这里吞掉顶层堆栈，保留正常的停机日志即可。
+        logger.info("Server stopped by user")
 
 if __name__ == "__main__":
     main()

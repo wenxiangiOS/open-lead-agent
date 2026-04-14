@@ -71,3 +71,21 @@ async def test_track_ai_asked_fields_does_not_close_partner_requirement_on_ask()
 
     assert profile.get_ask_count("partner_requirement") == 1
     assert profile.is_active_ask_closed("partner_requirement") is False
+
+
+@pytest.mark.anyio
+async def test_track_ai_asked_fields_does_not_mistake_income_range_question_for_location():
+    user_service = AsyncMock()
+    profile = UserProfile(account_id="user_income_not_location")
+    user_service.get_user_profile = AsyncMock(return_value=profile)
+    user_service.save_user_profile = AsyncMock(return_value=True)
+    service = AskTrackingService(user_service)
+
+    await service.track_ai_asked_fields(
+        "user_income_not_location",
+        "挺好的呀，那你现在是做什么工作的，月收入大概在什么区间呢？",
+    )
+
+    assert profile.get_ask_count("occupation") == 1
+    assert profile.get_ask_count("monthly_income") == 1
+    assert profile.get_ask_count("location") == 0

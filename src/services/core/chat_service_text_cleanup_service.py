@@ -17,6 +17,7 @@ class ChatServiceTextCleanupService:
         text = str(response or "").strip()
         if not text:
             return text
+        text = text.replace("先保证安全", "__PRESERVE_SAFETY__")
 
         phrase_replacements = (
             (r"绝对不会", "一般不会"),
@@ -49,6 +50,7 @@ class ChatServiceTextCleanupService:
         text = re.sub(r"尽量尽量", "尽量", text)
         text = re.sub(r"会会", "会", text)
         text = re.sub(r"先不先不", "先不", text)
+        text = text.replace("__PRESERVE_SAFETY__", "先保证安全")
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
@@ -246,7 +248,30 @@ class ChatServiceTextCleanupService:
         except Exception:
             action_value = "none"
 
+        finalized_single_contact_path = bool(
+            self.host._has_any_contact(user_profile)
+            and (
+                (self.host.contact_service.is_contact_type_final_refused(user_profile, "wechat") and user_profile.phone_collected)
+                or (self.host.contact_service.is_contact_type_final_refused(user_profile, "phone") and user_profile.wechat_collected)
+                or (bool(getattr(user_profile, "rejected_wechat", False)) and user_profile.phone_collected)
+                or (bool(getattr(user_profile, "rejected_phone", False)) and user_profile.wechat_collected)
+            )
+        )
+        populated_core_field_count = sum(
+            1
+            for field in ("sex", "age", "location", "education", "occupation")
+            if str(getattr(user_profile, field, "") or "").strip()
+        )
+        can_close_single_contact_path = (
+            self.host._can_end_with_contact_completion(user_profile)
+            or populated_core_field_count >= 3
+        )
+        if action_value in {"none", "end"} and finalized_single_contact_path and can_close_single_contact_path:
+            return self.host._get_contact_completion_ending_response(user_profile)
+
         if action_value in {"none", "end"} and self.host.contact_service.is_contact_complete(user_profile):
+            if finalized_single_contact_path and can_close_single_contact_path:
+                return self.host._get_contact_completion_ending_response(user_profile)
             if self.host._can_end_with_contact_completion(user_profile):
                 return self.host._get_contact_completion_ending_response(user_profile)
             if self.host._can_end_without_contact(user_profile):

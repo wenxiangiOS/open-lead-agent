@@ -1,12 +1,9 @@
-import logging
 import re
 from typing import Any, Dict, Optional
 
 from src.services.core.chat_service_contact_validation_text_service import (
     ChatServiceContactValidationTextService,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class ChatServiceValidationRecoveryService:
@@ -82,7 +79,6 @@ class ChatServiceValidationRecoveryService:
         error_info: Dict[str, Any],
     ) -> str:
         field = error_info.get("field") or "contact"
-        field_label = "微信号" if field == "wechat" else "联系方式"
         attempt = error_info.get("attempt") or 1
         detail = self.classify_contact_validation_detail(
             invalid_value=invalid_value,
@@ -90,32 +86,6 @@ class ChatServiceValidationRecoveryService:
             detail=error_info.get("detail"),
             user_profile=user_profile,
         )
-        prompt = (
-            "你在继续一段婚恋咨询对话。"
-            "用户刚发来的联系方式需要重新确认，请只输出一条自然、简短、口语化的中文回复。\n"
-            "要求：\n"
-            "1. 不要提 AI、系统、校验规则、错误码。\n"
-            "2. 根据给定判断，自然提醒对方核对并重新发一个可用的联系方式。\n"
-            "3. 保持一到两句，像真人聊天，不要模板腔。\n"
-            "4. 如果判断是地区不一致但仍像有效号码，不要直接否定，先柔性确认这是不是对方常用联系方式。\n"
-            "5. 不要说“现在不方便可以稍后再发”这类退让句，只聚焦让对方核对后重发。\n"
-            "6. 如果当前字段是电话，就只提醒对方重发手机号，不要提微信，不要把微信当替代项。\n"
-            "7. 如果当前字段是微信，就只提醒对方重发微信，不要提手机号。\n"
-            f"当前字段：{field_label}\n"
-            f"判断结果：{detail}\n"
-            f"第几次无效输入：{attempt}\n"
-            f"用户地区：{getattr(user_profile, 'location', None) or '-'}\n"
-            f"是否香港用户：{user_profile.check_is_hongkong_user()}\n"
-            f"用户称呼：{user_profile.get_greeting()}\n"
-            f"用户原话：{user_message or '-'}\n"
-            f"本次疑似输入：{invalid_value or '-'}\n"
-        )
-        try:
-            response = await self.host._call_ai(prompt, account_id, user_message or str(invalid_value or ""))
-            if response and response.strip():
-                return response.strip()
-        except Exception as exc:
-            logger.warning("[联系方式验证] 生成 AI 引导失败: %s", exc)
         return ChatServiceContactValidationTextService.build_contact_validation_retry_fallback(
             field=field,
             attempt=attempt,

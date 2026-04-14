@@ -186,6 +186,38 @@ class TestConversationEndingService:
         result = self.service.check_manual_scenario('normal_complete', profile)
         assert result is False
 
+    def test_check_manual_scenario_normal_complete_allows_single_wechat_after_phone_final_refusal(self):
+        profile = UserProfile(account_id="test")
+        profile.sex = "女"
+        profile.age = 33
+        profile.location = "深圳南山"
+        profile.education = "本科"
+        profile.occupation = "程序员"
+        profile.marital_status = "未婚"
+        profile.partner_requirement = "未婚，学历本科及以上，大厂程序员"
+        profile.monthly_income = "年薪50+左右"
+        profile.wechat = "whfwfwefw"
+        profile.wechat_collected = True
+        profile.rejected_phone = True
+        profile.phone_ask_count = 2
+        profile.phone_effective_ask_count = 2
+        profile.collection_progress.update(
+            {
+                "sex": True,
+                "age": True,
+                "location": True,
+                "education": True,
+                "occupation": True,
+                "marital_status": True,
+                "partner_requirement": True,
+                "monthly_income": True,
+                "contact": True,
+            }
+        )
+
+        result = self.service.check_manual_scenario("normal_complete", profile)
+        assert result is True
+
     def test_check_manual_scenario_normal_complete_requires_profile_fields_collected_or_ask_exhausted(self):
         """拿到双联系方式后，核心/中等字段未收完且未问尽，仍不能 normal_complete。"""
         profile = UserProfile(account_id="test")

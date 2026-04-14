@@ -2,6 +2,8 @@
 #  层级：数据层    核心职责：用户状态和档案管理
 
 import logging
+from contextvars import ContextVar, Token
+from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 from collections import OrderedDict
 from src.models.user_state import UserState
@@ -10,6 +12,19 @@ from src.services.data.redis_service import redis_service
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _TurnSandboxBuffer:
+    account_id: str
+    profile: Optional[UserProfile] = None
+    state: Optional[UserState] = None
+    profile_dirty: bool = False
+    state_dirty: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+_TURN_SANDBOX: ContextVar[Optional[_TurnSandboxBuffer]] = ContextVar("user_service_turn_sandbox", default=None)
 
 
 class LRUCache:
@@ -113,47 +128,97 @@ class UserService:
         self._memory_states = LRUCache(max_size=cache_max_size)
         self._memory_profiles = LRUCache(max_size=cache_max_size)
 
-    async def get_user_state(self, user_id: str) -> UserState:
-        """Get user state from Redis or memory"""
+    @staticmethod
+    def _clone_profile(profile: UserProfile) -> UserProfile:
+        if hasattr(profile, "model_copy"):
+            return profile.model_copy(deep=True)
+        return UserProfile.from_dict(profile.to_dict())
+
+    @staticmethod
+    def _clone_state(state: UserState) -> UserState:
+        return UserState.from_dict(state.to_dict(), user_id=state.user_id)
+
+    def _active_turn_sandbox(self, account_id: str) -> Optional[_TurnSandboxBuffer]:
+        sandbox = _TURN_SANDBOX.get()
+        if sandbox is None:
+            return None
+        if sandbox.account_id != account_id:
+            return None
+        return sandbox
+
+    def begin_turn_sandbox(self, account_id: str) -> Token:
+        sandbox = _TurnSandboxBuffer(account_id=account_id)
+        return _TURN_SANDBOX.set(sandbox)
+
+    def collect_turn_mutation_set(self, token: Optional[Token] = None) -> Dict[str, Any]:
+        sandbox = _TURN_SANDBOX.get()
+        if sandbox is None:
+            return {
+                "profile_dirty": False,
+                "profile": None,
+                "state_dirty": False,
+                "state": None,
+                "metadata": {},
+            }
+        return {
+            "profile_dirty": bool(sandbox.profile_dirty),
+            "profile": sandbox.profile.to_dict() if sandbox.profile is not None else None,
+            "state_dirty": bool(sandbox.state_dirty),
+            "state": sandbox.state.to_dict() if sandbox.state is not None else None,
+            "metadata": dict(sandbox.metadata),
+        }
+
+    def end_turn_sandbox(self, token: Optional[Token]) -> None:
+        if token is not None:
+            _TURN_SANDBOX.reset(token)
+
+    def rollback_turn_sandbox(self, token: Optional[Token]) -> None:
+        if token is not None:
+            _TURN_SANDBOX.reset(token)
+
+    async def _get_user_state_nosandbox(self, user_id: str) -> UserState:
         if self.use_redis:
             try:
-                # 从Redis获取
                 data = await redis_service.get_json(f"user_state:{user_id}")
                 if data:
                     state = UserState.from_dict(data, user_id)
-                    # 保存到内存缓存，避免重复从Redis加载
                     self._memory_states[user_id] = state
                     return state
             except Exception as e:
                 logger.error(f"Redis get_user_state error: {e}, using memory fallback")
 
-        # 内存模式或Redis失败
         if user_id not in self._memory_states:
             self._memory_states[user_id] = UserState(user_id)
         return self._memory_states[user_id]
 
-    async def get_user_profile(self, account_id: str) -> UserProfile:
-        """Get user profile from Redis or memory"""
+    async def get_user_state(self, user_id: str) -> UserState:
+        """Get user state from Redis/memory, or sandbox snapshot during queue turn."""
+        sandbox = self._active_turn_sandbox(user_id)
+        if sandbox is None:
+            return await self._get_user_state_nosandbox(user_id)
+
+        if sandbox.state is None:
+            base = await self._get_user_state_nosandbox(user_id)
+            sandbox.state = self._clone_state(base)
+        # 对状态对象默认标记 dirty，避免下游仅做原地修改未显式 save 时丢失变更。
+        sandbox.state_dirty = True
+        return sandbox.state
+
+    async def _get_user_profile_nosandbox(self, account_id: str) -> UserProfile:
         if self.use_redis:
             try:
-                # 从Redis获取
                 data = await redis_service.get_json(f"user_profile:{account_id}")
                 if data:
-                    # 从dict转换回UserProfile对象
                     profile = UserProfile.from_dict(data)
-                    # 同时保存到内存缓存
                     self._memory_profiles[account_id] = profile
-                    # === 调试日志 ===
                     logger.debug(f"[用户档案加载] account_id={account_id}, phone_ask_count={profile.phone_ask_count}, wechat_ask_count={profile.wechat_ask_count}, rejected_phone={profile.rejected_phone}")
                     return profile
             except Exception as e:
                 logger.error(f"Redis get_user_profile error: {e}, using memory fallback")
 
-        # 内存模式或Redis失败
         if account_id not in self._memory_profiles:
             self._memory_profiles[account_id] = UserProfile(account_id=account_id)
 
-        # 确保返回的是UserProfile对象（可能是dict的情况）
         profile = self._memory_profiles[account_id]
         if isinstance(profile, dict):
             profile = UserProfile.from_dict(profile)
@@ -161,11 +226,21 @@ class UserService:
 
         return profile
 
-    async def save_user_profile(self, account_id: str, profile: UserProfile) -> bool:
-        """Save user profile to Redis or memory"""
-        profile_dict = profile.to_dict()
+    async def get_user_profile(self, account_id: str) -> UserProfile:
+        """Get user profile from Redis/memory, or sandbox snapshot during queue turn."""
+        sandbox = self._active_turn_sandbox(account_id)
+        if sandbox is None:
+            return await self._get_user_profile_nosandbox(account_id)
 
-        # === 调试日志 ===
+        if sandbox.profile is None:
+            base = await self._get_user_profile_nosandbox(account_id)
+            sandbox.profile = self._clone_profile(base)
+        # 对画像对象默认标记 dirty，避免下游仅做原地修改未显式 save 时丢失变更。
+        sandbox.profile_dirty = True
+        return sandbox.profile
+
+    async def _save_user_profile_nosandbox(self, account_id: str, profile: UserProfile) -> bool:
+        profile_dict = profile.to_dict()
         logger.debug(f"[用户档案保存] account_id={account_id}, phone_ask_count={profile.phone_ask_count}, wechat_ask_count={profile.wechat_ask_count}, rejected_phone={profile.rejected_phone}")
 
         if self.use_redis:
@@ -176,19 +251,26 @@ class UserService:
                     ttl=settings.redis_ttl
                 )
                 if success:
-                    # 同时更新内存缓存
                     self._memory_profiles[account_id] = profile
                     return True
                 logger.warning(f"Redis save failed, using memory for user_profile: {account_id}")
             except Exception as e:
                 logger.error(f"Redis save error: {e}, using memory")
 
-        # 内存模式或Redis失败
         self._memory_profiles[account_id] = profile
         return True
 
-    async def save_user_state(self, user_id: str, state: UserState) -> bool:
-        """Save user state to Redis or memory"""
+    async def save_user_profile(self, account_id: str, profile: UserProfile) -> bool:
+        """Save profile, or stage profile into sandbox during queue turn."""
+        sandbox = self._active_turn_sandbox(account_id)
+        if sandbox is None:
+            return await self._save_user_profile_nosandbox(account_id, profile)
+
+        sandbox.profile = self._clone_profile(profile)
+        sandbox.profile_dirty = True
+        return True
+
+    async def _save_user_state_nosandbox(self, user_id: str, state: UserState) -> bool:
         state_dict = state.to_dict()
 
         if self.use_redis:
@@ -204,8 +286,17 @@ class UserService:
             except Exception as e:
                 logger.error(f"Redis save error: {e}, using memory")
 
-        # 内存模式或Redis失败
         self._memory_states[user_id] = state
+        return True
+
+    async def save_user_state(self, user_id: str, state: UserState) -> bool:
+        """Save state, or stage state into sandbox during queue turn."""
+        sandbox = self._active_turn_sandbox(user_id)
+        if sandbox is None:
+            return await self._save_user_state_nosandbox(user_id, state)
+
+        sandbox.state = self._clone_state(state)
+        sandbox.state_dirty = True
         return True
 
     async def update_user_profile_field(self, account_id: str, field_name: str, value: Any) -> bool:
@@ -351,7 +442,7 @@ class UserService:
         user_state.update_preference(key, value)
         await self.save_user_state(user_id, user_state)
         self._memory_states[user_id] = user_state
-        logger.info(f"Updated preference {key} for user: {user_id}")
+        logger.debug(f"Updated preference {key} for user: {user_id}")
 
     async def get_user_preference(self, user_id: str, key: str, default: Any = None) -> Any:
         """Get user preference"""
@@ -598,6 +689,15 @@ class UserService:
 
         if interaction:
             user_state.conversation_history.append(interaction)
+            sandbox = self._active_turn_sandbox(user_id)
+            if sandbox is not None:
+                sandbox.state_dirty = True
+                sandbox.metadata.setdefault("history_events", []).append(
+                    {
+                        "role": str(message.get("role") or ""),
+                        "content": str(message.get("content") or ""),
+                    }
+                )
             logger.debug(f"Added message to history for user: {user_id}")
 
     async def save_conversation_context(self, user_id: str, context: Dict[str, Any]) -> None:
@@ -617,10 +717,8 @@ class UserService:
         if 'message_count' in context:
             user_state.dialog_count = context['message_count']
 
-        # 持久化到 Redis
         await self.save_user_state(user_id, user_state)
-
-        # 同时更新内存缓存，确保后续 get_user_state 能获取到最新数据
-        self._memory_states[user_id] = user_state
+        if self._active_turn_sandbox(user_id) is None:
+            self._memory_states[user_id] = user_state
 
         logger.debug(f"Saved conversation context for user: {user_id}")

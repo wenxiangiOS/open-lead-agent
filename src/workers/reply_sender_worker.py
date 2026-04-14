@@ -6,6 +6,7 @@ import time
 
 from src.modules.message_queue.infrastructure.queue_store import QueueStore
 from src.modules.message_queue.infrastructure.reply_delivery_service import ReplyDeliveryService
+from src.services.queue.turn_commit_service import TurnCommitService
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class ReplySenderWorker:
         self,
         queue_store: QueueStore,
         delivery_service: ReplyDeliveryService,
+        commit_service: TurnCommitService | None = None,
         batch_size: int = 100,
         poll_ms: int = 500,
         max_retries: int = 8,
@@ -31,6 +33,7 @@ class ReplySenderWorker:
     ) -> None:
         self.queue_store = queue_store
         self.delivery_service = delivery_service
+        self.commit_service = commit_service
         self.batch_size = batch_size
         self.poll_ms = poll_ms
         self.max_retries = max_retries
@@ -70,6 +73,8 @@ class ReplySenderWorker:
                                     "[mq.sender] stale outbox job dropped",
                                     extra={"job_id": job.job_id, "account_id": job.account_id, "generation": job.generation},
                                 )
+                                if hasattr(self.queue_store, "on_outbox_stale_drop"):
+                                    await self.queue_store.on_outbox_stale_drop(job, int(time.time() * 1000))
                                 await self.queue_store.mark_outbox_done(job.job_id)
                                 await self._incr_metric("outbox_delivery_drop")
                                 await self._incr_metric("stale_drop_count")
@@ -80,6 +85,27 @@ class ReplySenderWorker:
                                 dialog_id=job.dialog_id,
                                 idempotency_key=job.job_id,
                             )
+
+                            if self.commit_service is not None:
+                                mutation_set = self.commit_service.from_payload(job.mutation_set)
+                                committed = await self.commit_service.commit_turn(
+                                    turn_id=job.turn_id,
+                                    account_id=job.account_id,
+                                    mutation_set=mutation_set,
+                                )
+                                if not committed:
+                                    raise RuntimeError("turn_commit_failed")
+
+                            if hasattr(self.queue_store, "finalize_turn_commit"):
+                                finalized = await self.queue_store.finalize_turn_commit(job, int(time.time() * 1000))
+                                if not finalized:
+                                    if hasattr(self.queue_store, "on_outbox_stale_drop"):
+                                        await self.queue_store.on_outbox_stale_drop(job, int(time.time() * 1000))
+                                    await self.queue_store.mark_outbox_done(job.job_id)
+                                    await self._incr_metric("outbox_delivery_drop")
+                                    await self._incr_metric("stale_drop_count")
+                                    return
+
                             await self.queue_store.append_delivered_reply(
                                 account_id=job.account_id,
                                 reply_text=job.reply_text,
@@ -96,6 +122,8 @@ class ReplySenderWorker:
                                     "[mq.sender] drop job after max retries",
                                     extra={"job_id": job.job_id, "account_id": job.account_id, "error": str(exc)},
                                 )
+                                if hasattr(self.queue_store, "on_outbox_stale_drop"):
+                                    await self.queue_store.on_outbox_stale_drop(job, int(time.time() * 1000))
                                 await self.queue_store.mark_outbox_done(job.job_id)
                                 await self._incr_metric("outbox_delivery_drop")
                                 return

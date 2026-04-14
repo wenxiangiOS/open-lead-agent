@@ -1,5 +1,7 @@
 from typing import Any, Dict, Optional
 
+from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingResult
+
 from src.models.user_profile import UserProfile
 
 
@@ -13,6 +15,7 @@ class ChatServiceContactContextService:
         *,
         collection_result: Optional[Dict[str, Any]] = None,
         user_message: str = "",
+        understanding_result: TurnUnderstandingResult | None = None,
     ) -> bool:
         result = collection_result or {}
         all_fields = result.get("all_fields", []) or []
@@ -55,8 +58,13 @@ class ChatServiceContactContextService:
                 ),
             ]
         )
-        has_current_turn_contact_signal = bool({"phone", "contact", "wechat"} & collected_fields) or bool(
-            self.host._is_contact_like_user_message(user_message)
+        understanding_slots = set(self.host._effective_resolved_slots(understanding_result).keys())  # noqa: SLF001
+        understanding_turn_type = str(getattr(understanding_result, "primary_turn_type", "") or "").strip()
+        has_current_turn_contact_signal = (
+            bool({"phone", "contact", "wechat"} & collected_fields)
+            or bool({"phone", "wechat"} & understanding_slots)
+            or understanding_turn_type == "contact_answer"
+            or bool(self.host._is_contact_like_user_message(user_message, understanding_result=understanding_result))
         )
 
         if contact_complete and not any(
@@ -79,9 +87,11 @@ class ChatServiceContactContextService:
         *,
         collection_result: Optional[Dict[str, Any]] = None,
         user_message: str = "",
+        understanding_result: TurnUnderstandingResult | None = None,
     ) -> bool:
         return self.has_active_contact_context(
             user_profile,
             collection_result=collection_result,
             user_message=user_message,
+            understanding_result=understanding_result,
         )

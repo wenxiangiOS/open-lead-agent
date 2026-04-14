@@ -17,6 +17,13 @@ class ResponseValidationService:
         r"bad gateway",
         r"debug[:\]]",
     )
+    _HARD_BLOCK_MARKERS = {
+        "null",
+        "none",
+        "n/a",
+        "{}",
+        "[]",
+    }
 
     def validate(self, *, raw_ai_response: str, infra_fail: bool = False, infra_fail_reason: str = "") -> AIResponseValidationResult:
         text = str(raw_ai_response or "").strip()
@@ -32,11 +39,18 @@ class ResponseValidationService:
                 should_fallback=True,
                 fallback_reason="ai_empty_response",
             )
+        if text.lower() in self._HARD_BLOCK_MARKERS:
+            return AIResponseValidationResult(
+                delivery_status="hard_block",
+                violations=["invalid_ai_payload"],
+                should_fallback=True,
+                fallback_reason="invalid_ai_payload",
+            )
         lowered = text.lower()
         for pattern in self._DEBUG_PATTERNS:
             if re.search(pattern, lowered, flags=re.IGNORECASE):
                 return AIResponseValidationResult(
-                    delivery_status="fallback_required",
+                    delivery_status="hard_block",
                     violations=["invalid_ai_payload"],
                     should_fallback=True,
                     fallback_reason="invalid_ai_payload",

@@ -9,6 +9,7 @@
 - `AI_RAW_RESPONSE_MODE` 开启时，普通模型回复走 unified raw-response 主链
 - 用户可见正文不再进入旧的 postprocess / finalize / delivery rewrite 链
 - 后台字段提取、状态刷新、计数器更新继续保留
+- fallback 已收缩到空回复 / 基础设施失败 / 硬异常文本，并使用最小兜底文案
 
 这份文档只回答一件事：
 
@@ -24,6 +25,12 @@
 4. `ResponseSafeCleanupService`
 5. `ResponseDeliveryService`
 6. `ProcessChatTurnUseCase._sync_payload_response`
+
+raw 模式下补充约束：
+
+- `build_enhanced_response_to_clean()` 仍执行联系方式验证副作用，但不再回写用户可见正文
+- `finalize` 在 `delivery` 后立刻冻结 `display_response`，后续只允许状态更新
+- 观测字段包含 `display_frozen_at / post_freeze_write_attempt / raw_display_diff_reason`
 
 对应代码：
 

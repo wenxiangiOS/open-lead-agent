@@ -36,6 +36,8 @@ class AIResponseGenerator:
         soft_timeout: float | None = None,
         hard_timeout: float | None = None,
         temperature: float | None = None,
+        use_max_completion_tokens: bool | None = None,
+        reasoning_effort: str | None = None,
     ) -> AIResponseResult:
         ai_start_time = time.perf_counter()
 
@@ -68,6 +70,10 @@ class AIResponseGenerator:
             }
             if temperature is not None:
                 request_kwargs["temperature"] = temperature
+            if use_max_completion_tokens is not None:
+                request_kwargs["use_max_completion_tokens"] = use_max_completion_tokens
+            if reasoning_effort:
+                request_kwargs["reasoning_effort"] = reasoning_effort
             response = await asyncio.wait_for(
                 self.ai_service.generate_response(**request_kwargs),
                 timeout=resolved_hard_timeout,

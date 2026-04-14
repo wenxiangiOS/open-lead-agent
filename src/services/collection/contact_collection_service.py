@@ -274,6 +274,8 @@ class ContactCollectionService:
             return NextAction.ASK_WECHAT
 
         is_hk = self.is_hongkong_user(profile)
+        phone_asks = self.get_effective_contact_ask_count(profile, 'phone')
+        wechat_asks = self.get_effective_contact_ask_count(profile, 'wechat')
 
         # 场景1.5: 电话流程中用户切到微信，微信已收后优先恢复电话
         if (
@@ -288,44 +290,44 @@ class ContactCollectionService:
 
         # 场景2: 微信被最终拒绝，尝试争取电话
         if profile.rejected_wechat and not profile.rejected_phone and not profile.phone_collected:
-            if profile.phone_ask_count == 0:
+            if phone_asks == 0:
                 return NextAction.ASK_PHONE
-            elif profile.phone_ask_count < 2:
+            elif phone_asks < 2:
                 return NextAction.PERSUADE_PHONE
 
         # 场景3: 电话被最终拒绝，尝试争取微信
         if profile.rejected_phone and not profile.rejected_wechat and not profile.wechat_collected:
             max_wechat = self.get_max_asks(profile, 'wechat')
-            if profile.wechat_ask_count == 0:
+            if wechat_asks == 0:
                 return NextAction.ASK_WECHAT
-            elif profile.wechat_ask_count < max_wechat:
+            elif wechat_asks < max_wechat:
                 return NextAction.PERSUADE_WECHAT
 
         # 场景4: 微信正在争取中（还没被最终拒绝），继续争取微信
-        if not profile.rejected_wechat and not profile.wechat_collected and profile.wechat_ask_count >= 1:
+        if not profile.rejected_wechat and not profile.wechat_collected and wechat_asks >= 1:
             max_wechat = self.get_max_asks(profile, 'wechat')
-            if profile.wechat_ask_count < max_wechat:
+            if wechat_asks < max_wechat:
                 return NextAction.PERSUADE_WECHAT
 
         # 场景5: 电话正在争取中（还没被最终拒绝），继续争取电话
-        if not profile.rejected_phone and not profile.phone_collected and profile.phone_ask_count >= 1:
-            if profile.phone_ask_count < 2:
+        if not profile.rejected_phone and not profile.phone_collected and phone_asks >= 1:
+            if phone_asks < 2:
                 return NextAction.PERSUADE_PHONE
 
         # 场景6: 香港用户流程
         if is_hk:
             # 还没收集电话
             if not profile.phone_collected and not profile.rejected_phone:
-                if profile.phone_ask_count == 0:
+                if phone_asks == 0:
                     return NextAction.ASK_PHONE
-                elif profile.phone_ask_count < 2:
+                elif phone_asks < 2:
                     return NextAction.PERSUADE_PHONE
 
             # 电话已收集，还需要微信
             if profile.phone_collected and not profile.wechat_collected and not profile.rejected_wechat:
-                if profile.wechat_ask_count == 0:
+                if wechat_asks == 0:
                     return NextAction.ASK_WECHAT
-                elif profile.wechat_ask_count < 2:
+                elif wechat_asks < 2:
                     return NextAction.PERSUADE_WECHAT
 
         # 场景7: 非香港用户流程
@@ -333,9 +335,9 @@ class ContactCollectionService:
             # === 优先级1: 电话已收集后，询问/争取微信 ===
             if profile.phone_collected and not profile.wechat_collected and not profile.rejected_wechat:
                 max_wechat = self.get_max_asks(profile, 'wechat')
-                if profile.wechat_ask_count == 0:
+                if wechat_asks == 0:
                     return NextAction.ASK_WECHAT
-                elif profile.wechat_ask_count < max_wechat:
+                elif wechat_asks < max_wechat:
                     return NextAction.PERSUADE_WECHAT
 
             # === 优先级1.5: 微信已收集后，询问/争取电话 ===
@@ -345,16 +347,16 @@ class ContactCollectionService:
                     and str(getattr(profile, "pending_contact_hint", "") or "").strip() == "channel_switch"
                 ):
                     return NextAction.ASK_PHONE
-                if profile.phone_ask_count == 0:
+                if phone_asks == 0:
                     return NextAction.ASK_PHONE
-                elif profile.phone_ask_count < 2:
+                elif phone_asks < 2:
                     return NextAction.PERSUADE_PHONE
 
             # === 优先级2: 还没收集电话 ===
             if not profile.phone_collected and not profile.rejected_phone:
-                if profile.phone_ask_count == 0:
+                if phone_asks == 0:
                     return NextAction.ASK_PHONE
-                elif profile.phone_ask_count < 2:
+                elif phone_asks < 2:
                     return NextAction.PERSUADE_PHONE
 
         return NextAction.NONE
@@ -582,19 +584,49 @@ class ContactCollectionService:
             (profile.phone_collected and profile.phone)
             or (profile.wechat_collected and profile.wechat)
         )
-        return profile.rejected_phone and profile.rejected_wechat and not has_any_contact
+        return (
+            self.is_contact_type_final_refused(profile, 'phone')
+            and self.is_contact_type_final_refused(profile, 'wechat')
+            and not has_any_contact
+        )
+
+    def get_effective_contact_ask_count(self, profile: UserProfile, contact_type: str) -> int:
+        """获取某联系方式的有效询问次数。"""
+        if contact_type == 'phone':
+            effective = int(getattr(profile, "phone_effective_ask_count", 0) or 0)
+            raw = int(getattr(profile, "phone_ask_count", 0) or 0)
+            return effective if effective > 0 else raw
+        effective = int(getattr(profile, "wechat_effective_ask_count", 0) or 0)
+        raw = int(getattr(profile, "wechat_ask_count", 0) or 0)
+        return effective if effective > 0 else raw
+
+    def is_contact_type_final_refused(self, profile: UserProfile, contact_type: str) -> bool:
+        """判断某联系方式是否已进入最终拒绝态。"""
+        if contact_type == 'phone':
+            return bool(getattr(profile, "rejected_phone", False))
+        return bool(getattr(profile, "rejected_wechat", False))
 
     def is_contact_type_complete(self, profile: UserProfile, contact_type: str) -> bool:
         """单项联系方式流程是否完成。"""
         max_asks = self.get_max_asks(profile, contact_type)
         if contact_type == 'phone':
-            effective_count = int(getattr(profile, "phone_effective_ask_count", profile.phone_ask_count) or 0)
+            effective_count = self.get_effective_contact_ask_count(profile, 'phone')
             invalid_closed = bool(getattr(profile, "phone_invalid_input_closed", False))
-            return bool(profile.phone_collected) or bool(profile.rejected_phone) or effective_count >= max_asks or invalid_closed
+            return (
+                bool(profile.phone_collected)
+                or self.is_contact_type_final_refused(profile, 'phone')
+                or effective_count >= max_asks
+                or invalid_closed
+            )
 
-        effective_count = int(getattr(profile, "wechat_effective_ask_count", profile.wechat_ask_count) or 0)
+        effective_count = self.get_effective_contact_ask_count(profile, 'wechat')
         invalid_closed = bool(getattr(profile, "wechat_invalid_input_closed", False))
-        return bool(profile.wechat_collected) or bool(profile.rejected_wechat) or effective_count >= max_asks or invalid_closed
+        return (
+            bool(profile.wechat_collected)
+            or self.is_contact_type_final_refused(profile, 'wechat')
+            or effective_count >= max_asks
+            or invalid_closed
+        )
 
     def is_contact_complete(self, profile: UserProfile) -> bool:
         """联系方式流程是否完成：电话流程和微信流程都已完成。"""
@@ -617,6 +649,34 @@ class ContactCollectionService:
 
         if str(getattr(profile, "last_contact_request_type", "") or "").strip() == "wechat":
             profile.last_contact_request_type = None
+
+    def rollback_pending_request_state(self, profile: UserProfile, contact_type: str) -> None:
+        """
+        回滚一次未兑现的联系方式询问，并清理请求上下文。
+
+        适用于：
+        - 系统刚问了电话/微信，但用户被 FAQ 打断
+        - 用户明确切换到另一个联系方式，上一轮询问不应计为已兑现
+        """
+        current_request_type = str(getattr(profile, "last_contact_request_type", "") or "").strip()
+        if current_request_type != contact_type:
+            self.clear_pending_request_state(profile, contact_type)
+            return
+
+        if contact_type == 'phone':
+            profile.phone_ask_count = max(0, int(getattr(profile, "phone_ask_count", 0) or 0) - 1)
+            profile.phone_effective_ask_count = max(
+                0,
+                int(getattr(profile, "phone_effective_ask_count", profile.phone_ask_count) or 0) - 1,
+            )
+        else:
+            profile.wechat_ask_count = max(0, int(getattr(profile, "wechat_ask_count", 0) or 0) - 1)
+            profile.wechat_effective_ask_count = max(
+                0,
+                int(getattr(profile, "wechat_effective_ask_count", profile.wechat_ask_count) or 0) - 1,
+            )
+
+        self.clear_pending_request_state(profile, contact_type)
 
     def clear_contact_context_state(self, profile: UserProfile) -> None:
         """联系方式主流程结束后，清理残留的联系方式上下文。"""
@@ -709,14 +769,22 @@ class ContactCollectionService:
         last_requested_type = str(getattr(profile, "last_contact_request_type", "") or "").strip()
         current_action = self.get_next_action(profile, "")
         action_value = getattr(current_action, "value", str(current_action))
-        current_phone_context = last_requested_type == "phone" or is_about_phone or action_value in {NextAction.ASK_PHONE.value, NextAction.PERSUADE_PHONE.value}
-        current_wechat_context = last_requested_type == "wechat" or is_about_wechat or action_value in {NextAction.ASK_WECHAT.value, NextAction.PERSUADE_WECHAT.value}
         has_active_contact_request_context = bool(
             last_requested_type in {"phone", "wechat"}
             or is_about_phone
             or is_about_wechat
             or int(getattr(profile, "phone_ask_count", 0) or 0) > 0
             or int(getattr(profile, "wechat_ask_count", 0) or 0) > 0
+        )
+        current_phone_context = bool(
+            last_requested_type == "phone"
+            or is_about_phone
+            or (has_active_contact_request_context and action_value in {NextAction.ASK_PHONE.value, NextAction.PERSUADE_PHONE.value})
+        )
+        current_wechat_context = bool(
+            last_requested_type == "wechat"
+            or is_about_wechat
+            or (has_active_contact_request_context and action_value in {NextAction.ASK_WECHAT.value, NextAction.PERSUADE_WECHAT.value})
         )
 
         # 用户在电话语境里说“已经留了微信了/有微信了”，本质是在拒绝继续留电话，
@@ -741,6 +809,7 @@ class ContactCollectionService:
             and current_phone_context
             and (
                 general_refusal
+                or bool(re.search(r"微信[就久]?(?:联系)?(?:就)?(?:可|行|好)以了?", message_lower))
                 or any(
                     marker in message_lower
                     for marker in (
@@ -770,18 +839,19 @@ class ContactCollectionService:
                 and (last_requested_type == 'wechat' or is_about_wechat)
             ):
                 logger.debug("[拒绝检测] 用户主动切回电话分支，清理未兑现的微信询问计数")
-                self.clear_pending_request_state(profile, 'wechat')
+                self.rollback_pending_request_state(profile, 'wechat')
             result = self._handle_refusal(profile, 'phone', True)
         elif wechat_refusal:
             logger.info("[拒绝检测] 检测到显式微信拒绝")
             if (
                 not user_mentions_phone
+                and not user_mentions_wechat
                 and not phone_collected
                 and not profile.rejected_phone
                 and (last_requested_type == 'phone' or is_about_phone)
             ):
                 logger.debug("[拒绝检测] 用户主动切回微信分支，清理未兑现的电话询问计数")
-                self.clear_pending_request_state(profile, 'phone')
+                self.rollback_pending_request_state(profile, 'phone')
             result = self._handle_refusal(profile, 'wechat', True)
         elif general_refusal:
             if user_mentions_wechat:
@@ -790,17 +860,17 @@ class ContactCollectionService:
             elif user_mentions_phone:
                 logger.debug("[拒绝检测] 通用拒绝 + 明确提及电话，按电话拒绝处理")
                 result = self._handle_refusal(profile, 'phone', False)
-            elif current_phone_context:
-                logger.debug("[拒绝检测] 使用最近一次真实展示的电话请求类型优先归因")
-                result = self._handle_refusal(profile, 'phone', False)
-            elif current_wechat_context:
-                logger.debug("[拒绝检测] 使用最近一次真实展示的微信请求类型优先归因")
-                result = self._handle_refusal(profile, 'wechat', False)
             elif has_active_contact_request_context and action_value in {NextAction.ASK_PHONE.value, NextAction.PERSUADE_PHONE.value}:
                 logger.debug("[拒绝检测] 当前动作是电话流程，按电话拒绝处理")
                 result = self._handle_refusal(profile, 'phone', False)
             elif has_active_contact_request_context and action_value in {NextAction.ASK_WECHAT.value, NextAction.PERSUADE_WECHAT.value}:
                 logger.debug("[拒绝检测] 当前动作是微信流程，按微信拒绝处理")
+                result = self._handle_refusal(profile, 'wechat', False)
+            elif current_phone_context:
+                logger.debug("[拒绝检测] 使用最近一次真实展示的电话请求类型优先归因")
+                result = self._handle_refusal(profile, 'phone', False)
+            elif current_wechat_context:
+                logger.debug("[拒绝检测] 使用最近一次真实展示的微信请求类型优先归因")
                 result = self._handle_refusal(profile, 'wechat', False)
             elif has_active_contact_request_context and is_about_wechat:
                 logger.debug("[拒绝检测] 当前动作未知，按上一轮微信上下文兜底")
@@ -928,7 +998,7 @@ class ContactCollectionService:
                 profile.phone_ask_count = 1
                 profile.phone_effective_ask_count = max(1, int(getattr(profile, "phone_effective_ask_count", 0) or 0))
             max_asks = self.get_max_asks(profile, 'phone')
-            effective_count = int(getattr(profile, "phone_effective_ask_count", new_count) or new_count or 0)
+            effective_count = self.get_effective_contact_ask_count(profile, 'phone') or int(new_count or 0)
 
             # 判断是否达到上限
             if effective_count >= max_asks:
@@ -953,7 +1023,7 @@ class ContactCollectionService:
                 profile.wechat_ask_count = 1
                 profile.wechat_effective_ask_count = max(1, int(getattr(profile, "wechat_effective_ask_count", 0) or 0))
             max_asks = self.get_max_asks(profile, 'wechat')
-            effective_count = int(getattr(profile, "wechat_effective_ask_count", new_count) or new_count or 0)
+            effective_count = self.get_effective_contact_ask_count(profile, 'wechat') or int(new_count or 0)
 
             # 判断是否达到上限
             if effective_count >= max_asks:

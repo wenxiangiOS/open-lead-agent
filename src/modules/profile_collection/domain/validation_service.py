@@ -121,7 +121,7 @@ class ValidationService:
         # 确保联系方式的收集进度被标记为 True
         user_profile.collection_progress['contact'] = True
         await user_service.save_user_profile(account_id, user_profile)
-        logger.info(f"[联系方式验证成功] 已标记 collection_progress['contact'] = True")
+        logger.debug(f"[联系方式验证成功] 已标记 collection_progress['contact'] = True")
 
         # 不再返回收尾话术，而是返回 None，让后续逻辑询问择偶要求
         # 收尾话术会在择偶要求收集后才触发

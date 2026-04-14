@@ -37,3 +37,14 @@ def test_user_profile_to_dict_keeps_age_label_and_extraction_evidence():
     assert "age" in data["extraction_evidence"]
     assert restored.age_label == "90后"
     assert restored.extraction_evidence["age"]["turn_id"] == 3
+
+
+def test_update_field_age_label_specific_year_syncs_age_value():
+    profile = UserProfile(account_id="u_age_label_sync")
+    profile.age = 36
+    profile.age_label = "90后"
+
+    assert profile.update_field("age_label", "98年") is True
+    assert profile.age_label == "98年"
+    assert profile.age == 28
+    assert profile.pending_birth_year_bucket in {None, ""}

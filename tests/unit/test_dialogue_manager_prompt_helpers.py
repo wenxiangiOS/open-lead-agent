@@ -68,3 +68,20 @@ def test_build_main_dialogue_prompt_includes_recent_style_avoidance():
     assert "最近两轮你说过" in prompt
     assert "不要沿用同样开头" in prompt
     assert "不要并列枚举未婚和离异" in prompt
+
+
+def test_build_main_dialogue_prompt_can_skip_generation_extract():
+    user_service = AsyncMock()
+    manager = DialogueManager(user_service)
+    profile = UserProfile(account_id="u_prompt_no_extract")
+
+    prompt = manager.build_main_dialogue_prompt(
+        "怎么收费",
+        profile,
+        {"message_count": 1, "recent_responses": []},
+        prioritize_user_question=True,
+        include_extraction_prompt=False,
+    )
+
+    assert "<extract>" not in prompt
+    assert "回复后必须附加" not in prompt

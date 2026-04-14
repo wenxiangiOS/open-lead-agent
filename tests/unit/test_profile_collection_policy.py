@@ -17,6 +17,12 @@ class TestProfileCollectionPolicy:
             profile.collection_progress[field] = True
             setattr(profile, field, getattr(profile, field, None) or field)
 
+    @staticmethod
+    def _mark_effective_asked(profile: UserProfile, **field_counts: int):
+        for field, count in field_counts.items():
+            profile.field_ask_count[field] = count
+            profile.effective_field_ask_count[field] = count
+
     def test_main_target_starts_from_core_fields(self):
         profile = UserProfile(account_id="u1")
 
@@ -42,21 +48,29 @@ class TestProfileCollectionPolicy:
 
     def test_core_field_is_covered_after_two_attempts_even_if_not_collected(self):
         profile = UserProfile(account_id="u1")
-        profile.field_ask_count["age"] = 2
+        self._mark_effective_asked(profile, age=2)
 
         assert self.policy.is_core_field_covered(profile, "age") is True
 
     def test_medium_field_is_covered_after_one_attempt_even_if_not_collected(self):
         profile = UserProfile(account_id="u1")
-        profile.field_ask_count["partner_requirement"] = 1
+        self._mark_effective_asked(profile, partner_requirement=1)
 
         assert self.policy.is_medium_field_covered(profile, "partner_requirement") is True
+
+    def test_collected_field_does_not_become_uncovered_only_because_resume_target_stale(self):
+        profile = UserProfile(account_id="u_resume_stale_collected")
+        profile.occupation = "在编教师"
+        profile.collection_progress["occupation"] = True
+        profile.resume_profile_target = "occupation"
+
+        assert self.policy.is_core_field_covered(profile, "occupation") is True
+        assert self.policy.can_actively_ask(profile, "occupation") is False
 
     def test_coverage_not_complete_when_medium_field_never_asked(self):
         profile = UserProfile(account_id="u1")
         self._mark_collected(profile, "sex", "age", "location", "education", "occupation")
-        profile.field_ask_count["marital_status"] = 1
-        profile.field_ask_count["monthly_income"] = 1
+        self._mark_effective_asked(profile, marital_status=1, monthly_income=1)
 
         assert self.policy.is_coverage_complete(profile) is False
         assert self.policy.get_uncovered_medium_fields(profile) == ["partner_requirement"]
@@ -64,8 +78,7 @@ class TestProfileCollectionPolicy:
     def test_collect_medium_forces_partner_requirement_when_core_covered(self):
         profile = UserProfile(account_id="u1")
         self._mark_collected(profile, "sex", "age", "location", "education", "occupation")
-        profile.field_ask_count["marital_status"] = 1
-        profile.field_ask_count["monthly_income"] = 1
+        self._mark_effective_asked(profile, marital_status=1, monthly_income=1)
 
         decision = self.policy.decide(profile, user_message="是的", message_count=6)
 
@@ -74,14 +87,64 @@ class TestProfileCollectionPolicy:
         assert decision.forced_cover_target == "partner_requirement"
         assert decision.allow_contact_push is False
 
+    def test_structured_partner_preference_counts_as_partner_requirement_collected(self):
+        profile = UserProfile(account_id="u_partner_pref_collected")
+        profile.partner_pref_location = "香港"
+        profile.collection_progress["partner_pref_location"] = True
+
+        assert self.policy.has_structured_partner_preference(profile) is True
+        assert self.policy.is_collected(profile, "partner_requirement") is True
+        assert self.policy.is_medium_field_covered(profile, "partner_requirement") is True
+
+    def test_is_collected_uses_existing_profile_values_when_progress_missing(self):
+        profile = UserProfile(account_id="u_value_fallback")
+        profile.sex = "女"
+        profile.age = 28
+        profile.age_label = "98年"
+        profile.location = "深圳"
+        profile.education = "本科"
+        profile.occupation = "在编教师"
+        profile.marital_status = "未婚单身"
+        profile.monthly_income = "18万左右"
+        profile.partner_requirement = "90后，工作稳定"
+
+        assert self.policy.is_collected(profile, "sex") is True
+        assert self.policy.is_collected(profile, "age") is True
+        assert self.policy.is_collected(profile, "location") is True
+        assert self.policy.is_collected(profile, "education") is True
+        assert self.policy.is_collected(profile, "occupation") is True
+        assert self.policy.is_collected(profile, "marital_status") is True
+        assert self.policy.is_collected(profile, "monthly_income") is True
+        assert self.policy.is_collected(profile, "partner_requirement") is True
+
+    def test_structured_partner_preference_closes_medium_coverage_gap(self):
+        profile = UserProfile(account_id="u_partner_pref_coverage")
+        self._mark_collected(profile, "sex", "age", "location", "education", "occupation")
+        self._mark_effective_asked(profile, marital_status=1, monthly_income=1)
+        profile.partner_pref_age = "90后"
+        profile.collection_progress["partner_pref_age"] = True
+
+        assert self.policy.get_uncovered_medium_fields(profile) == []
+        assert self.policy.is_coverage_complete(profile) is True
+
+    def test_should_block_preference_ask_when_structured_partner_preference_exists(self):
+        profile = UserProfile(account_id="u_partner_pref_block")
+        profile.partner_pref_location = "香港"
+        profile.collection_progress["partner_pref_location"] = True
+
+        assert self.policy.should_block_preference_ask(profile, user_message="香港有吗") is True
+
     def test_contact_requires_coverage_and_minimum_profile_success(self):
         profile = UserProfile(account_id="u1")
         self._mark_collected(profile, "sex", "age", "location")
-        profile.field_ask_count["education"] = 2
-        profile.field_ask_count["occupation"] = 2
-        profile.field_ask_count["marital_status"] = 1
-        profile.field_ask_count["partner_requirement"] = 1
-        profile.field_ask_count["monthly_income"] = 1
+        self._mark_effective_asked(
+            profile,
+            education=2,
+            occupation=2,
+            marital_status=1,
+            partner_requirement=1,
+            monthly_income=1,
+        )
 
         decision = self.policy.decide(profile, user_message="嗯", message_count=7)
 
@@ -92,12 +155,15 @@ class TestProfileCollectionPolicy:
     def test_contact_blocked_when_coverage_done_but_profile_insufficient(self):
         profile = UserProfile(account_id="u1")
         self._mark_collected(profile, "sex", "age")
-        profile.field_ask_count["location"] = 2
-        profile.field_ask_count["education"] = 2
-        profile.field_ask_count["occupation"] = 2
-        profile.field_ask_count["marital_status"] = 1
-        profile.field_ask_count["partner_requirement"] = 1
-        profile.field_ask_count["monthly_income"] = 1
+        self._mark_effective_asked(
+            profile,
+            location=2,
+            education=2,
+            occupation=2,
+            marital_status=1,
+            partner_requirement=1,
+            monthly_income=1,
+        )
 
         decision = self.policy.decide(profile, user_message="嗯", message_count=7)
 
@@ -109,11 +175,14 @@ class TestProfileCollectionPolicy:
     def test_contact_instruction_allowed_after_all_gates_pass(self):
         profile = UserProfile(account_id="u1")
         self._mark_collected(profile, "sex", "age", "location")
-        profile.field_ask_count["education"] = 2
-        profile.field_ask_count["occupation"] = 2
-        profile.field_ask_count["marital_status"] = 1
-        profile.field_ask_count["partner_requirement"] = 1
-        profile.field_ask_count["monthly_income"] = 1
+        self._mark_effective_asked(
+            profile,
+            education=2,
+            occupation=2,
+            marital_status=1,
+            partner_requirement=1,
+            monthly_income=1,
+        )
 
         assert self.policy.should_allow_contact_instruction(profile, "ASK_PHONE") is True
 
@@ -123,14 +192,17 @@ class TestProfileCollectionPolicy:
 
         assert self.policy.should_allow_contact_instruction(profile, "ASK_PHONE") is False
 
-    def test_can_enter_contact_requires_monthly_income_even_when_other_medium_fields_are_ready(self):
+    def test_can_enter_contact_no_longer_requires_monthly_income_when_other_fields_are_ready(self):
         profile = UserProfile(account_id="u_contact_income_gate")
         self._mark_collected(profile, "sex", "age", "location", "education", "occupation", "marital_status", "partner_requirement")
 
-        assert self.policy.can_enter_contact(profile) is False
+        assert self.policy.can_enter_contact(profile) is True
 
-        profile.monthly_income = "8万"
-        profile.collection_progress["monthly_income"] = True
+    def test_can_enter_contact_accepts_structured_partner_preference_without_partner_requirement_text(self):
+        profile = UserProfile(account_id="u_contact_structured_partner_pref")
+        self._mark_collected(profile, "sex", "age", "location", "education", "occupation", "marital_status", "monthly_income")
+        profile.partner_pref_age = "90后"
+        profile.collection_progress["partner_pref_age"] = True
 
         assert self.policy.can_enter_contact(profile) is True
 
@@ -144,7 +216,7 @@ class TestProfileCollectionPolicy:
         )
 
         assert decision.main_target == "occupation"
-        assert decision.side_target == "monthly_income"
+        assert decision.side_target == "marital_status"
 
     def test_opening_with_location_prefers_occupation_with_income_side_target(self):
         profile = UserProfile(account_id="u_opening_location")
@@ -156,7 +228,7 @@ class TestProfileCollectionPolicy:
         )
 
         assert decision.main_target == "occupation"
-        assert decision.side_target == "monthly_income"
+        assert decision.side_target == "marital_status"
 
     def test_followup_with_education_allows_early_marital_side_target(self):
         profile = UserProfile(account_id="u_followup_education_marital")
@@ -171,7 +243,7 @@ class TestProfileCollectionPolicy:
 
         assert decision.main_target in {"age", "location", "occupation", "education"}
         if decision.main_target == "occupation":
-            assert decision.side_target in {"monthly_income", "marital_status", "partner_requirement"}
+            assert decision.side_target in {"marital_status", "partner_requirement", None}
 
     def test_education_prefers_marital_status_side_target_even_when_partner_requirement_allowed(self):
         profile = UserProfile(account_id="u_education_no_partner_side")
@@ -192,7 +264,7 @@ class TestProfileCollectionPolicy:
         assert decision.main_target == "education"
         assert decision.side_target == "marital_status"
 
-    def test_monthly_income_can_attach_to_other_core_field_after_occupation_collected(self):
+    def test_monthly_income_does_not_attach_to_other_core_field_after_occupation_collected(self):
         profile = UserProfile(account_id="u_income_dynamic_host")
         profile.sex = "女"
         profile.age = 35
@@ -208,9 +280,9 @@ class TestProfileCollectionPolicy:
             message_count=3,
         )
 
-        assert side_target in {"monthly_income", "marital_status"}
+        assert side_target == "marital_status"
 
-    def test_monthly_income_falls_back_to_other_core_host_when_partner_requirement_unavailable(self):
+    def test_monthly_income_does_not_fall_back_to_other_core_host_when_partner_requirement_unavailable(self):
         profile = UserProfile(account_id="u_income_location_host")
         profile.sex = "女"
         profile.age = 33
@@ -218,7 +290,7 @@ class TestProfileCollectionPolicy:
         profile.occupation = "运营"
         for field in ["sex", "age", "education", "occupation"]:
             profile.collection_progress[field] = True
-        profile.field_ask_count["partner_requirement"] = 1
+        self._mark_effective_asked(profile, partner_requirement=1)
 
         side_target = self.policy.get_side_target(
             profile,
@@ -227,7 +299,7 @@ class TestProfileCollectionPolicy:
             message_count=4,
         )
 
-        assert side_target == "monthly_income"
+        assert side_target == "marital_status"
 
     def test_latest_location_cue_on_followup_prefers_occupation_over_global_order(self):
         profile = UserProfile(account_id="u_latest_location")
@@ -251,7 +323,7 @@ class TestProfileCollectionPolicy:
 
         assert decision.main_target == "occupation"
 
-    def test_occupation_prefers_monthly_income_side_target_over_marital_status(self):
+    def test_occupation_no_longer_prefers_monthly_income_side_target(self):
         profile = UserProfile(account_id="u_occ_income_side")
         profile.sex = "男"
         profile.age = 35
@@ -267,7 +339,7 @@ class TestProfileCollectionPolicy:
         )
 
         assert decision.main_target == "occupation"
-        assert decision.side_target == "monthly_income"
+        assert decision.side_target == "marital_status"
 
     def test_latest_location_and_occupation_opening_prefers_low_pressure_core(self):
         profile = UserProfile(account_id="u_latest_location_occupation")
@@ -279,7 +351,46 @@ class TestProfileCollectionPolicy:
         )
 
         assert decision.main_target == "occupation"
-        assert decision.side_target == "monthly_income"
+        assert decision.side_target == "marital_status"
+
+    def test_monthly_income_gate_opens_only_after_all_core_fields_complete(self):
+        profile = UserProfile(account_id="u_income_gate_complete")
+        self._mark_collected(profile, "sex", "age", "location", "education", "occupation")
+        self._mark_effective_asked(profile, marital_status=1, partner_requirement=1)
+
+        assert self.policy.should_ask_monthly_income(profile) is True
+        assert self.policy.get_effective_income_gate_status(profile) == "open"
+        assert self.policy.can_actively_ask(profile, "monthly_income") is True
+
+    def test_monthly_income_gate_stays_closed_when_core_fields_unfinished(self):
+        profile = UserProfile(account_id="u_income_gate_blocked_core")
+        self._mark_collected(profile, "sex", "age", "education", "occupation")
+        self._mark_effective_asked(profile, marital_status=1, partner_requirement=1)
+
+        assert self.policy.should_ask_monthly_income(profile) is False
+        assert self.policy.get_effective_income_gate_status(profile) == "blocked_by_core"
+        assert self.policy.can_actively_ask(profile, "monthly_income") is False
+
+    def test_monthly_income_gate_stays_closed_when_core_field_explicitly_rejected(self):
+        profile = UserProfile(account_id="u_income_gate_blocked_refusal")
+        self._mark_collected(profile, "sex", "age", "education", "occupation", "location")
+        self._mark_effective_asked(profile, marital_status=1, partner_requirement=1)
+        profile.close_active_ask("education")
+        profile.collection_progress["education"] = False
+        profile.education = None
+
+        assert self.policy.should_ask_monthly_income(profile) is False
+        assert self.policy.get_effective_income_gate_status(profile) == "blocked_by_refusal"
+        assert self.policy.can_actively_ask(profile, "monthly_income") is False
+
+    def test_monthly_income_gate_stays_closed_when_user_has_high_doubt_signal(self):
+        profile = UserProfile(account_id="u_income_gate_blocked_doubt")
+        self._mark_collected(profile, "sex", "age", "education", "occupation", "location")
+        self._mark_effective_asked(profile, marital_status=1, partner_requirement=1)
+        profile.non_cooperation_turns = 2
+
+        assert self.policy.should_ask_monthly_income(profile) is False
+        assert self.policy.can_actively_ask(profile, "monthly_income") is False
 
     def test_contextual_core_target_keeps_age_when_birth_year_bucket_is_pending(self):
         profile = UserProfile(account_id="u_pending_birth_year_age")
@@ -345,11 +456,14 @@ class TestProfileCollectionPolicy:
     def test_turn_quality_blocks_contact_push_on_faq_turn(self):
         profile = UserProfile(account_id="u1")
         self._mark_collected(profile, "sex", "age", "location")
-        profile.field_ask_count["education"] = 2
-        profile.field_ask_count["occupation"] = 2
-        profile.field_ask_count["marital_status"] = 1
-        profile.field_ask_count["partner_requirement"] = 1
-        profile.field_ask_count["monthly_income"] = 1
+        self._mark_effective_asked(
+            profile,
+            education=2,
+            occupation=2,
+            marital_status=1,
+            partner_requirement=1,
+            monthly_income=1,
+        )
 
         decision = self.policy.decide(
             profile,
@@ -367,7 +481,7 @@ class TestProfileCollectionPolicy:
     def test_ongoing_contact_flow_freezes_profile_collection(self):
         profile = UserProfile(account_id="u1")
         self._mark_collected(profile, "sex", "age", "location", "education", "occupation")
-        profile.field_ask_count["marital_status"] = 1
+        self._mark_effective_asked(profile, marital_status=1)
         profile.phone_ask_count = 1
 
         decision = self.policy.decide(profile, user_message="嗯", message_count=8)

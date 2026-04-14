@@ -14,6 +14,18 @@ logger = logging.getLogger(__name__)
 
 
 class ExtractionService:
+    _PARTNER_PREFERENCE_SUBSLOT_FIELDS = (
+        "partner_pref_age",
+        "partner_pref_age_relation",
+        "partner_pref_location",
+        "partner_pref_locality",
+        "partner_pref_height",
+        "partner_pref_education",
+        "partner_pref_industry",
+        "partner_pref_personality",
+        "partner_pref_income",
+        "partner_pref_other",
+    )
     _SELF_PROFILE_FIELDS = {
         "sex",
         "age",
@@ -113,6 +125,8 @@ class ExtractionService:
         "公务员": "公务员",
         "财会": "财务",
         "财务": "财务",
+        "外贸": "外贸",
+        "外贸行业": "外贸",
         "医护": "医护",
         "美容": "美容",
         "美容师": "美容师",
@@ -123,7 +137,10 @@ class ExtractionService:
         "本可": "本科",
         "夲科": "本科",
         "木科": "本科",
+        "港本": "本科",
         "硕土": "硕士",
+        "港硕": "硕士",
+        "海归硕": "硕士",
         "博土": "博士",
         "专科": "大专",
         "研一": "研究生",
@@ -154,6 +171,16 @@ class ExtractionService:
         "有不",
         "行不",
         "都可以",
+        "hi",
+        "hello",
+        "在吗",
+        "在不",
+        "想了解下",
+        "我先看看",
+        "先看看",
+        "我问问你情况",
+        "问问你情况",
+        "坏呼叫",
     }
     _LOW_QUALITY_QUESTION_MARKERS = (
         "机构是吗",
@@ -168,6 +195,21 @@ class ExtractionService:
         "吗",
         "?",
         "？",
+    )
+    _LOW_QUALITY_OCCUPATION_FRAGMENTS = (
+        "你好",
+        "您好",
+        "hi",
+        "hello",
+        "在吗",
+        "在不",
+        "想了解下",
+        "问问你情况",
+        "我先看看",
+        "坏呼叫",
+        "不要同",
+        "别同",
+        "最好不要同",
     )
     _VALID_EDUCATION_VALUES = {"博士", "硕士", "研究生", "本科", "大专", "中专", "高中", "没学历"}
     """
@@ -345,6 +387,15 @@ class ExtractionService:
         return has_self_income and has_preference_income and has_self_profile_payload
 
     @staticmethod
+    def _looks_like_partner_requirement_correction_message(user_message: str) -> bool:
+        text = str(user_message or "").strip()
+        if not text:
+            return False
+        return bool(
+            re.search(r"(我的意思是|我意思是|你理解反了|理解反了|不是.+是.+|不是这个意思|说反了|搞反了|更正一下)", text)
+        )
+
+    @staticmethod
     def _looks_like_partner_age_range_expression(user_message: str) -> bool:
         text = str(user_message or "").strip()
         if not text:
@@ -449,10 +500,20 @@ class ExtractionService:
                 _append_unique(partner_age_range_candidates, high)
 
         for pattern in (
+            r"((?:月薪|月收入|工资|收入|到手|年薪|年收入|年包|一年|每年|大概收入|收入区间)"
+            r"(?:大概|差不多|有|在)?\d+(?:\.\d+)?(?:万|千|k|K|w|W|块|元)\s*(?:-|~|到|至|—|–)\s*"
+            r"\d+(?:\.\d+)?(?:万|千|k|K|w|W|块|元)(?:左右|上下|出头|\+)?)",
+            r"((?:\d+(?:\.\d+)?(?:万|千|k|K|w|W|块|元)\s*(?:-|~|到|至|—|–)\s*"
+            r"\d+(?:\.\d+)?(?:万|千|k|K|w|W|块|元))(?:一个月|每月|月薪|月收入|工资|收入|到手|年薪|年收入|年包|一年|每年)?)",
+            r"((?:年薪|年收入|年包|一年|每年)(?:税前|税后)?(?:大概|差不多|有|在)?\d+(?:\.\d+)?\s*"
+            r"(?:-|~|到|至|—|–)\s*\d+(?:\.\d+)?(?:万|千|k|K|w|W|块|元)?(?:左右|上下|出头|\+)?)",
+            r"((?:一|二|两|三|四|五|六|七|八|九|十|\d)+(?:万|千)\s*(?:-|~|到|至|—|–)\s*"
+            r"(?:一|二|两|三|四|五|六|七|八|九|十|\d)+(?:万|千)(?:左右|上下|出头)?)",
             r"(?:月薪|月收入|工资|收入|到手|年薪)(?:大概|差不多|有|在)?(\d+(?:\.\d+)?(?:万|千|k|K|w|W|块|元))",
             r"(\d+(?:\.\d+)?(?:万|千|k|K|w|W|块|元))(?:一个月|每月|月薪|月收入|工资|收入|到手|年薪)",
             r"(?:年薪|年收入|年包)(?:税前|税后)?(?:大概|差不多|有|在)?(\d+(?:\.\d+)?(?:万|千|k|K|w|W|块|元)?(?:左右|上下|出头|\+)?)",
             r"(?:税前|税后)(?:年薪|年收入)?(?:大概|差不多|有|在)?(\d+(?:\.\d+)?(?:万|千|k|K|w|W|块|元)?(?:左右|上下|出头|\+)?)",
+            r"((?:一|二|两|三|四|五|六|七|八|九|十|\d)+(?:万|千)(?:左右|上下|出头))",
             r"(?<![a-zA-Z])(\d+(?:\.\d+)?(?:万|千|k|K|w|W)(?:左右|上下|出头|\+)?)(?![a-zA-Z])",
         ):
             for match in re.finditer(pattern, compact):
@@ -662,6 +723,7 @@ class ExtractionService:
         for field_name, rule in self._ROLE_CONSISTENT_FIELD_RULES.items():
             if field_name not in governed:
                 continue
+            current_value = str(governed.get(field_name) or "").strip()
             deterministic_value = str(deterministic_self.get(field_name) or "").strip()
             explicit_self_field = (
                 _asked(field_name)
@@ -669,17 +731,6 @@ class ExtractionService:
             )
             mixed_self_intro = _resolve_mixed_intro(rule)
             field_scope = _scope(field_name)
-
-            if field_scope == "self" and deterministic_value:
-                governed[field_name] = deterministic_value
-            elif field_scope == "partner" and not deterministic_value:
-                governed.pop(field_name, None)
-                continue
-
-            if deterministic_value:
-                governed[field_name] = deterministic_value
-                continue
-
             partner_context_checker = str(rule.get("partner_context_checker") or "").strip()
             partner_value_checker = str(rule.get("partner_value_checker") or "").strip()
             partner_signal = False
@@ -687,6 +738,33 @@ class ExtractionService:
                 partner_signal = _call_bool_checker(partner_context_checker, user_message)
             elif partner_value_checker:
                 partner_signal = _call_bool_checker(partner_value_checker, governed.get(field_name))
+
+            if field_scope == "partner" and not deterministic_value:
+                governed.pop(field_name, None)
+                continue
+
+            if deterministic_value:
+                if (
+                    field_name in {"location", "education"}
+                    or not current_value
+                    or (
+                        partner_signal
+                        and not mixed_self_intro
+                        and deterministic_value != current_value
+                    )
+                    or (
+                        field_name == "occupation"
+                        and self._is_low_quality_self_field_value(
+                            field_name,
+                            current_value,
+                            user_message=user_message,
+                            scope=field_scope,
+                        )
+                    )
+                    or field_scope == "partner"
+                ):
+                    governed[field_name] = deterministic_value
+                continue
 
             if not explicit_self_field and partner_signal and not mixed_self_intro:
                 governed.pop(field_name, None)
@@ -697,6 +775,12 @@ class ExtractionService:
                 or self._has_explicit_self_update_signal("marital_status", user_message)
             )
             mixed_self_intro = self._looks_like_mixed_self_intro_with_marital_preference(user_message)
+            if (
+                not mixed_self_intro
+                and governed.get("partner_requirement")
+                and re.search(r"(?:^|[，,、\s])\d{2}(?:年|后)?(?:单身|未婚|离异|已婚)", str(user_message or ""))
+            ):
+                mixed_self_intro = True
             if (
                 not explicit_self_marital
                 and self._looks_like_partner_preference_marital_context(user_message)
@@ -725,7 +809,10 @@ class ExtractionService:
                 or analysis.get("partner_age_range_candidates")
             )
             if not has_partner_age_signal:
-                preference = self._extract_partner_requirement_from_user_message(user_message) or ""
+                preference = self._resolve_partner_requirement_from_message(
+                    user_message,
+                    allow_legacy_fallback=False,
+                ) or ""
                 has_partner_age_signal = "年龄" in preference
             if has_partner_age_signal and not explicit_self_age:
                 governed.pop("age", None)
@@ -747,6 +834,8 @@ class ExtractionService:
         compact = re.sub(r"[，。！？!?；;、/\\]+", " ", text)
         compact = re.sub(r"\s+", " ", compact).strip()
         tokens = [token.strip() for token in compact.split(" ") if token.strip()]
+        marital_tokens = {"单身", "未婚", "离异", "已婚", "分居"}
+        education_tokens = {"博士", "硕士", "研究生", "本科", "大专", "中专", "高中"}
 
         location_match = re.search(
             r"(?:我在|来自|人在|目前在|现在在|住在)\s*(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)",
@@ -760,10 +849,29 @@ class ExtractionService:
                     extracted["location"] = re.sub(r"(男生|女生|男的|女的|人|这边)$", "", token)
                     break
 
+        sex_patterns = (
+            ("女", r"(?:^|[，,、\s])(?:女生|女的|女)\s*(?:找|想找|喜欢|偏向|偏好).{0,8}(?:男朋友|男盆友|男生|男性|对象|另一半)"),
+            ("男", r"(?:^|[，,、\s])(?:男生|男的|男)\s*(?:找|想找|喜欢|偏向|偏好).{0,8}(?:女朋友|女盆友|女生|女性|对象|另一半)"),
+            ("女", r"(?:^|[，,、\s])女找男(?:$|[，,、\s])"),
+            ("男", r"(?:^|[，,、\s])男找女(?:$|[，,、\s])"),
+        )
+        for value, pattern in sex_patterns:
+            if re.search(pattern, text):
+                extracted["sex"] = value
+                break
+
+        linked_education = cls._extract_linked_self_partner_education_value(text)
         if cls._has_explicit_self_update_signal("education", text) or cls._looks_like_profile_led_self_intro_with_education(text):
             edu_match = re.search(r"(本科|大专|硕士|博士|研究生)", text)
             if edu_match:
                 extracted["education"] = edu_match.group(1)
+        elif linked_education:
+            extracted["education"] = linked_education
+
+        marital_match = re.search(r"(单身|未婚|离异|已婚|分居|离过婚|离过|已经离婚)", text)
+        if marital_match:
+            marital_value = marital_match.group(1)
+            extracted["marital_status"] = "离异" if marital_value in {"离过婚", "离过", "已经离婚"} else marital_value
 
         self_tokens, _ = cls._split_compact_intro_tokens(text)
         for token in self_tokens:
@@ -773,9 +881,26 @@ class ExtractionService:
                 and normalized not in non_occupation_phrases
                 and not re.fullmatch(r"\d{2,4}", str(token or "").strip())
                 and re.fullmatch(r"[\u4e00-\u9fffA-Za-z]{2,8}", str(token or "").strip())
+                and not cls._is_low_quality_self_field_value("occupation", normalized, user_message=text)
             ):
                 extracted["occupation"] = normalized
                 break
+
+        if "occupation" not in extracted:
+            for token in tokens:
+                candidate = str(token or "").strip()
+                if not candidate or candidate in marital_tokens or candidate in education_tokens:
+                    continue
+                normalized = cls._normalize_occupation_value(candidate)
+                if (
+                    normalized
+                    and normalized not in non_occupation_phrases
+                    and not re.fullmatch(r"\d{2,4}", candidate)
+                    and re.fullmatch(r"[\u4e00-\u9fffA-Za-z]{2,8}", re.sub(r"(单身|未婚|离异|已婚|分居)+$", "", candidate))
+                    and not cls._is_low_quality_self_field_value("occupation", normalized, user_message=text)
+                ):
+                    extracted["occupation"] = normalized
+                    break
 
         return extracted
 
@@ -933,8 +1058,12 @@ class ExtractionService:
         if value_str is None:
             return None
         text = re.sub(r"[，,、。！？!?~～\s]+", "", str(value_str))
+        text = re.sub(r"^(?:我|自己|本人)(?:也是|是)?", "", text)
+        text = re.sub(r"^(?:目前|现在)?是[a-z]?(?:在)?做(?:的是)?", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"(单身|未婚|离异|已婚|分居)+$", "", text)
         text = re.sub(r"(吧|呀|呢|哈|哦|啊)+$", "", text)
         text = re.sub(r"^(做|做的|做的是|我是|从事|搞|干)\s*", "", text)
+        text = re.sub(r"(工作|上班)$", "", text)
         text = re.sub(r"(测试)$", "", text)
         normalized = text.lower()
         if normalized in cls._OCCUPATION_ALIASES:
@@ -986,6 +1115,44 @@ class ExtractionService:
             return match.group(1)
         return None
 
+    @staticmethod
+    def _extract_income_unit_clarification(user_message: Any) -> Optional[str]:
+        text = str(user_message or "").strip()
+        if not text:
+            return None
+        compact = re.sub(r"[，,、。！？!?~～\s]+", "", text)
+        if not compact:
+            return None
+        if re.fullmatch(r"(?:是|按)?(?:税前|税后)?(?:年薪|年收入|年包)(?:呢|呀|啊|哦|哈|啦|算|的)?", compact):
+            return "年薪"
+        if re.fullmatch(r"(?:是|按)?(?:税前|税后)?(?:月薪|月收入|月入|收入|工资)(?:呢|呀|啊|哦|哈|啦|算|的)?", compact):
+            return "月薪"
+        return None
+
+    @classmethod
+    def _merge_income_value_and_unit(cls, current_value: Any, new_value: Any) -> Optional[str]:
+        current = re.sub(r"\s+", "", str(current_value or "").strip())
+        incoming = re.sub(r"\s+", "", str(new_value or "").strip())
+        if not current and not incoming:
+            return None
+
+        normalized_unit = cls._extract_income_unit_clarification(incoming) or incoming
+        if normalized_unit not in {"年薪", "月薪"}:
+            return incoming or current or None
+        if not current:
+            return normalized_unit
+        if normalized_unit in current:
+            return current
+
+        tax_prefix_match = re.match(r"^(税前|税后)", current)
+        tax_prefix = tax_prefix_match.group(1) if tax_prefix_match else ""
+        amount = re.sub(r"^(税前|税后)", "", current)
+        amount = re.sub(r"^(年薪|年收入|年包|月薪|月收入|月入|收入|工资)", "", amount)
+        amount = amount.strip()
+        if not amount:
+            return f"{tax_prefix}{normalized_unit}"
+        return f"{tax_prefix}{normalized_unit}{amount}"
+
     @classmethod
     def _is_low_quality_self_field_value(
         cls,
@@ -1010,7 +1177,7 @@ class ExtractionService:
         if compact_value in cls._LOW_QUALITY_GENERIC_TOKENS:
             return True
 
-        if field == "occupation" and compact_value in {"男", "女", "男生", "女生"}:
+        if field == "occupation" and compact_value in {"男", "女", "男生", "女生", "男的", "女的"}:
             return True
 
         if any(marker in compact_value for marker in cls._LOW_QUALITY_QUESTION_MARKERS):
@@ -1041,13 +1208,27 @@ class ExtractionService:
             if normalized is None:
                 return True
             normalized_compact = cls._compact_text(normalized)
-            if normalized_compact in cls._LOW_QUALITY_GENERIC_TOKENS or normalized_compact in {"男", "女", "男生", "女生"}:
+            if normalized_compact in cls._LOW_QUALITY_GENERIC_TOKENS or normalized_compact in {"男", "女", "男生", "女生", "男的", "女的"}:
+                return True
+            if normalized_compact in {"不错", "挺不错", "还不错", "听不错"} or normalized_compact.endswith("不错"):
+                return True
+            if re.search(r"(怎么|咋|为什么|为啥|啥|什么情况|怎么回事|怎么多了)", normalized_compact):
                 return True
             if any(token in normalized_compact for token in ("结婚", "离婚", "离异", "未婚", "单身", "已婚")):
                 return True
+            if any(token in normalized_compact for token in ("找对象", "找另一半", "找男朋友", "找女朋友", "男生找女朋友", "女生找男朋友", "男朋友", "女朋友", "另一半")):
+                return True
             if any(token in normalized_compact for token in ("本科", "大专", "硕士", "博士", "研究生", "学历")):
                 return True
-            if normalized_compact.startswith(("不是", "先", "想找", "找", "我想")):
+            if re.search(r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|南京|香港|南山|福田|宝安|龙岗|龙华)", normalized_compact):
+                return True
+            if any(token in normalized_compact for token in cls._LOW_QUALITY_OCCUPATION_FRAGMENTS):
+                return True
+            if any(token in normalized_compact for token in ("一个人", "单着", "活不下去", "活不下去了")):
+                return True
+            if normalized_compact.startswith(("姓", "我叫", "叫我")):
+                return True
+            if normalized_compact.startswith(("不是", "先", "想找", "找", "我想", "暂时")):
                 return True
             return False
 
@@ -1078,17 +1259,347 @@ class ExtractionService:
             return {}
 
         compact = re.sub(r"\s+", "", text)
+        self_tokens, preference_tokens = cls._split_compact_intro_tokens(text)
+        partner_scope_compact = (
+            re.sub(r"\s+", "", "".join(preference_tokens))
+            if (preference_tokens and any(cls._looks_like_profile_intro_token(token) for token in self_tokens))
+            else compact
+        )
         extracted: Dict[str, str] = {}
 
-        age_match = re.search(r"((?:8|9|0)\d后|(?:19\d{2}|20\d{2}|\d{2}年)|年龄(?:上下\d{1,2}岁|不超过\d{1,2}岁|\d{1,2}左右))", compact)
+        age_match = re.search(
+            r"((?:8|9|0)\d后|(?:19\d{2}|20\d{2}|\d{2}年)|年龄(?:上下\d{1,2}岁|不超过\d{1,2}岁|\d{1,2}左右))",
+            partner_scope_compact,
+        )
         if age_match:
             extracted["partner_pref_age"] = age_match.group(1)
 
-        location_match = re.search(r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)", compact)
+        location_match = re.search(
+            r"(?:同在|同城|本地|优先|最好|希望|偏向|倾向|喜欢).{0,8}(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)"
+            r"|"
+            r"(?:想找|找).{0,2}(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)"
+            r"|"
+            r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)(?:优先|都行|都可|也行|也可|最好|本地|同城|发展)",
+            partner_scope_compact,
+        )
         if location_match:
-            extracted["partner_pref_location"] = location_match.group(1)
+            extracted["partner_pref_location"] = (
+                location_match.group(1)
+                or location_match.group(2)
+                or location_match.group(3)
+            )
+        elif re.fullmatch(r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)", compact):
+            extracted["partner_pref_location"] = compact
+        else:
+            location_tokens = [
+                re.sub(r"\s+", "", str(token or ""))
+                for token in re.split(r"[，,、/]+", text)
+                if str(token or "").strip()
+            ]
+            for token in location_tokens:
+                short_match = re.fullmatch(
+                    r"(?:想找|找)?(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)",
+                    token,
+                )
+                if short_match:
+                    extracted["partner_pref_location"] = short_match.group(1)
+                    break
+
+        industry_match = re.search(
+            r"(同[^，。！？!?]{1,8}体系|同[^，。！？!?]{1,8}行业|程序员|互联网|大厂程序员|医生|老师|教师|护士|公务员|体制内|财务|金融|销售|运营|产品|开发|医疗体系)",
+            partner_scope_compact,
+        )
+        if industry_match:
+            extracted["partner_pref_industry"] = industry_match.group(1)
+
+        education_match = re.search(
+            r"(学历本科及以上|学历本科以上|学历本科起步|本科及以上|本科以上|本科起步|硕士及以上|硕士以上|大专及以上|大专以上)",
+            partner_scope_compact,
+        )
+        if education_match:
+            education_value = education_match.group(1)
+            if education_value.startswith("本科"):
+                education_value = education_value.replace("本科以上", "本科及以上").replace("本科起步", "本科及以上")
+                education_value = f"学历{education_value}"
+            elif education_value.startswith("硕士"):
+                education_value = education_value.replace("硕士以上", "硕士及以上")
+                education_value = f"学历{education_value}"
+            elif education_value.startswith("大专"):
+                education_value = education_value.replace("大专以上", "大专及以上")
+                education_value = f"学历{education_value}"
+            extracted["partner_pref_education"] = education_value
+        else:
+            linked_education = cls._extract_linked_self_partner_education_value(compact)
+            if linked_education:
+                extracted["partner_pref_education"] = cls._normalize_partner_preference_education_value(linked_education)
+
+        if "本地优先" in compact:
+            extracted["partner_pref_locality"] = "本地优先"
+        elif "同城优先" in compact or "同城" in compact:
+            extracted["partner_pref_locality"] = "同城优先"
+
+        if re.search(r"比(?:自己|我)大|年纪大点|年龄大点", compact):
+            extracted["partner_pref_age_relation"] = "比自己大"
+        elif re.search(r"比(?:自己|我)小|年纪小点|年龄小点", compact):
+            extracted["partner_pref_age_relation"] = "比自己小"
 
         return extracted
+
+    @classmethod
+    def _extract_partner_requirement_raw_surface_from_message(
+        cls,
+        user_message: str,
+        *,
+        structured_subslots: Dict[str, str] | None = None,
+    ) -> str:
+        message = str(user_message or "").strip()
+        if not message:
+            return ""
+
+        _, preference_tokens = cls._split_compact_intro_tokens(message)
+        if not preference_tokens:
+            return ""
+
+        normalized_subslots = {
+            str(field or "").strip(): str(value or "").strip()
+            for field, value in dict(structured_subslots or {}).items()
+            if str(field or "").strip() and str(value or "").strip()
+        }
+        parts: List[str] = []
+        for token in preference_tokens:
+            raw_part = str(token or "").strip("，,、。！？!?；; ")
+            if not raw_part:
+                continue
+            compact_part = re.sub(r"\s+", "", raw_part)
+            if cls._looks_like_contact_or_question_fragment(compact_part):
+                continue
+
+            cleaned_part = cls._remove_unspoken_inferred_partner_requirement_content(raw_part, message).strip("，,、。！？!?；; ")
+            if not cleaned_part:
+                continue
+            if cls._is_structured_covered_partner_requirement_fragment(cleaned_part, normalized_subslots):
+                continue
+            if cleaned_part not in parts:
+                parts.append(cleaned_part)
+
+        return "，".join(parts)
+
+    @classmethod
+    def _is_structured_covered_partner_requirement_fragment(
+        cls,
+        fragment: str,
+        structured_subslots: Dict[str, str] | None,
+    ) -> bool:
+        text = str(fragment or "").strip()
+        if not text:
+            return True
+        subslots = dict(structured_subslots or {})
+        if not subslots:
+            return False
+
+        location_value = str(subslots.get("partner_pref_location") or "").strip()
+        if location_value and text == location_value:
+            return True
+
+        industry_value = str(subslots.get("partner_pref_industry") or "").strip()
+        if industry_value and text == industry_value:
+            return True
+
+        age_value = str(subslots.get("partner_pref_age") or "").strip()
+        if age_value and text == age_value:
+            return True
+
+        income_value = str(subslots.get("partner_pref_income") or "").strip()
+        if income_value and text == income_value:
+            return True
+
+        education_value = str(subslots.get("partner_pref_education") or "").strip()
+        linked_education = cls._extract_linked_self_partner_education_value(text)
+        normalized_linked_education = (
+            cls._normalize_partner_preference_education_value(linked_education)
+            if linked_education
+            else ""
+        )
+        if education_value and (
+            text == education_value
+            or normalized_linked_education == education_value
+            or cls._normalize_partner_preference_education_value(text) == education_value
+        ):
+            return True
+
+        return False
+
+    @staticmethod
+    def _looks_like_contact_or_question_fragment(value: str) -> bool:
+        text = re.sub(r"\s+", "", str(value or "").strip())
+        if not text:
+            return True
+        if re.search(r"1\d{10}", text):
+            return True
+        if re.search(r"(电话|手机号|联系方式|联系这边|联系我|直接联系|微信|vx|wx|weixin)", text, flags=re.IGNORECASE):
+            return True
+        if re.search(r"(怎么收费|收费|多少钱|价格|费用|收费吗|先了解下|了解下收费)", text):
+            return True
+        return False
+
+    @staticmethod
+    def _normalize_partner_preference_education_value(value: str) -> str:
+        education_value = str(value or "").strip()
+        if not education_value:
+            return ""
+        if education_value.startswith("学历"):
+            return education_value
+        if education_value in {"本科", "大专", "硕士", "博士", "研究生"}:
+            return f"学历{education_value}及以上"
+        return education_value
+
+    @staticmethod
+    def _extract_linked_self_partner_education_value(message: str) -> Optional[str]:
+        text = re.sub(r"\s+", "", str(message or ""))
+        if not text:
+            return None
+        match = re.search(
+            r"(?:一样|也|最好也|同样)(本科|大专|硕士|博士|研究生)"
+            r"|(?:本科|大专|硕士|博士|研究生)(?:也一样|也行|也可以)",
+            text,
+        )
+        if not match:
+            return None
+        for group in match.groups():
+            if group:
+                return group
+        return None
+
+    @staticmethod
+    def _compose_structured_partner_preference_text(user_profile: Any) -> str:
+        parts: list[str] = []
+        for field in ExtractionService._PARTNER_PREFERENCE_SUBSLOT_FIELDS:
+            value = str(getattr(user_profile, field, "") or "").strip()
+            if value and value not in parts:
+                parts.append(value)
+        return "，".join(parts)
+
+    @classmethod
+    def _compose_partner_requirement_from_subslots(
+        cls,
+        subslots: Dict[str, str],
+        raw_requirement: Any,
+    ) -> str:
+        ordered_parts: list[str] = []
+        for field in cls._PARTNER_PREFERENCE_SUBSLOT_FIELDS:
+            value = str(subslots.get(field) or "").strip()
+            if value and value not in ordered_parts:
+                ordered_parts.append(value)
+
+        raw_parts = [
+            str(part or "").strip()
+            for part in re.split(r"[，,、]+", str(raw_requirement or "").strip())
+        ]
+        structured_parts = [
+            cls._normalize_partner_requirement_part(part) or part
+            for part in ordered_parts
+            if part
+        ]
+
+        for part in raw_parts:
+            if not part:
+                continue
+            normalized_part = cls._normalize_partner_requirement_part(part) or part
+            replaced = False
+            for index, existing in enumerate(structured_parts):
+                if not existing:
+                    continue
+                if (
+                    normalized_part == existing
+                    or normalized_part in existing
+                    or existing in normalized_part
+                ):
+                    if len(part) > len(ordered_parts[index]):
+                        ordered_parts[index] = part
+                        structured_parts[index] = normalized_part
+                    replaced = True
+                    break
+            if not replaced and part not in ordered_parts:
+                ordered_parts.append(part)
+                structured_parts.append(normalized_part)
+
+        return "，".join(ordered_parts)
+
+    @staticmethod
+    def _should_apply_structured_partner_requirement_compose(value: Any) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        compact = re.sub(r"\s+", "", text)
+        if re.search(r"(看中|看重|倾向|偏向|喜欢|气质|身高有要求|未婚|离异|已婚)", compact):
+            return False
+        return True
+
+    @staticmethod
+    def _preferred_partner_requirement_surface(raw_part: str, normalized_part: str) -> str:
+        raw_text = str(raw_part or "").strip()
+        normalized_text = str(normalized_part or "").strip()
+        if not normalized_text:
+            return raw_text
+        if not raw_text:
+            return normalized_text
+        if re.search(r"(未婚|离异|已婚|身高有要求|倾向)", raw_text):
+            return raw_text
+        return normalized_text
+
+    @classmethod
+    def _collect_partner_preference_subslots(
+        cls,
+        extracted_data: Dict[str, Any],
+        user_profile: Optional[UserProfile] = None,
+    ) -> Dict[str, str]:
+        subslots: Dict[str, str] = {}
+        for field in cls._PARTNER_PREFERENCE_SUBSLOT_FIELDS:
+            value = str(extracted_data.get(field) or "").strip()
+            if not value and user_profile is not None:
+                value = str(getattr(user_profile, field, "") or "").strip()
+            if not value:
+                continue
+            if field == "partner_pref_education":
+                value = cls._normalize_partner_preference_education_value(value)
+            subslots[field] = value
+        return subslots
+
+    @classmethod
+    def _maybe_compose_partner_requirement_from_structured_inputs(
+        cls,
+        *,
+        extracted_data: Dict[str, Any],
+        user_profile: UserProfile,
+        user_message: str = "",
+    ) -> Optional[str]:
+        raw_requirement = str(extracted_data.get("partner_requirement") or "").strip()
+        current_requirement = str(getattr(user_profile, "partner_requirement", "") or "").strip()
+        current_turn_subslots = cls._collect_partner_preference_subslots(extracted_data)
+        if not raw_requirement and not current_turn_subslots:
+            return None
+
+        merged_subslots = cls._collect_partner_preference_subslots(extracted_data, user_profile=user_profile)
+        if not merged_subslots:
+            return raw_requirement or None
+
+        if raw_requirement:
+            if cls._should_apply_structured_partner_requirement_compose(raw_requirement):
+                return cls._compose_partner_requirement_from_subslots(merged_subslots, raw_requirement)
+            return raw_requirement
+
+        if user_message:
+            raw_surface = cls._extract_partner_requirement_raw_surface_from_message(
+                user_message,
+                structured_subslots=merged_subslots,
+            )
+            if raw_surface:
+                return cls._compose_partner_requirement_from_subslots(merged_subslots, raw_surface)
+
+        if current_requirement:
+            return cls._compose_partner_requirement_from_subslots(merged_subslots, current_requirement)
+
+        return cls._compose_partner_requirement_from_subslots(merged_subslots, "")
 
     @classmethod
     def _has_explicit_self_update_signal(cls, field: str, user_message: str) -> bool:
@@ -1104,11 +1615,14 @@ class ExtractionService:
             "age": r"(我\s*\d{1,3}\s*岁|我是一?个?\d{1,3}岁|出生于|我是\d{2}后|我是\d{4}年)",
             "location": r"(我在|我住在|我现在在|我目前在|我人在|我在.*(工作|生活)|我是.*的)",
             "education": r"((?:我|自己|本人).{0,4}(本科|大专|硕士|博士|研究生)|学历(?:是|为)?\s*(本科|大专|硕士|博士|研究生)|(?:本科|大专|硕士|博士|研究生)(?:毕业|在读|毕业的))",
-            "occupation": r"(我是|我做|从事|职业是|工作是|做.*工作|^\s*做\s*[A-Za-z\u4e00-\u9fa5]{1,12}(?:[，,、\s]|$)|^\s*[A-Za-z]{1,12}\s*[，,、\s])",
+            "occupation": r"((?:我是|我做|从事|职业是|工作是).{0,10}(?:[A-Za-z]{1,12}|[\u4e00-\u9fa5]{1,12})|我目前是做.{0,10}|我现在是做.{0,10}|目前是做.{0,10}|现在是做.{0,10}|^\s*做\s*[A-Za-z\u4e00-\u9fa5]{1,12}(?:[，,、\s]|$)|^\s*[A-Za-z]{1,12}\s*[，,、\s])",
             "marital_status": r"((我是|目前|现在|我)\s*(单身|未婚|离异|已婚|分居)|离过婚|离过|已经离婚)",
+            "monthly_income": r"((?:我|自己|本人).{0,6}(?:月薪|月收入|月入|收入|工资|年薪|年收入|年包)|^(?:是|按)?(?:税前|税后)?(?:年薪|年收入|年包|月薪|月收入|月入|收入|工资)(?:呢|呀|啊|哦|哈|啦|算|的)?$)",
         }
         pattern = explicit_patterns.get(field)
         if field == "education" and any(token in text for token in cls._EDUCATION_TYPO_ALIASES):
+            return True
+        if field == "monthly_income" and cls._extract_income_unit_clarification(text):
             return True
         return bool(pattern and re.search(pattern, text))
 
@@ -1285,7 +1799,8 @@ class ExtractionService:
         has_rich_preference_markers = bool(
             re.search(
                 r"(接受\d{1,2}岁上下年龄差|喜欢笑|爱笑|卡身高\d{3}\+|不要同[^，。！？!?]{1,12}行业|"
-                r"倾向(?:于)?稳定行业|成熟稳重|三观合拍|同城优先|本地优先)",
+                r"倾向(?:于)?稳定行业|成熟稳重|三观合拍|同城优先|本地优先|"
+                r"看重|稳重|成熟|身高.{0,4}(?:以上|不低于|至少|打底)|多金|有钱|经济条件好|条件好)",
                 compact_message,
             )
         )
@@ -1299,12 +1814,23 @@ class ExtractionService:
 
         values_with_pos: List[tuple[int, str]] = []
         values_with_pos.extend(ExtractionService._extract_structured_numeric_partner_preferences(compact_message))
+        has_partner_age_bucket_context = bool(
+            re.search(r"(看重|都可以|都行|有不|行不|优先|要求|另一半|对象|想找|找|希望|偏向|偏好|喜欢)", compact_message)
+        )
+        for match in re.finditer(
+            r"((?:8|9|0)\d后)(?:(?:都|也)?(?:可以|可|行|成)|左右|都行|都可以|有不|行不)?",
+            compact_message,
+        ):
+            matched = str(match.group(1) or "").strip()
+            if matched and has_partner_age_bucket_context:
+                values_with_pos.append((match.start(1), matched))
         patterns = [
             r"(深二代)",
             r"(富二代)",
             r"(拆二代)",
             r"(找未婚)",
             r"(未婚找未婚)",
+            r"(一样本科)",
             r"(本科起步)",
             r"(本科或者以上)",
             r"(本科及以上)",
@@ -1369,6 +1895,7 @@ class ExtractionService:
             r"(年龄至少\d{1,3})",
             r"(卡身高\d{2,3}\+)",
             r"(身高\d{2,3}\+)",
+            r"(身高要\d{2,3}以上)",
             r"(身高至少\d{2,3})",
             r"(身高不低于\d{2,3})",
             r"(不要低于\d{2,3})",
@@ -1458,6 +1985,8 @@ class ExtractionService:
             r"(倾向于稳定行业)",
             r"(倾向稳定行业)",
             r"(稳定行业)",
+            r"(稳重)",
+            r"(成熟)",
             r"(温柔(?:一点|点|些)?(?:的)?(?:吧|呀|呢|啊|呗|哈|啦)?)",
             r"(温柔就行(?:了)?(?:吧|呀|呢)?)",
             r"(性格好就行(?:了)?(?:吧|呀|呢)?)",
@@ -1471,6 +2000,14 @@ class ExtractionService:
             r"(同城优先)",
             r"(成熟稳重)",
             r"(三观合拍)",
+            r"(多金(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(有钱(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(条件好(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(经济条件好(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(收入高(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(收入不错(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(会赚钱(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
+            r"(赚钱能力强(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?)",
         ]
         for pattern in patterns:
             for match in re.finditer(pattern, compact_message):
@@ -1487,6 +2024,7 @@ class ExtractionService:
             value = re.sub(r"^不超过(\d{1,2})岁$", r"年龄不超过\1岁", value)
             value = re.sub(r"^(\d{1,2})岁以下$", r"年龄不超过\1岁", value)
             value = re.sub(r"^(?:未婚找未婚|找未婚)$", "未婚", value)
+            value = re.sub(r"^一样本科$", r"学历本科及以上", value)
             value = re.sub(r"^本科起步$", r"学历本科及以上", value)
             value = re.sub(r"^(本科|大专|硕士|博士)(?:或者|及)以上$", r"学历\1及以上", value)
             value = re.sub(r"^程序员最好$", r"程序员", value)
@@ -1535,6 +2073,7 @@ class ExtractionService:
             value = re.sub(r"^至少(\d{2,3})$", r"身高至少\1", value)
             value = re.sub(r"^(?:不要低于|别低于|不低于)(\d{2,3})$", r"身高不低于\1", value)
             value = re.sub(r"^(?:卡身高|身高)(\d{2,3})\+$", r"身高至少\1", value)
+            value = re.sub(r"^身高要(\d{2,3})以上$", r"身高\1cm以上", value)
             value = re.sub(r"^(\d{3})往上$", r"身高\1cm以上", value)
             value = re.sub(r"^一米七五以上$", "身高175cm以上", value)
             value = re.sub(r"^一米七五朝上$", "身高175cm以上", value)
@@ -1620,6 +2159,15 @@ class ExtractionService:
             value = re.sub(r"^(聊得来)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(合适)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
             value = re.sub(r"^(人好)就行(?:了)?(?:吧|呀|呢)?$", r"\1", value)
+            value = re.sub(r"^(成熟|稳重)$", "成熟稳重", value)
+            value = re.sub(r"^(多金)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(有钱)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(条件好)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(经济条件好)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(收入高)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(收入不错)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(会赚钱)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
+            value = re.sub(r"^(赚钱能力强)(?:一点|些)?(?:最好|优先|就行|就好|吧|呀|咯)?$", r"\1", value)
             value = re.sub(r"(气质)(好|佳)?(一点|些)?(?:的)?$", r"\1", value)
             value = re.sub(r"^(漂亮点)(?:的)?$", r"\1", value)
             value = re.sub(r"^长相漂亮$", r"漂亮点", value)
@@ -1663,6 +2211,46 @@ class ExtractionService:
         normalized = [value for value in normalized if not ExtractionService._is_gender_preference_like_partner_requirement(value)]
         return "，".join(normalized)
 
+    @classmethod
+    def _resolve_partner_requirement_from_message(
+        cls,
+        user_message: str,
+        *,
+        allow_legacy_fallback: bool = False,
+        prefer_structured: bool = True,
+    ) -> Optional[str]:
+        message = str(user_message or "").strip()
+        if not message:
+            return None
+        if allow_legacy_fallback and not prefer_structured:
+            legacy_value = cls._extract_partner_requirement_from_user_message(message)
+            if legacy_value:
+                return legacy_value
+        subslots = cls._extract_partner_preference_subslots(message)
+        normalized_subslots = {
+            field: str(value or "").strip()
+            for field, value in dict(subslots or {}).items()
+            if str(value or "").strip()
+        }
+        if normalized_subslots:
+            raw_surface = cls._extract_partner_requirement_raw_surface_from_message(
+                message,
+                structured_subslots=normalized_subslots,
+            )
+            if not raw_surface:
+                compact = re.sub(r"\s+", "", message)
+                if (
+                    len(compact) <= 20
+                    and re.search(r"(都可以|都行|有不|行不|优先|不要同|别同|稳定行业)", compact)
+                ):
+                    raw_surface = message
+            if not raw_surface and allow_legacy_fallback:
+                raw_surface = str(cls._extract_partner_requirement_from_user_message(message) or "").strip()
+            return cls._compose_partner_requirement_from_subslots(normalized_subslots, raw_surface)
+        if allow_legacy_fallback:
+            return cls._extract_partner_requirement_from_user_message(message)
+        return None
+
     @staticmethod
     def _split_compact_intro_tokens(message: str) -> tuple[List[str], List[str]]:
         compact = re.sub(r"[，。！？!?；;、/\\]+", " ", str(message or "").strip())
@@ -1690,13 +2278,45 @@ class ExtractionService:
             "大一点",
             "小一点",
         )
+        generic_opening_tokens = {
+            "找对象",
+            "相亲",
+            "征婚",
+            "女生找男朋友",
+            "女生找对象",
+            "男生找女朋友",
+            "男生找对象",
+            "女找男",
+            "男找女",
+        }
         preference_start = len(tokens)
         for idx, token in enumerate(tokens):
+            compact_token = re.sub(r"\s+", "", str(token or "").strip())
+            if compact_token in generic_opening_tokens:
+                continue
             if any(marker in token for marker in preference_markers):
                 preference_start = idx
                 break
 
         return tokens[:preference_start], tokens[preference_start:]
+
+    @staticmethod
+    def _looks_like_profile_intro_token(token: str) -> bool:
+        text = str(token or "").strip()
+        compact = re.sub(r"\s+", "", text)
+        if not compact:
+            return False
+        if re.search(r"(我|本人|自己)", compact):
+            return True
+        if re.search(r"(未婚|单身|离异|已婚|分居|学历|本科|大专|硕士|博士|研究生|收入|月薪|年薪|工资|月入|年入)", compact):
+            return True
+        if re.search(r"(教师|老师|医生|程序员|开发|运营|产品|设计|财务|销售|行政|客服|在编)", compact):
+            return True
+        if re.search(r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华|老家|河南人)", compact):
+            return True
+        if re.search(r"(?<!\d)(1[4-9]\d)\s*/\s*([5-9]\d|1\d{2})(?!\d)", text):
+            return True
+        return False
 
     @staticmethod
     def _extract_compact_partner_requirement_from_tokens(tokens: List[str]) -> Optional[str]:
@@ -1805,16 +2425,26 @@ class ExtractionService:
                     return
             semantics.append({"pos": pos, "field": field, "operator": operator, "value": value})
 
+        def _clause_window_around(match: re.Match[str], *, prefix_len: int = 10, suffix_len: int = 8) -> str:
+            prefix = compact[max(0, match.start() - prefix_len):match.start()]
+            current_span = compact[match.start():match.end()]
+            suffix = compact[match.end():match.end() + suffix_len]
+            prefix = re.split(r"[，,、；;。]", prefix)[-1]
+            suffix = re.split(r"[，,、；;。]", suffix, maxsplit=1)[0]
+            return prefix + current_span + suffix
+
+        def _has_income_semantics_near(match: re.Match[str], *, prefix_len: int = 10, suffix_len: int = 8) -> bool:
+            nearby = _clause_window_around(match, prefix_len=prefix_len, suffix_len=suffix_len)
+            return bool(re.search(r"(月入|月薪|收入|工资|年薪|年收入|税前|税后|年包|k|K|w|W|万)", nearby))
+
         colloquial_height_around_pattern = re.compile(
             rf"(?<!\d)(1[5-9]\d)(?:左右|上下|前后|附近|差不多){optional_preference_tail_pattern}"
         )
         for match in colloquial_height_around_pattern.finditer(compact):
-            prefix = compact[max(0, match.start() - 10):match.start()]
-            current_span = compact[match.start():match.end()]
-            suffix = compact[match.end():match.end() + 2]
-            nearby = prefix + current_span + suffix
+            nearby = _clause_window_around(match, prefix_len=10, suffix_len=2)
             if re.search(r"(收入|月入|月薪|工资|年薪|年龄|岁)", nearby):
                 continue
+            prefix = re.split(r"[，,、；;。]", compact[max(0, match.start() - 10):match.start()])[-1]
             if re.search(preference_prefix_pattern, prefix) or has_preference_context:
                 _append(match.start(), "height", "around", match.group(1))
 
@@ -1836,9 +2466,8 @@ class ExtractionService:
             rf"(?<!\d)(1[5-9]\d)\+{optional_preference_tail_pattern}"
         )
         for match in bare_height_lower_bound_pattern.finditer(compact):
-            prefix = compact[max(0, match.start() - 10):match.start()]
-            suffix = compact[match.end():match.end() + 6]
-            nearby = prefix + suffix
+            prefix = re.split(r"[，,、；;。]", compact[max(0, match.start() - 10):match.start()])[-1]
+            nearby = _clause_window_around(match, prefix_len=10, suffix_len=6)
             if re.search(r"(收入|月入|月薪|工资|年薪|年龄|岁)", nearby):
                 continue
             if re.search(preference_prefix_pattern, prefix):
@@ -1848,9 +2477,8 @@ class ExtractionService:
             rf"(?<!\d)(1[5-9]\d)(?:以上|往上){optional_preference_tail_pattern}"
         )
         for match in bare_height_above_pattern.finditer(compact):
-            prefix = compact[max(0, match.start() - 10):match.start()]
-            suffix = compact[match.end():match.end() + 6]
-            nearby = prefix + suffix
+            prefix = re.split(r"[，,、；;。]", compact[max(0, match.start() - 10):match.start()])[-1]
+            nearby = _clause_window_around(match, prefix_len=10, suffix_len=6)
             if re.search(r"(收入|月入|月薪|工资|年薪|年龄|岁)", nearby):
                 continue
             if re.search(preference_prefix_pattern, prefix):
@@ -1860,10 +2488,9 @@ class ExtractionService:
             rf"(?<!\d)([2-5]\d)\+{optional_preference_tail_pattern}"
         )
         for match in bare_age_lower_bound_pattern.finditer(compact):
-            prefix = compact[max(0, match.start() - 10):match.start()]
-            suffix = compact[match.end():match.end() + 8]
-            nearby = prefix + suffix
-            if re.search(r"(身高|cm|CM|一米)", nearby):
+            prefix = re.split(r"[，,、；;。]", compact[max(0, match.start() - 10):match.start()])[-1]
+            nearby = _clause_window_around(match, prefix_len=10, suffix_len=8)
+            if re.search(r"(身高|cm|CM|一米)", nearby) or _has_income_semantics_near(match, suffix_len=0):
                 continue
             if re.search(preference_prefix_pattern, prefix) or has_preference_context:
                 _append(match.start(), "age", "lower_bound", match.group(1))
@@ -1872,10 +2499,9 @@ class ExtractionService:
             rf"(?<!\d)([2-5]\d)左右{optional_preference_tail_pattern}"
         )
         for match in bare_age_around_pattern.finditer(compact):
-            prefix = compact[max(0, match.start() - 10):match.start()]
-            suffix = compact[match.end():match.end() + 8]
-            nearby = prefix + suffix
-            if re.search(r"(身高|cm|CM|一米)", nearby):
+            prefix = re.split(r"[，,、；;。]", compact[max(0, match.start() - 10):match.start()])[-1]
+            nearby = _clause_window_around(match, prefix_len=10, suffix_len=8)
+            if re.search(r"(身高|cm|CM|一米)", nearby) or _has_income_semantics_near(match, suffix_len=0):
                 continue
             if re.search(preference_prefix_pattern, prefix) or has_preference_context:
                 _append(match.start(), "age", "around", match.group(1))
@@ -1884,10 +2510,9 @@ class ExtractionService:
             rf"(?<!\d)([2-5]\d)(?:上下|前后){optional_preference_tail_pattern}"
         )
         for match in bare_age_around_range_pattern.finditer(compact):
-            prefix = compact[max(0, match.start() - 10):match.start()]
-            suffix = compact[match.end():match.end() + 8]
-            nearby = prefix + suffix
-            if re.search(r"(身高|cm|CM|一米)", nearby):
+            prefix = re.split(r"[，,、；;。]", compact[max(0, match.start() - 10):match.start()])[-1]
+            nearby = _clause_window_around(match, prefix_len=10, suffix_len=8)
+            if re.search(r"(身高|cm|CM|一米)", nearby) or _has_income_semantics_near(match, suffix_len=0):
                 continue
             if re.search(preference_prefix_pattern, prefix) or has_preference_context:
                 _append(match.start(), "age", "around", match.group(1))
@@ -1977,6 +2602,12 @@ class ExtractionService:
         text = re.sub(r"(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的)$", "", text)
         text = re.sub(r"(?:对象)$", "", text)
         text = re.sub(r"^(?:找个|找一个|找|想找|喜欢|偏向|偏好|想要|希望|就想找|更想找)", "", text)
+        text = re.sub(
+            r"\s*(?:暂时就|暂时先这样|先这样|就这些|就这样)(?:\s*(?:吧|哈|啦|了))?(?:\s*(?:怎么多了|怎么又多了|这怎么多了|这咋多了|为啥多了))?\s*$",
+            "",
+            text,
+        )
+        text = re.sub(r"\s*(?:怎么多了|怎么又多了|这怎么多了|这咋多了|为啥多了)\s*$", "", text)
         text = re.sub(r"[，,、]+", "，", text).strip("，,、 ")
         return text
 
@@ -1986,6 +2617,8 @@ class ExtractionService:
         value = re.sub(r"^(?:看中|看重|更看重|比较看重|喜欢|偏向|希望)(?:对方|另一半)?", "", value)
         value = re.sub(r"^(?:对方|另一半)", "", value)
         value = value.strip("，,。；; ")
+        value = re.sub(r"(身高\d{2,3}cm(?:以上|左右)?)(?:的)?(?:男朋友|男盆友|男生|男性|男孩子|男的|男)$", r"\1", value)
+        value = re.sub(r"(身高\d{2,3}cm(?:以上|左右)?)(?:的)?(?:女朋友|女盆友|女生|女性|女孩子|女的|女)$", r"\1", value)
         value = re.sub(r"^(?:希望)?匹配", "", value)
         value = re.sub(r"地区的?$", "", value)
         value = re.sub(r"地区$", "", value)
@@ -2120,6 +2753,13 @@ class ExtractionService:
         if looks_like_education and education_value and clean_part == education_value and not has_explicit_preference_marker:
             return True
 
+        if (
+            re.fullmatch(r"年龄\d{1,2}(?:左右|上下|以上)", clean_part)
+            and ExtractionService._looks_like_income_context_message(user_message)
+            and not ExtractionService._message_has_explicit_age_semantics(user_message)
+        ):
+            return True
+
         return False
 
     @staticmethod
@@ -2150,10 +2790,16 @@ class ExtractionService:
                 text,
             )
         )
+        has_direct_partner_preference = bool(
+            re.search(
+                r"^(男生|女生|男的|女的|男|女).{0,16}(?:找|想找|喜欢|偏向|偏好).{0,16}(?:\d{3}\+|男朋友|女朋友|男盆友|女盆友|男生|女生|男性|女性|男的|女的)",
+                text,
+            )
+        )
         has_self_profile_payload = bool(
             re.search(r"(19\d{2}|20\d{2}|\d{2}年|\d{2}后|\d{1,2}岁|未婚|离异|已婚|单身|本科|大专|硕士|博士|互联网|程序员|南山|深圳)", text)
         )
-        return has_self_sex_phrase and has_self_profile_payload
+        return has_self_sex_phrase and (has_self_profile_payload or has_direct_partner_preference)
 
     @staticmethod
     def _looks_like_mixed_self_intro_with_location_preference(message: str) -> bool:
@@ -2197,7 +2843,8 @@ class ExtractionService:
             return False
         return bool(
             re.search(
-                r"(?:卡学历|学历要求|本科及以上|本科以上|本科起步|最好本科|想找.{0,8}本科|找.{0,8}本科)",
+                r"(?:卡学历|学历要求|本科及以上|本科以上|本科起步|最好本科|一样本科|也本科|最好也本科|"
+                r"想找.{0,8}本科|找.{0,8}本科)",
                 text,
             )
         )
@@ -2278,7 +2925,7 @@ class ExtractionService:
             return False
         has_self_marital_anchor = bool(
             re.search(r"(?:我|自己|本人|现在|目前).{0,6}(单身|未婚|离异|已婚)", text)
-            or re.search(r"(?:^|[，,、\s])\d{2}(?:年|后)?(?:单身|未婚|离异|已婚)", text)
+            or re.search(r"(?:^|[，,、\s]|就是)\d{2}(?:年|后)?(?:单身|未婚|离异|已婚)", text)
         )
         has_preference_marital = ExtractionService._looks_like_partner_preference_marital_context(text)
         has_self_profile_payload = bool(
@@ -2340,6 +2987,82 @@ class ExtractionService:
                 "all_fields": []
             }
 
+        linked_education = self._extract_linked_self_partner_education_value(user_message)
+        if linked_education:
+            if not str(extracted_data.get("education") or "").strip():
+                extracted_data["education"] = linked_education
+                extraction_meta["education"] = {
+                    "scope": "self",
+                    "source": "linked_phrase_rule",
+                    "source_text": user_message,
+                    "source_span": f"一样{linked_education}",
+                    "confidence": 0.78,
+                    "value": linked_education,
+                }
+            if not str(extracted_data.get("partner_pref_education") or "").strip():
+                normalized_linked_pref = self._normalize_partner_preference_education_value(linked_education)
+                extracted_data["partner_pref_education"] = normalized_linked_pref
+                extraction_meta["partner_pref_education"] = {
+                    "scope": "partner",
+                    "source": "linked_phrase_rule",
+                    "source_text": user_message,
+                    "source_span": f"一样{linked_education}",
+                    "confidence": 0.82,
+                    "derived_from": "linked_self_partner_education_phrase",
+                    "value": normalized_linked_pref,
+                }
+
+        partner_requirement_value = str(extracted_data.get("partner_requirement") or "").strip()
+        if partner_requirement_value:
+            hydrated_partner_subslots = self._extract_partner_preference_subslots(partner_requirement_value)
+            if hydrated_partner_subslots:
+                partner_meta = dict(extraction_meta.get("partner_requirement", {}) or {})
+                partner_scope = str(partner_meta.get("scope", "") or "partner").strip() or "partner"
+                partner_source = str(partner_meta.get("source", "") or "derived").strip() or "derived"
+                partner_source_text = str(partner_meta.get("source_text", "") or partner_requirement_value).strip() or partner_requirement_value
+                partner_source_span = str(partner_meta.get("source_span", "") or partner_requirement_value).strip() or partner_requirement_value
+                partner_confidence = float(partner_meta.get("confidence", 0.85) or 0.85)
+                for subfield, subvalue in hydrated_partner_subslots.items():
+                    clean_subvalue = str(subvalue or "").strip()
+                    if not clean_subvalue or str(extracted_data.get(subfield) or "").strip():
+                        continue
+                    extracted_data[subfield] = clean_subvalue
+                    extraction_meta[subfield] = {
+                        "scope": "partner" if partner_scope == "partner" else partner_scope,
+                        "source": "partner_requirement_subslot_derived",
+                        "source_text": partner_source_text,
+                        "source_span": partner_source_span,
+                        "confidence": partner_confidence,
+                        "derived_from": "partner_requirement",
+                        "value": clean_subvalue,
+                    }
+
+        partner_requirement_from_subslots_only = not partner_requirement_value
+        composed_partner_requirement = self._maybe_compose_partner_requirement_from_structured_inputs(
+            extracted_data=extracted_data,
+            user_profile=user_profile,
+            user_message=user_message,
+        )
+        if composed_partner_requirement:
+            extracted_data["partner_requirement"] = composed_partner_requirement
+            partner_meta = dict(extraction_meta.get("partner_requirement", {}) or {})
+            extraction_meta["partner_requirement"] = {
+                **partner_meta,
+                "scope": str(partner_meta.get("scope", "") or "partner").strip() or "partner",
+                "source": (
+                    "partner_requirement_structured_compose"
+                    if partner_requirement_from_subslots_only
+                    else str(partner_meta.get("source", "") or "").strip()
+                )
+                or "partner_requirement_structured_compose",
+                "source_text": str(partner_meta.get("source_text", "") or user_message or composed_partner_requirement).strip()
+                or composed_partner_requirement,
+                "source_span": str(partner_meta.get("source_span", "") or composed_partner_requirement).strip()
+                or composed_partner_requirement,
+                "confidence": float(partner_meta.get("confidence", 0.85) or 0.85),
+                "value": composed_partner_requirement,
+            }
+
         # 从用户原始输入提取“可判定为合法/非法”的数字序列，
         # 用于拦截“超长号码被模型截断成11位误收集”问题。
         valid_phone_candidates = set()
@@ -2370,10 +3093,12 @@ class ExtractionService:
                 # 字段名映射：中文字段名 -> 英文字段名
                 mapped_field = self.FIELD_MAPPING.get(clean_field_name, clean_field_name)
                 value = normalized_value
+                current_value = getattr(user_profile, mapped_field, None)
+
                 if mapped_field == "occupation":
                     value = self._normalize_occupation_value(value)
                     if value is None:
-                        logger.info("[提取保护] occupation 归一化后为空，跳过职业更新")
+                        logger.debug("[提取保护] occupation 归一化后为空，跳过职业更新")
                         continue
                 elif mapped_field == "education":
                     normalized_education = self._normalize_education_value(value)
@@ -2384,7 +3109,7 @@ class ExtractionService:
                 field_scope = str(field_meta.get("scope", "") or "mixed").strip() or "mixed"
 
                 if mapped_field in self._SELF_PROFILE_FIELDS and field_scope in {"partner", "faq", "contact"}:
-                    logger.info("[提取保护] %s 命中非 self scope=%s，跳过主档写入", mapped_field, field_scope)
+                    logger.debug("[提取保护] %s 命中非 self scope=%s，跳过主档写入", mapped_field, field_scope)
                     continue
 
                 if self._is_low_quality_self_field_value(
@@ -2393,7 +3118,7 @@ class ExtractionService:
                     user_message=user_message,
                     scope=field_scope,
                 ):
-                    logger.info("[提取保护] %s 命中低质量值门禁，跳过主档写入: %s", mapped_field, value)
+                    logger.debug("[提取保护] %s 命中低质量值门禁，跳过主档写入: %s", mapped_field, value)
                     continue
 
                 if not self.should_accept_numeric_field(
@@ -2401,7 +3126,7 @@ class ExtractionService:
                     user_message=user_message,
                     value=value,
                 ):
-                    logger.info("[提取保护] 数字语义角色不匹配，跳过 %s 写入: %s", mapped_field, value)
+                    logger.debug("[提取保护] 数字语义角色不匹配，跳过 %s 写入: %s", mapped_field, value)
                     continue
 
                 # 兼容 AI 把联系方式统一提取为 contact 的场景：
@@ -2458,17 +3183,17 @@ class ExtractionService:
                         self._message_looks_like_contact_attempt(user_message)
                         and not self._message_has_explicit_age_semantics(user_message)
                     ):
-                        logger.info("[提取保护] 联系方式语境命中，跳过 age 写入: %s", value)
+                        logger.debug("[提取保护] 联系方式语境命中，跳过 age 写入: %s", value)
                         continue
                     if self._looks_like_partner_age_range_expression(user_message):
-                        logger.info("[提取保护] 择偶年龄范围语境命中，跳过 age 下限短路参与: %s", value)
+                        logger.debug("[提取保护] 择偶年龄范围语境命中，跳过 age 下限短路参与: %s", value)
                         # 这里不跳过 age 正常落库，只禁止后面的 under-limit 短路。
                         pass
                     if (
                         self._looks_like_income_context_message(user_message)
                         and not self._message_has_explicit_age_semantics(user_message)
                     ):
-                        logger.info("[提取保护] 收入语境命中，跳过 age 写入/短路参与: %s", value)
+                        logger.debug("[提取保护] 收入语境命中，跳过 age 写入/短路参与: %s", value)
                         continue
 
                 # 年龄限制检查：用户必须年满24岁
@@ -2622,6 +3347,13 @@ class ExtractionService:
                         r"(?:\s*[，,、 ]\s*(?:\d{2}年|\d{2}后|\d{2}岁|19\d{2}年|20\d{2}年).*)?$",
                         user_message or "",
                     )
+                    occupation_gender_self_intro = re.search(
+                        r"(?:^|[，,、 ])(?:在编)?(男教师|女教师|男老师|女老师)(?:$|[，,。！？!? ])",
+                        user_message or "",
+                    ) or re.search(
+                        r"(?:^|[，,、 ])(?:在编)(男|女)教师(?:$|[，,。！？!? ])",
+                        user_message or "",
+                    )
                     if confirmation_context_sex and contextual_embedded_sex:
                         explicit_self_sex = True
                         raw = contextual_embedded_sex.group(1)
@@ -2633,15 +3365,39 @@ class ExtractionService:
                     if confirmation_context_sex and self._is_affirmative_confirmation_answer(user_message):
                         explicit_self_sex = True
                         value = confirmation_context_sex
+                    if occupation_gender_self_intro:
+                        explicit_self_sex = True
+                        raw = occupation_gender_self_intro.group(1)
+                        value = "男" if "男" in raw else "女"
                     if not explicit_self_sex and self._looks_like_mixed_self_intro_with_gender_preference(user_message):
                         explicit_self_sex = True
                     if not explicit_self_sex:
-                        logger.info("[提取保护] sex 仅允许用户自述写入，本轮跳过 sex 更新")
+                        logger.debug("[提取保护] sex 仅允许用户自述写入，本轮跳过 sex 更新")
                         continue
 
+                inferred_self_intro_sex: Optional[str] = None
+
                 if mapped_field == "occupation":
-                    explicit_self_occupation = self._has_explicit_self_update_signal("occupation", user_message)
-                    has_preference_signal = bool(self._extract_partner_requirement_from_user_message(user_message))
+                    occupation_gender_self_intro = re.search(
+                        r"(?:在编)?(男教师|女教师|男老师|女老师)",
+                        user_message or "",
+                    ) or re.search(
+                        r"(?:在编)?(男|女)教师",
+                        user_message or "",
+                    )
+                    if occupation_gender_self_intro:
+                        raw = occupation_gender_self_intro.group(1)
+                        inferred_self_intro_sex = "男" if "男" in raw else "女"
+                    explicit_self_occupation = (
+                        self._has_explicit_self_update_signal("occupation", user_message)
+                        or bool(occupation_gender_self_intro)
+                    )
+                    has_preference_signal = bool(
+                        self._resolve_partner_requirement_from_message(
+                            user_message,
+                            allow_legacy_fallback=False,
+                        )
+                    )
                     mixed_self_intro_with_occupation_preference = self._looks_like_mixed_self_intro_with_occupation_preference(
                         user_message
                     )
@@ -2649,7 +3405,7 @@ class ExtractionService:
                         (has_preference_signal or self._looks_like_partner_requirement_content(value))
                         and not mixed_self_intro_with_occupation_preference
                     ):
-                        logger.info("[提取保护] occupation 命中择偶偏好语境，本轮跳过职业更新")
+                        logger.debug("[提取保护] occupation 命中择偶偏好语境，本轮跳过职业更新")
                         continue
 
                 if mapped_field == "location":
@@ -2661,11 +3417,14 @@ class ExtractionService:
                         self._looks_like_partner_preference_location_context(user_message)
                         and not mixed_self_intro_with_location_preference
                     ):
-                        logger.info("[提取保护] location 命中择偶偏好语境，本轮跳过所在地更新")
+                        logger.debug("[提取保护] location 命中择偶偏好语境，本轮跳过所在地更新")
                         continue
 
                 if mapped_field == "education":
-                    explicit_self_education = self._has_explicit_self_update_signal("education", user_message)
+                    explicit_self_education = (
+                        self._has_explicit_self_update_signal("education", user_message)
+                        or bool(self._extract_linked_self_partner_education_value(user_message))
+                    )
                     mixed_self_intro_with_education_preference = (
                         self._looks_like_mixed_self_intro_with_education_preference(user_message)
                         or self._looks_like_profile_led_self_intro_with_education(user_message)
@@ -2675,7 +3434,7 @@ class ExtractionService:
                         and self._looks_like_partner_preference_education_context(user_message)
                         and not mixed_self_intro_with_education_preference
                     ):
-                        logger.info("[提取保护] education 命中择偶学历语境，本轮跳过学历更新")
+                        logger.debug("[提取保护] education 命中择偶学历语境，本轮跳过学历更新")
                         continue
 
                 if mapped_field == "marital_status":
@@ -2688,10 +3447,13 @@ class ExtractionService:
                         and self._looks_like_partner_preference_marital_context(user_message)
                         and not mixed_self_intro_with_marital_preference
                     ):
-                        logger.info("[提取保护] marital_status 命中择偶婚况语境，本轮跳过婚况更新")
+                        logger.debug("[提取保护] marital_status 命中择偶婚况语境，本轮跳过婚况更新")
                         continue
 
                 if mapped_field == "monthly_income":
+                    merged_income = self._merge_income_value_and_unit(current_value, value)
+                    if merged_income:
+                        value = merged_income
                     explicit_self_income = self._has_explicit_self_income_signal(user_message)
                     mixed_self_intro_with_income_preference = self._looks_like_mixed_self_intro_with_income_preference(
                         user_message
@@ -2701,18 +3463,25 @@ class ExtractionService:
                         and self._looks_like_partner_preference_income_context(user_message)
                         and not mixed_self_intro_with_income_preference
                     ):
-                        logger.info("[提取保护] monthly_income 命中择偶收入语境，本轮跳过收入更新")
+                        logger.debug("[提取保护] monthly_income 命中择偶收入语境，本轮跳过收入更新")
                         continue
 
                 is_collected = user_profile.collection_progress.get(mapped_field, False)
-                current_value = getattr(user_profile, mapped_field, None)
 
                 # 特殊处理：择偶要求字段需要累积而不是覆盖
                 if mapped_field == "partner_requirement":
-                    user_message_preferred_value = self._extract_partner_requirement_from_user_message(user_message)
+                    partner_requirement_source = str(field_meta.get("source", "") or "").strip()
+                    user_message_preferred_value = self._resolve_partner_requirement_from_message(
+                        user_message,
+                        allow_legacy_fallback=True,
+                        prefer_structured=True,
+                    )
                     raw_model_value = str(value or "").strip()
                     model_value = self._remove_unspoken_inferred_partner_requirement_content(raw_model_value, user_message)
-                    if user_message_preferred_value:
+                    correction_like_turn = self._looks_like_partner_requirement_correction_message(user_message)
+                    if partner_requirement_source == "partner_requirement_structured_compose":
+                        value = raw_model_value
+                    elif user_message_preferred_value:
                         if not model_value:
                             value = user_message_preferred_value
                         elif len(user_message_preferred_value) > len(model_value):
@@ -2723,20 +3492,22 @@ class ExtractionService:
                                 clean_part = self._normalize_partner_requirement_part(part)
                                 if self._should_skip_partner_requirement_part(clean_part, user_message, extracted_data):
                                     continue
-                                if clean_part and not any(
+                                preferred_part = self._preferred_partner_requirement_surface(part, clean_part)
+                                if preferred_part and not any(
                                     clean_part in existing or existing in clean_part
                                     for existing in merged_parts
                                 ):
-                                    merged_parts.append(clean_part)
+                                    merged_parts.append(preferred_part)
                             for part in re.split(r"[，,、]+", user_message_preferred_value):
                                 clean_part = self._normalize_partner_requirement_part(part)
                                 if self._should_skip_partner_requirement_part(clean_part, user_message, extracted_data):
                                     continue
-                                if clean_part and not any(
+                                preferred_part = self._preferred_partner_requirement_surface(part, clean_part)
+                                if preferred_part and not any(
                                     clean_part in existing or existing in clean_part
                                     for existing in merged_parts
                                 ):
-                                    merged_parts.append(clean_part)
+                                    merged_parts.append(preferred_part)
                             value = "，".join(merged_parts)
                     else:
                         value = model_value
@@ -2752,29 +3523,37 @@ class ExtractionService:
                             continue
 
                     if current_value:
-                        # 已有旧值，需要累积追加
-                        # 检查新值是否已经存在于旧值中（去重）
-                        existing_requirements = [r.strip() for r in current_value.split(',')]
+                        if correction_like_turn:
+                            logger.info("[择偶要求] 纠正语境命中，使用本轮新值覆盖旧值")
+                        elif partner_requirement_source == "partner_requirement_structured_compose":
+                            logger.debug("[择偶要求] 结构化 compose 已包含旧尾巴，直接使用重组结果覆盖展示字段")
+                        else:
+                            # 已有旧值，需要累积追加
+                            # 检查新值是否已经存在于旧值中（去重）
+                            existing_requirements = [r.strip() for r in current_value.split(',')]
 
-                        # 规范化新值用于比较
-                        normalized_new = value.strip()
-                        is_duplicate = False
-                        for existing in existing_requirements:
-                            # 检查是否重复（包含关系）
-                            if normalized_new in existing or existing in normalized_new:
-                                is_duplicate = True
-                                break
+                            # 规范化新值用于比较
+                            normalized_new = value.strip()
+                            is_duplicate = False
+                            for existing in existing_requirements:
+                                # 检查是否重复（包含关系）
+                                if normalized_new in existing or existing in normalized_new:
+                                    is_duplicate = True
+                                    break
 
-                        if is_duplicate:
-                            logger.debug(f"[择偶要求] 跳过重复值")
-                            continue
+                            if is_duplicate:
+                                logger.debug(f"[择偶要求] 跳过重复值")
+                                continue
 
-                        # 追加新值
-                        new_value = f"{current_value},{value}"
-                        logger.debug(f"[择偶要求] 累积: +{value}")
-                        value = new_value
+                            # 追加新值
+                            new_value = f"{current_value},{value}"
+                            logger.debug(f"[择偶要求] 累积: +{value}")
+                            value = new_value
 
-                    normalized_requirement = self._extract_partner_requirement_from_user_message(str(value or ""))
+                    normalized_requirement = self._resolve_partner_requirement_from_message(
+                        str(value or ""),
+                        allow_legacy_fallback=True,
+                    )
                     raw_gender_preference = self._is_gender_preference_like_partner_requirement(raw_model_value)
                     user_gender_preference = self._extract_partner_gender_preference(user_message)
                     raw_requirement_payload = self._remove_unspoken_inferred_partner_requirement_content(
@@ -2784,6 +3563,46 @@ class ExtractionService:
                     raw_requirement_has_rich_content = self._looks_like_partner_requirement_content(
                         raw_requirement_payload,
                     )
+                    if normalized_requirement and raw_requirement_has_rich_content:
+                        raw_parts = [
+                            str(part or "").strip()
+                            for part in re.split(r"[，,、]+", str(raw_requirement_payload or "").strip())
+                            if str(part or "").strip()
+                        ]
+                        normalized_parts = [
+                            str(part or "").strip()
+                            for part in re.split(r"[，,、]+", str(normalized_requirement or "").strip())
+                            if str(part or "").strip()
+                        ]
+                        if len(raw_parts) <= 1 and len(normalized_parts) == 1:
+                            value = normalized_requirement
+                        else:
+                            merged_parts = []
+                            for source_value, prefer_raw_surface in (
+                                (raw_requirement_payload, True),
+                                (normalized_requirement, False),
+                            ):
+                                for part in re.split(r"[，,、]+", str(source_value or "").strip()):
+                                    clean_part = self._normalize_partner_requirement_part(part) or str(part or "").strip()
+                                    if not clean_part:
+                                        continue
+                                    if self._should_skip_partner_requirement_part(clean_part, user_message, extracted_data):
+                                        continue
+                                    preferred_part = (
+                                        str(part or "").strip()
+                                        if prefer_raw_surface
+                                        else self._preferred_partner_requirement_surface(part, clean_part)
+                                    )
+                                    if preferred_part and not any(
+                                        clean_part in (self._normalize_partner_requirement_part(existing) or existing)
+                                        or (self._normalize_partner_requirement_part(existing) or existing) in clean_part
+                                        for existing in merged_parts
+                                    ):
+                                        merged_parts.append(preferred_part)
+                            if merged_parts:
+                                value = "，".join(merged_parts)
+                    elif normalized_requirement:
+                        value = normalized_requirement
                     inferred_partner_gender = (
                         user_gender_preference
                         or ("男" if "男" in raw_model_value else "女" if "女" in raw_model_value else None)
@@ -2804,51 +3623,8 @@ class ExtractionService:
                         normalized_requirement = raw_requirement_payload
                         value = raw_requirement_payload
                     if not normalized_requirement and raw_gender_preference:
-                        logger.info("[提取保护] partner_requirement 命中纯性别偏好，改写入 partner_gender_preference")
+                        logger.debug("[提取保护] partner_requirement 命中纯性别偏好，改写入 partner_gender_preference")
                         continue
-
-                    (
-                        inferred_occupation_candidate,
-                        inferred_occupation_confidence,
-                        inferred_occupation_reason,
-                    ) = self._infer_occupation_candidate_from_partner_requirement(
-                        str(value or "") or raw_model_value
-                    )
-                    explicit_occupation_in_turn = bool(
-                        extracted_data.get("occupation") and str(extracted_data.get("occupation") or "").strip()
-                    )
-                    if (
-                        inferred_occupation_candidate
-                        and not explicit_occupation_in_turn
-                        and not getattr(user_profile, "occupation", None)
-                        and inferred_occupation_candidate != getattr(user_profile, "occupation_inference_candidate", None)
-                    ):
-                        candidate_updated = await self.user_service.update_user_profile_field(
-                            account_id,
-                            "occupation_inference_candidate",
-                            inferred_occupation_candidate,
-                        )
-                        if candidate_updated:
-                            user_profile.occupation_inference_candidate = inferred_occupation_candidate
-                            user_profile.set_extraction_evidence(
-                                field_name="occupation_inference_candidate",
-                                value=inferred_occupation_candidate,
-                                source_text=user_message or raw_model_value or str(value or ""),
-                                turn_id=turn_id,
-                                confidence=inferred_occupation_confidence or 0.66,
-                                source="partner_requirement_inference",
-                                reason=inferred_occupation_reason or None,
-                            )
-                            logger.info(
-                                "[occupation_inference] account_id=%s candidate=%s confidence=%.2f reason=%s source=partner_requirement_inference partner_requirement=%s explicit_occupation_in_turn=%s",
-                                account_id,
-                                inferred_occupation_candidate,
-                                inferred_occupation_confidence or 0.66,
-                                inferred_occupation_reason or "-",
-                                str(value or "") or raw_model_value,
-                                explicit_occupation_in_turn,
-                            )
-                            await self.user_service.save_user_profile(account_id, user_profile)
 
                 current_value_is_high_quality = self._is_high_quality_field_value(mapped_field, current_value)
                 new_value_is_high_quality = self._is_high_quality_field_value(
@@ -2919,6 +3695,8 @@ class ExtractionService:
                             for subfield, subvalue in self._extract_partner_preference_subslots(value).items():
                                 if not str(subvalue or "").strip():
                                     continue
+                                if str(extracted_data.get(subfield) or "").strip():
+                                    continue
                                 subfield_success = await self.user_service.update_user_profile_field(
                                     account_id,
                                     subfield,
@@ -2927,6 +3705,19 @@ class ExtractionService:
                                 if subfield_success:
                                     collected_fields.append({"field": subfield, "value": subvalue})
                                     collected_field_names.append(subfield)
+                        if (
+                            mapped_field == "occupation"
+                            and inferred_self_intro_sex
+                            and not getattr(user_profile, "sex", None)
+                        ):
+                            sex_success = await self.user_service.update_user_profile_field(
+                                account_id,
+                                "sex",
+                                inferred_self_intro_sex,
+                            )
+                            if sex_success:
+                                collected_fields.append({"field": "sex", "value": inferred_self_intro_sex})
+                                collected_field_names.append("sex")
 
         # 更新 profile
         user_profile = await self.user_service.get_user_profile(account_id)
@@ -3034,8 +3825,11 @@ class ExtractionService:
             if user_profile.partner_gender_preference:
                 gender_label = "男生" if user_profile.partner_gender_preference == "男" else "女生" if user_profile.partner_gender_preference == "女" else str(user_profile.partner_gender_preference)
                 parts.append(f"偏好性别:{gender_label}")
-            if user_profile.partner_requirement:
-                parts.append(f"要求:{user_profile.partner_requirement}")
+            partner_requirement_text = str(user_profile.partner_requirement or "").strip()
+            if not partner_requirement_text:
+                partner_requirement_text = self._compose_structured_partner_preference_text(user_profile)
+            if partner_requirement_text:
+                parts.append(f"要求:{partner_requirement_text}")
 
             # 使用新的联系方式状态显示
             contact_status = user_profile.get_contact_status()

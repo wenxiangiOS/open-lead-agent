@@ -168,7 +168,16 @@ class ConversationEndingService:
             contact_flow_complete = contact_service.is_contact_complete(profile)
             profile_complete_or_exhausted = policy.is_coverage_complete(profile)
             collected_this_turn = True if collection_result is None else bool(collection_result.get("collected"))
-            return has_contact and contact_flow_complete and profile_complete_or_exhausted and collected_this_turn
+            finalized_single_contact_path = bool(
+                (profile.rejected_phone and (profile.wechat and profile.wechat_collected) and not (profile.phone and profile.phone_collected))
+                or (profile.rejected_wechat and (profile.phone and profile.phone_collected) and not (profile.wechat and profile.wechat_collected))
+            )
+            return (
+                has_contact
+                and contact_flow_complete
+                and profile_complete_or_exhausted
+                and (collected_this_turn or finalized_single_contact_path)
+            )
 
         elif scenario_name == 'both_rejected':
             # 双方都被拒绝，且没有任何真实联系方式留存

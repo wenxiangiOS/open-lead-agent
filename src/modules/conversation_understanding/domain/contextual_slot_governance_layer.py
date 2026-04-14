@@ -58,6 +58,12 @@ class ContextualSlotGovernanceLayer:
             confidence=result.confidence,
             notes=list(result.notes or []),
         )
+        semantic_frame = getattr(result, "semantic_frame", None)
+        if semantic_frame is not None:
+            setattr(governed, "semantic_frame", semantic_frame)
+        persistence_plan = getattr(result, "persistence_plan", None)
+        if persistence_plan is not None:
+            setattr(governed, "persistence_plan", persistence_plan)
 
         message = str(turn_input.user_message or "").strip()
         last_response = str(turn_input.last_response or "").strip()
@@ -162,7 +168,7 @@ class ContextualSlotGovernanceLayer:
             governed.pop("partner_gender_preference", None)
 
         if explicit_corrections:
-            logger.info(
+            logger.debug(
                 "[提取保护] 显式纠正命中，优先放行字段: %s",
                 ",".join(sorted(explicit_corrections)),
             )
@@ -184,7 +190,7 @@ class ContextualSlotGovernanceLayer:
                 if field == "age":
                     governed.pop("age_label", None)
             if removed_numeric_fields:
-                logger.info(
+                logger.debug(
                     "[提取保护] contextual governance 通用数字语义治理命中，移除字段=%s",
                     ",".join(removed_numeric_fields),
                 )
@@ -217,6 +223,54 @@ class ContextualSlotGovernanceLayer:
         chat_service = getattr(self.semantic_service, "chat_service", None)
         return getattr(chat_service, "extraction_service", None)
 
+    @staticmethod
+    def _effective_resolved_slots(result: TurnUnderstandingResult) -> dict[str, str]:
+        persistence_plan = getattr(result, "persistence_plan", None)
+        resolved_slots = dict(result.resolved_slots or {})
+        if persistence_plan is not None:
+            resolved_slots = {}
+        accepted_fields = getattr(persistence_plan, "accepted_fields", None) or []
+        for field in accepted_fields:
+            field_name = str(getattr(field, "field", "") or "").strip()
+            if not field_name:
+                continue
+            resolved_slots[field_name] = str(getattr(field, "normalized_value", "") or "")
+        return resolved_slots
+
+    @staticmethod
+    def _sync_persistence_plan_field(result: TurnUnderstandingResult, field_name: str, value: str, source_text: str) -> None:
+        persistence_plan = getattr(result, "persistence_plan", None)
+        if persistence_plan is None:
+            return
+        accepted_fields = list(getattr(persistence_plan, "accepted_fields", []) or [])
+        accepted_fields = [item for item in accepted_fields if str(getattr(item, "field", "") or "").strip() != field_name]
+        from src.modules.conversation_understanding.domain.models import AcceptedField
+
+        accepted_fields.append(
+            AcceptedField(
+                field=field_name,
+                value=value,
+                normalized_value=value,
+                scope="self",
+                evidence_text=source_text,
+                confidence=0.9,
+                acceptance_reason="contextual_governance",
+                update_action="accept_as_new",
+            )
+        )
+        persistence_plan.accepted_fields = accepted_fields
+
+    @staticmethod
+    def _remove_persistence_plan_field(result: TurnUnderstandingResult, field_name: str) -> None:
+        persistence_plan = getattr(result, "persistence_plan", None)
+        if persistence_plan is None:
+            return
+        persistence_plan.accepted_fields = [
+            item
+            for item in list(getattr(persistence_plan, "accepted_fields", []) or [])
+            if str(getattr(item, "field", "") or "").strip() != field_name
+        ]
+
     def _apply_contact_context_suppression(
         self,
         *,
@@ -244,7 +298,7 @@ class ContextualSlotGovernanceLayer:
         last_response: str,
         source_text: str,
     ) -> None:
-        if "sex" in result.resolved_slots:
+        if "sex" in self._effective_resolved_slots(result):
             return
         confirmation_context_sex = self.semantic_service._extract_confirmed_sex_candidate_from_context(last_response)  # noqa: SLF001
         sex_question_context = is_sex_confirmation_context(
@@ -263,6 +317,7 @@ class ContextualSlotGovernanceLayer:
         sex = "男" if "男" in embedded.group(1) else "女"
         result.resolved_slots["sex"] = sex
         result.slot_candidates["sex"] = self._build_slot_candidate(value=sex, source_text=source_text)
+        self._sync_persistence_plan_field(result, "sex", sex, source_text)
 
     def _apply_field_conflict_resolution(
         self,
@@ -273,7 +328,8 @@ class ContextualSlotGovernanceLayer:
         source_text: str,
         last_response: str,
     ) -> None:
-        occupation_value = str(result.resolved_slots.get("occupation") or "").strip()
+        resolved_slots = self._effective_resolved_slots(result)
+        occupation_value = str(resolved_slots.get("occupation") or "").strip()
         if occupation_value in {"单身", "单身呢", "未婚", "离异", "已婚"}:
             self._block_field(result, "occupation", "looks_like_marital_status_not_occupation", source_text)
 
@@ -284,8 +340,8 @@ class ContextualSlotGovernanceLayer:
         )
         if (
             sex_confirmation_context
-            and "sex" in result.resolved_slots
-            and "partner_gender_preference" in result.resolved_slots
+            and "sex" in resolved_slots
+            and "partner_gender_preference" in resolved_slots
             and not re.search(r"(找|想找|喜欢|偏好|偏向).{0,4}(男生|女生|男的|女的|男|女)", message)
         ):
             self._block_field(
@@ -298,12 +354,12 @@ class ContextualSlotGovernanceLayer:
         extraction_service = self._get_extraction_service()
         if extraction_service is not None:
             for field in ("age", "height", "weight", "monthly_income", "phone", "wechat"):
-                if field not in result.resolved_slots:
+                if field not in resolved_slots:
                     continue
                 if extraction_service.should_accept_numeric_field(
                     mapped_field=field,
                     user_message=message,
-                    value=result.resolved_slots.get(field),
+                    value=resolved_slots.get(field),
                 ):
                     continue
                 self._block_field(result, field, "numeric_semantic_role_mismatch", source_text)
@@ -317,10 +373,14 @@ class ContextualSlotGovernanceLayer:
         reason: str,
         source_text: str,
     ) -> None:
+        effective_value = self._effective_resolved_slots(result).get(field_name)
         value = result.resolved_slots.pop(field_name, None)
         result.slot_candidates.pop(field_name, None)
+        self._remove_persistence_plan_field(result, field_name)
         if value is None:
-            return
+            if effective_value is None:
+                return
+            value = effective_value
         result.blocked_slots[field_name] = BlockedSlot(
             value=str(value).strip(),
             reason=reason,

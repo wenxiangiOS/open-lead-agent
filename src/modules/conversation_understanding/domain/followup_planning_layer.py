@@ -34,6 +34,7 @@ class FollowupPlanningLayer:
         user_message: str = "",
         message_count: int = 0,
         allow_medium_target: bool = True,
+        understanding_result: Optional[TurnUnderstandingResult] = None,
     ) -> Optional[str]:
         if self.policy is None:
             return None
@@ -50,13 +51,20 @@ class FollowupPlanningLayer:
             main_target=main_target,
             user_message=user_message,
             message_count=message_count,
+            understanding_result=understanding_result,
         ):
             return None
         if message_count and message_count <= 4:
-            if not self.policy._message_contains_profile_context(user_message):  # noqa: SLF001
+            if not self.policy._has_profile_context_signal(  # noqa: SLF001
+                user_message,
+                understanding_result=understanding_result,
+            ):
                 return None
 
-        cue_order = self.policy._extract_message_field_cue_order(user_message)  # noqa: SLF001
+        cue_order = self.policy._get_profile_context_cue_order(  # noqa: SLF001
+            user_message,
+            understanding_result=understanding_result,
+        )
         best_field: Optional[str] = None
         best_score = -1
         for field in ("monthly_income", "marital_status", "partner_requirement"):
@@ -83,6 +91,7 @@ class FollowupPlanningLayer:
         allow_medium_target: bool,
         user_message: str = "",
         message_count: int = 0,
+        understanding_result: Optional[TurnUnderstandingResult] = None,
     ) -> FollowupFieldPlan:
         main_target = self.choose_main_target(
             profile=profile,
@@ -90,6 +99,7 @@ class FollowupPlanningLayer:
             allow_contact_target=allow_contact_target,
             user_message=user_message,
             message_count=message_count,
+            understanding_result=understanding_result,
         )
         side_target = self.choose_side_target(
             profile=profile,
@@ -97,6 +107,7 @@ class FollowupPlanningLayer:
             user_message=user_message,
             message_count=message_count,
             allow_medium_target=allow_medium_target,
+            understanding_result=understanding_result,
         )
         return FollowupFieldPlan(main_target=main_target, side_target=side_target)
 
@@ -108,6 +119,7 @@ class FollowupPlanningLayer:
         allow_contact_target: bool,
         user_message: str = "",
         message_count: int = 0,
+        understanding_result: Optional[TurnUnderstandingResult] = None,
     ) -> Optional[str]:
         if self.policy is None:
             return None
@@ -116,6 +128,7 @@ class FollowupPlanningLayer:
             profile,
             user_message=user_message,
             message_count=message_count,
+            understanding_result=understanding_result,
         )
         if contextual_core_target and self.policy.can_actively_ask(profile, contextual_core_target):
             return contextual_core_target
@@ -153,17 +166,31 @@ class FollowupPlanningLayer:
             candidate_profiles.append(("decision_profile", decision_profile))
         candidate_profiles.append(("user_profile", user_profile))
 
-        for label, profile in candidate_profiles:
-            explicit_target = str(getattr(profile, "resume_profile_target", "") or "").strip()
-            if explicit_target and explicit_target != "contact" and not is_field_covered(profile, explicit_target):
-                return ResumeAfterFaqPlan(field=explicit_target, source=f"{label}.resume_profile_target")
+        def _needs_resume(profile: UserProfile, field: Optional[str]) -> bool:
+            candidate = str(field or "").strip()
+            if not candidate or candidate == "contact":
+                return False
+            medium_fields = set(getattr(self.policy, "MEDIUM_FIELDS", []) or []) if self.policy is not None else {
+                "monthly_income",
+                "partner_requirement",
+            }
+            if candidate in medium_fields:
+                if self.policy is not None:
+                    return not self.policy.is_collected(profile, candidate)
+                return not bool(str(getattr(profile, candidate, "") or "").strip())
+            return not is_field_covered(profile, candidate)
 
+        for label, profile in candidate_profiles:
             interrupted = resolve_interrupted_followup_field(
                 profile,
                 last_response=last_response,
                 fallback_user_message=user_message,
             )
-            if interrupted and interrupted != "contact" and not is_field_covered(profile, interrupted):
+            if _needs_resume(profile, interrupted):
                 return ResumeAfterFaqPlan(field=interrupted, source=f"{label}.last_asked_field")
+
+            explicit_target = str(getattr(profile, "resume_profile_target", "") or "").strip()
+            if _needs_resume(profile, explicit_target):
+                return ResumeAfterFaqPlan(field=explicit_target, source=f"{label}.resume_profile_target")
 
         return ResumeAfterFaqPlan(field=None)

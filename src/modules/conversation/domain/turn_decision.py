@@ -35,6 +35,11 @@ class TurnDecision:
     context_ack_preference: str | None = None
     context_ack_field_ack: str | None = None
     soft_retry_field: str | None = None
+    priority_primary_task: str | None = None
+    priority_level: int = 0
+    priority_reason: str | None = None
+    priority_response_mode: str | None = None
+    priority_suppressed_tasks: list[str] = field(default_factory=list)
 
     def get_context_ack_occupation(self) -> str:
         return str(self.context_ack_occupation or self.context_ack_payload.get("occupation") or "").strip()
@@ -79,4 +84,9 @@ class TurnDecision:
             "context_ack_preference": self.context_ack_preference,
             "context_ack_field_ack": self.context_ack_field_ack,
             "soft_retry_field": self.soft_retry_field,
+            "priority_primary_task": self.priority_primary_task,
+            "priority_level": self.priority_level,
+            "priority_reason": self.priority_reason,
+            "priority_response_mode": self.priority_response_mode,
+            "priority_suppressed_tasks": list(self.priority_suppressed_tasks),
         }
