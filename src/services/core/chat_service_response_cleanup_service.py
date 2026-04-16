@@ -27,6 +27,16 @@ class ChatServiceResponseCleanupService:
 
         text = re.sub(r"^(?:(?:了|啦|呀|呢|哈|啊|哦|嗯)[。．！？!?]\s*)+", "", text).strip()
 
+        text = re.sub(
+            r"^(?:我看你(?:资料|情况|这边资料|这边情况)?[^。！？!?]{0,8}"
+            r"|你这边(?:资料|情况)?[^。！？!?]{0,8}"
+            r"|资料[^。！？!?]{0,8}"
+            r"|情况[^。！？!?]{0,8})"
+            r"(?:和|跟|以及|还有|然后)[。．！？!?]\s*",
+            "",
+            text,
+        ).strip()
+
         sentence_match = re.match(r"^([^。！？!?]{1,4}[。！？!?])\s*(.+)$", text)
         if sentence_match:
             first_sentence = sentence_match.group(1).strip()

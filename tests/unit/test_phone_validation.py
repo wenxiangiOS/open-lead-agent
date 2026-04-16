@@ -127,8 +127,9 @@ class TestContactValidator:
         assert error is None
 
     def test_wechat_format(self):
-        """测试微信号格式（字母开头，6-20字符）"""
+        """测试微信号格式（字母开头，5-20字符）"""
         valid_wechats = [
+            "M2345",  # 5字符
             "abc123",  # 6字符
             "wxid_test123",  # 字母开头+数字
             "test_user-99",  # 含下划线和减号
@@ -140,7 +141,7 @@ class TestContactValidator:
 
         invalid_wechats = [
             "123abc",  # 数字开头
-            "ab1",  # 太短（<6字符）
+            "ab1",  # 太短（<5字符）
             "a" * 21,  # 太长（>20字符）
         ]
         for wechat in invalid_wechats:

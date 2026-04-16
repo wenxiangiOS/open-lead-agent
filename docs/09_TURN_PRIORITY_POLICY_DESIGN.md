@@ -136,6 +136,12 @@
 
 - 当前轮没有更高优先级时，主线继续推进核心资料
 
+补充约束：
+
+- 如果统一理解标记 `turn_mode=dense_intro`，仍归资料主线处理，但本轮 followup 只允许保留 1 个主字段
+- `dense_intro` 轮禁止顺带再挂 side target，避免用户刚给了一大串信息，回复里又继续堆多个问题
+- `dense_intro` 轮不能回头追问已进入 `no_reask_fields` 的字段
+
 ### 3.6 P6 择偶偏好字段
 
 包括：
@@ -230,6 +236,7 @@
    - 是否锁定状态确认
    - 是否阻止切联系方式
    - 是否压制中等字段
+   - 是否因 `turn_mode=dense_intro` 限制为单字段 followup
 3. 字段选择仍可继续复用 `ProfileCollectionPolicy`
 
 边界：

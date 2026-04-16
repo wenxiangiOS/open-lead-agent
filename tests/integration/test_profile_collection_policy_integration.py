@@ -14,6 +14,7 @@
 """
 
 import argparse
+import json
 import os
 import sys
 import uuid
@@ -52,6 +53,93 @@ class FakeAIService:
     def _get_user_message(self, prompt: str) -> str:
         match = re.search(r"【用户消息】(.+?)(?:\n\n|\n【回复后必须附加】)", prompt, re.DOTALL)
         return match.group(1).strip() if match else ""
+
+    def _get_semantic_user_message(self, prompt: str) -> str:
+        match = re.search(r"用户原话：(.+?)(?:\n最近追问字段：|$)", prompt, re.DOTALL)
+        return match.group(1).strip() if match else ""
+
+    def _build_semantic_json(self, user_message: str) -> str:
+        items = []
+
+        def add_item(field: str, scope: str, value: str) -> None:
+            normalized = str(value or "").strip()
+            if not normalized:
+                return
+            items.append({"field": field, "scope": scope, "value": normalized})
+
+        if re.search(r"(我男的|我是男|本人男|男的)", user_message):
+            add_item("sex", "self", "男")
+        if re.search(r"(我女的|我是女|本人女|女的)", user_message):
+            add_item("sex", "self", "女")
+
+        age_match = re.search(r"(?:今年)?(\d{1,2})岁?|今年(\d{1,2})", user_message)
+        if age_match:
+            add_item("age", "self", age_match.group(1) or age_match.group(2))
+
+        for location in ["深圳", "杭州", "广州", "上海", "成都", "苏州"]:
+            if location in user_message:
+                add_item("location", "self", location)
+                break
+
+        for education in ["博士", "硕士", "本科", "大专"]:
+            if education in user_message:
+                add_item("education", "self", education)
+                break
+
+        for occupation in ["产品", "运营", "程序员", "研发", "设计", "老师"]:
+            if occupation in user_message:
+                add_item("occupation", "self", occupation)
+                break
+
+        income_match = re.search(r"(税前|税后)?\s*(\d+(?:\.\d+)?)\s*(k|K|千|w|W|万)", user_message)
+        if income_match:
+            prefix = income_match.group(1) or ""
+            amount = income_match.group(2)
+            unit = income_match.group(3)
+            normalized_unit = "k" if unit.lower() == "k" else unit
+            add_item("monthly_income", "self", f"{prefix}{amount}{normalized_unit}左右")
+        else:
+            income_text_match = re.search(r"((?:税前|税后)?\s*\d+(?:\.\d+)?\s*(?:k|K|千|w|W|万)\s*左右)", user_message)
+            if income_text_match:
+                add_item("monthly_income", "self", income_text_match.group(1))
+
+        if "分居" in user_message:
+            add_item("marital_status", "self", "离异（手续办理中）")
+        elif any(token in user_message for token in ["离异", "离婚"]):
+            add_item("marital_status", "self", "离异")
+        elif any(token in user_message for token in ["单身", "未婚"]):
+            add_item("marital_status", "self", "单身")
+
+        phone_match = re.search(r"(?:电话(?:是)?|手机号(?:是)?|联系方式(?:是)?)\s*([0-9]{8,11})", user_message)
+        if phone_match:
+            add_item("phone", "contact", phone_match.group(1))
+
+        wechat_match = re.search(r"(?:微信(?:号)?(?:是)?|wx(?:是)?)\s*([A-Za-z0-9_]+)", user_message, re.IGNORECASE)
+        if wechat_match:
+            add_item("wechat", "contact", wechat_match.group(1))
+
+        req_bits = []
+        for token in ["温柔点", "温柔", "成熟稳重", "成熟稳重点", "同城", "性格稳定", "情绪稳定"]:
+            if token in user_message and token not in req_bits:
+                req_bits.append(token)
+        if req_bits:
+            add_item("partner_requirement", "partner", "，".join(req_bits))
+
+        scopes = {item["scope"] for item in items}
+        if not items:
+            primary_domain = "profile"
+        elif scopes == {"contact"}:
+            primary_domain = "contact"
+        elif "contact" in scopes and len(scopes) > 1:
+            primary_domain = "mixed"
+        else:
+            primary_domain = "profile"
+
+        return json.dumps(
+            {"primary_domain": primary_domain, "items": items},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
     def _build_extract_block(self, user_message: str) -> str:
         fields = {field: "null" for field in self.EXTRACT_FIELDS}
@@ -121,7 +209,11 @@ class FakeAIService:
         max_tokens: int = 500,
         timeout: float | None = None,
         model_name: str | None = None,
+        **kwargs,
     ) -> str:
+        if "你是信息抽取器。只输出一行 JSON" in system_prompt:
+            return self._build_semantic_json(self._get_semantic_user_message(message))
+
         user_message = self._get_user_message(message)
 
         if any(token in user_message for token in ["收费", "免费", "服务费"]):
@@ -682,7 +774,7 @@ class TestProfileCollectionPolicyIntegration:
             ]
         )
 
-        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "", **kwargs) -> str:
             return next(responses)
 
         monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
@@ -711,7 +803,7 @@ class TestProfileCollectionPolicyIntegration:
             )
         )
 
-        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "", **kwargs) -> str:
             return f"如果你方便的话，我再轻问一句，你月收入大概在哪个区间？\n{self._blank_extract_block()}"
 
         monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
@@ -742,7 +834,7 @@ class TestProfileCollectionPolicyIntegration:
         profile.field_ask_count["monthly_income"] = 1
         self._run(self.user_service.save_user_profile(account_id, profile))
 
-        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "", **kwargs) -> str:
             return (
                 "要是你愿意，留个电话也行。"
                 "你这边对另一半有什么比较在意的点吗？\n"
@@ -784,7 +876,7 @@ class TestProfileCollectionPolicyIntegration:
             )
         )
 
-        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "", **kwargs) -> str:
             return (
                 "如果你方便的话，我再轻问一句，你月收入大概在哪个区间？"
                 "要是你愿意，留个电话也行。\n"
@@ -799,6 +891,49 @@ class TestProfileCollectionPolicyIntegration:
         assert "月收入" not in response
         assert "收入大概" not in response
         assert "另一半" not in response
+
+    def test_passive_phone_collection_resumes_monthly_income_before_wechat(self, monkeypatch):
+        """用户主动留电话后，若月收入仍未覆盖，应先回收入主线，不能继续追微信。"""
+        account_id = f"policy_passive_phone_income_first_{uuid.uuid4().hex[:8]}"
+        self._run(self._reset_user(account_id))
+        self._run(
+            self._seed_profile_fields(
+                account_id,
+                sex="女",
+                age=28,
+                location="深圳",
+                education="本科",
+                occupation="在编教师",
+                marital_status="单身",
+                partner_requirement="同老家在深圳，学历本科及以上，最好深户，有房有车",
+            )
+        )
+        profile = self._run(self.user_service.get_user_profile(account_id))
+        profile.phone = "13526783627"
+        profile.phone_collected = True
+        profile.collection_progress["contact"] = True
+        profile.last_contact_request_type = None
+        self._run(self.user_service.save_user_profile(account_id, profile))
+        self._run(
+            self.chat_service.dialogue_manager.update_recent_responses(
+                account_id,
+                "好的，电话我记下了。",
+            )
+        )
+
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "", **kwargs) -> str:
+            return (
+                "你要是方便，也可以顺手留个微信，后面联系会更顺一点。\n"
+                f"{self._blank_extract_block()}"
+            )
+
+        monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
+
+        response, _ = self._run(self._send_message(account_id, "好的", sex="女"))
+
+        assert any(keyword in response for keyword in ["收入", "月收入", "收入区间"]), response
+        assert "微信" not in response
+        assert "电话" not in response
 
     def test_passive_only_partner_requirement_still_extracts_from_user_message(self):
         """择偶要求进入 PASSIVE_ONLY 后，用户主动表达时仍然要能入档。"""
@@ -870,7 +1005,7 @@ class TestProfileCollectionPolicyIntegration:
             )
         )
 
-        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "", **kwargs) -> str:
             return (
                 "对，刚刚问的是电话。"
                 "如果你方便的话，我再轻问一句，你月收入大概在哪个区间？"
@@ -919,7 +1054,7 @@ class TestProfileCollectionPolicyIntegration:
             )
         )
 
-        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "", **kwargs) -> str:
             return (
                 "你这边对另一半有什么比较在意的点吗？"
                 "要是你愿意，留个电话也行。\n"
@@ -975,7 +1110,7 @@ class TestProfileCollectionPolicyIntegration:
             ]
         )
 
-        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "", **kwargs) -> str:
             return next(scripted_responses)
 
         monkeypatch.setattr(self.chat_service, "_call_ai", _scripted_call_ai)
@@ -1012,7 +1147,7 @@ class TestProfileCollectionPolicyIntegration:
             )
         )
 
-        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "") -> str:
+        async def _scripted_call_ai(_prompt: str, _account_id: str, _user_message: str = "", **kwargs) -> str:
             return (
                 "对，刚刚是从电话转到微信这条。"
                 "你这边对另一半有什么比较在意的点吗？"

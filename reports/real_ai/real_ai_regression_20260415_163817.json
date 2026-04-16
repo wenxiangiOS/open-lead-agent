@@ -1,0 +1,295 @@
+{
+  "started_at": "2026-04-15T16:37:52",
+  "ended_at": "2026-04-15T16:38:17",
+  "scenario_file": "tests/real_ai/scenarios_pending/manual_long_intro_regression.json",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "total_duration_seconds": 25.846,
+    "avg_duration_seconds": 25.846,
+    "max_duration_seconds": 25.846,
+    "token_usage": {
+      "prompt_tokens": 4489,
+      "completion_tokens": 48,
+      "total_tokens": 4537,
+      "call_count": 1
+    },
+    "failure_breakdown": {}
+  },
+  "results": [
+    {
+      "scenario_id": "long_intro_regression_01",
+      "source_file": "tests/real_ai/scenarios_pending/manual_long_intro_regression.json",
+      "category": "manual_long_intro",
+      "tags": [
+        "manual",
+        "long_intro",
+        "critical"
+      ],
+      "description": "94 年深圳南山外贸港硕女生，自我介绍 + 择偶要求 + 微信。",
+      "passed": true,
+      "checks_total": 5,
+      "checks_passed": 5,
+      "failures": [],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+          "assistant_response": "你期待的是同在深圳发展的90后男生，这个要求我记下啦？",
+          "collected_info": {
+            "sex": "女",
+            "last_name": "未留称呼",
+            "age": "94年(32岁)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "深圳南山",
+            "education": "港硕",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "外贸",
+            "occupation_inference_candidate": "无",
+            "contact": "微信: 13426689341",
+            "partner_gender_preference": "未留",
+            "partner_requirement": "期待遇见同在深圳工作发展90后，积极阳光，三观正"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_long_intro_regression_01_cf499f14",
+        "created_at": "2026-04-15T16:37:52.039560",
+        "updated_at": "2026-04-15T16:38:17.761246",
+        "profile_version": 8,
+        "sex": "女",
+        "last_name": null,
+        "age": 32,
+        "age_label": "94年",
+        "pending_birth_year_bucket": null,
+        "birth_year_confirmation_closed": false,
+        "height": null,
+        "weight": null,
+        "location": "深圳南山",
+        "education": "港硕",
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": "外贸",
+        "occupation_inference_candidate": null,
+        "contact": null,
+        "phone": null,
+        "wechat": "13426689341",
+        "partner_requirement": "期待遇见同在深圳工作发展90后，积极阳光，三观正",
+        "partner_gender_preference": null,
+        "partner_pref_location": "深圳",
+        "partner_pref_age": "90后",
+        "partner_pref_industry": null,
+        "partner_pref_age_relation": null,
+        "partner_pref_locality": null,
+        "partner_pref_height": null,
+        "partner_pref_education": null,
+        "partner_pref_personality": null,
+        "partner_pref_income": null,
+        "partner_pref_other": null,
+        "extraction_evidence": {
+          "location": {
+            "value": "深圳南山",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T16:38:17.669860"
+          },
+          "education": {
+            "value": "港硕",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T16:38:17.674599"
+          },
+          "age_label": {
+            "value": "94年",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T16:38:17.678621"
+          },
+          "occupation": {
+            "value": "外贸",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_self_marker",
+            "updated_at": "2026-04-15T16:38:17.682354"
+          },
+          "sex": {
+            "value": "女",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_self_marker",
+            "updated_at": "2026-04-15T16:38:17.686113"
+          },
+          "partner_pref_age": {
+            "value": "90后",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T16:38:17.692283"
+          },
+          "partner_pref_location": {
+            "value": "深圳",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T16:38:17.704358"
+          },
+          "partner_requirement": {
+            "value": "期待遇见同在深圳工作发展90后，积极阳光，三观正",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T16:38:17.713086"
+          }
+        },
+        "collection_progress": {
+          "sex": true,
+          "last_name": false,
+          "age": true,
+          "age_label": true,
+          "height": false,
+          "weight": false,
+          "location": true,
+          "education": true,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": true,
+          "contact": true,
+          "partner_requirement": true,
+          "partner_gender_preference": false,
+          "partner_pref_location": true,
+          "partner_pref_age": true,
+          "partner_pref_industry": false,
+          "partner_pref_age_relation": false,
+          "partner_pref_locality": false,
+          "partner_pref_height": false,
+          "partner_pref_education": false,
+          "partner_pref_personality": false,
+          "partner_pref_income": false,
+          "partner_pref_other": false
+        },
+        "progress_percentage": 85.71,
+        "missing_fields": [
+          "marital_status"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {},
+        "effective_field_ask_count": {},
+        "recent_asked_fields": [],
+        "active_ask_closed_fields": {
+          "partner_requirement": true
+        },
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "divorce_confirmation_pending": false,
+        "pending_sex_confirmation": null,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": true,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "last_contact_request_type": null,
+        "is_hongkong_user": false,
+        "resume_profile_mode": null,
+        "resume_profile_target": null,
+        "last_user_concern_type": null,
+        "field_miss_streak": {},
+        "last_effective_progress": true,
+        "last_asked_field": "marital_status",
+        "last_asked_side_field": null,
+        "last_asked_turn_index": 1,
+        "last_question_state": {
+          "question_intent": "profile_followup",
+          "asked_fields": [
+            "marital_status"
+          ],
+          "side_fields": [],
+          "expected_scope": "self",
+          "allow_mixed_answer": true,
+          "resume_target": null,
+          "source_response": "你期待的是同在深圳发展的90后男生，这个要求我记下啦？"
+        },
+        "last_semantic_summary": {
+          "primary_domain": "profile",
+          "acts": [
+            "provide_profile",
+            "provide_contact",
+            "state_partner_preference"
+          ],
+          "user_questions": [],
+          "observed_fields": [
+            "location",
+            "education",
+            "age",
+            "age_label",
+            "occupation",
+            "sex",
+            "partner_pref_age",
+            "partner_pref_location",
+            "partner_requirement",
+            "wechat"
+          ],
+          "pending_fields": [],
+          "resume_target": "age",
+          "no_reask_fields": [
+            "location",
+            "education",
+            "age",
+            "occupation",
+            "sex",
+            "partner_requirement",
+            "contact"
+          ],
+          "turn_mode": "dense_intro",
+          "soft_profile_summary": "E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单",
+          "partner_summary": "期待遇见同在深圳工作发展90后男生，积极阳光，三观正"
+        },
+        "pending_retry_field": null,
+        "needs_bridge_back": false,
+        "last_side_topic_type": null,
+        "complaint_cooldown_until": null,
+        "recent_semantic_slots": [],
+        "recent_response_openings": [
+          "你期待的是同在深"
+        ],
+        "repair_mode": false,
+        "repair_reason": null,
+        "ask_cooldown_turns": 0,
+        "blocked_ask_intents": [],
+        "non_cooperation_turns": 0,
+        "off_topic_turns": 0,
+        "open_profile_attempts": 0,
+        "last_engagement_mode": "full",
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 25.846
+    }
+  ]
+}

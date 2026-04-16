@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from src.core.exceptions import AIServiceException
 from src.modules.conversation.domain.turn_understanding_models import TurnUnderstandingInput, TurnUnderstandingResult
+from src.modules.conversation.domain.turn_understanding_service import TurnUnderstandingService
 from src.modules.conversation_understanding.domain.ai_semantic_extraction_service import AISemanticExtractionService
 from src.modules.conversation_understanding.domain.contextual_slot_governance_layer import ContextualSlotGovernanceLayer
 from src.modules.conversation_understanding.domain.field_derivation_layer import FieldDerivationLayer
@@ -20,6 +21,7 @@ from src.modules.conversation_understanding.domain.models import (
     TurnPersistencePlan,
 )
 from src.modules.conversation_understanding.domain.reply_act_classification_layer import ReplyActClassificationLayer
+from src.modules.profile_collection.domain.extraction_service import ExtractionService
 
 
 def _make_input(message: str, *, last_response: str = "") -> TurnUnderstandingInput:
@@ -445,6 +447,253 @@ def test_ai_semantic_extraction_attempt_plan_applies_blocking_cap():
     assert attempts[0]["timeout"] == 18.0
 
 
+def test_ai_semantic_extraction_attempt_plan_keeps_explicit_timeout_override_when_cap_not_enforced():
+    timeout_key = "UNIFIED_TURN_SYNC_AI_TIMEOUT_SECONDS"
+    cap_key = "UNIFIED_TURN_SYNC_AI_MAX_BLOCKING_SECONDS"
+    retry_enabled_key = "UNIFIED_TURN_SYNC_AI_RETRY_ENABLED"
+    old_timeout = os.environ.get(timeout_key)
+    old_cap = os.environ.get(cap_key)
+    old_retry_enabled = os.environ.get(retry_enabled_key)
+    os.environ[timeout_key] = "60"
+    os.environ[cap_key] = "18"
+    os.environ[retry_enabled_key] = "0"
+    try:
+        attempts = AISemanticExtractionService._build_ai_attempt_plan(45.0)  # noqa: SLF001
+    finally:
+        if old_timeout is None:
+            os.environ.pop(timeout_key, None)
+        else:
+            os.environ[timeout_key] = old_timeout
+        if old_cap is None:
+            os.environ.pop(cap_key, None)
+        else:
+            os.environ[cap_key] = old_cap
+        if old_retry_enabled is None:
+            os.environ.pop(retry_enabled_key, None)
+        else:
+            os.environ[retry_enabled_key] = old_retry_enabled
+
+    assert len(attempts) == 1
+    assert attempts[0]["timeout"] == 45.0
+
+
+def test_ai_semantic_extraction_attempt_plan_caps_explicit_timeout_when_mainline_cap_enforced():
+    timeout_key = "UNIFIED_TURN_SYNC_AI_TIMEOUT_SECONDS"
+    cap_key = "UNIFIED_TURN_SYNC_AI_MAX_BLOCKING_SECONDS"
+    retry_enabled_key = "UNIFIED_TURN_SYNC_AI_RETRY_ENABLED"
+    old_timeout = os.environ.get(timeout_key)
+    old_cap = os.environ.get(cap_key)
+    old_retry_enabled = os.environ.get(retry_enabled_key)
+    os.environ[timeout_key] = "60"
+    os.environ[cap_key] = "18"
+    os.environ[retry_enabled_key] = "0"
+    try:
+        attempts = AISemanticExtractionService._build_ai_attempt_plan(45.0, enforce_blocking_cap=True)  # noqa: SLF001
+    finally:
+        if old_timeout is None:
+            os.environ.pop(timeout_key, None)
+        else:
+            os.environ[timeout_key] = old_timeout
+        if old_cap is None:
+            os.environ.pop(cap_key, None)
+        else:
+            os.environ[cap_key] = old_cap
+        if old_retry_enabled is None:
+            os.environ.pop(retry_enabled_key, None)
+        else:
+            os.environ[retry_enabled_key] = old_retry_enabled
+
+    assert len(attempts) == 1
+    assert attempts[0]["timeout"] == 18.0
+
+
+def test_ai_semantic_extraction_transport_failures_open_circuit_breaker_and_skip_following_calls():
+    class _TimeoutAIService:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate_response(self, *args, **kwargs):  # noqa: ARG002
+            self.calls += 1
+            raise AIServiceException("AI 服务响应超时（45.0秒）")
+
+    breaker_enabled_key = "UNIFIED_TURN_SYNC_AI_CIRCUIT_BREAKER_ENABLED"
+    breaker_threshold_key = "UNIFIED_TURN_SYNC_AI_CIRCUIT_BREAKER_THRESHOLD"
+    breaker_cooldown_key = "UNIFIED_TURN_SYNC_AI_CIRCUIT_BREAKER_COOLDOWN_SECONDS"
+    old_enabled = os.environ.get(breaker_enabled_key)
+    old_threshold = os.environ.get(breaker_threshold_key)
+    old_cooldown = os.environ.get(breaker_cooldown_key)
+    os.environ[breaker_enabled_key] = "1"
+    os.environ[breaker_threshold_key] = "2"
+    os.environ[breaker_cooldown_key] = "180"
+    semantic_service = SimpleNamespace(_extract_deterministic_profile_fields=lambda message: {})
+    ai_service = _TimeoutAIService()
+    service = AISemanticExtractionService(semantic_service=semantic_service, ai_service=ai_service)
+    snapshot = TurnInputSnapshot(
+        user_message="94年，深圳南山，微信联系我13426689341",
+        last_response="方便简单说下自己的情况吗？",
+        message_count=1,
+        prompt_state={},
+        user_profile=SimpleNamespace(),
+    )
+    fallback = TurnUnderstandingResult(primary_turn_type="opening", subtype="dense_intro", confidence=0.9)
+    AISemanticExtractionService._reset_sync_ai_circuit_breaker_state()  # noqa: SLF001
+    try:
+        first_frame = asyncio.run(
+            service.extract(
+                snapshot=snapshot,
+                fallback_result=fallback,
+                enable_ai=True,
+                ai_timeout_seconds=2.0,
+            )
+        )
+        second_frame = asyncio.run(
+            service.extract(
+                snapshot=snapshot,
+                fallback_result=fallback,
+                enable_ai=True,
+                ai_timeout_seconds=2.0,
+            )
+        )
+        third_frame = asyncio.run(
+            service.extract(
+                snapshot=snapshot,
+                fallback_result=fallback,
+                enable_ai=True,
+                ai_timeout_seconds=2.0,
+            )
+        )
+    finally:
+        AISemanticExtractionService._reset_sync_ai_circuit_breaker_state()  # noqa: SLF001
+        if old_enabled is None:
+            os.environ.pop(breaker_enabled_key, None)
+        else:
+            os.environ[breaker_enabled_key] = old_enabled
+        if old_threshold is None:
+            os.environ.pop(breaker_threshold_key, None)
+        else:
+            os.environ[breaker_threshold_key] = old_threshold
+        if old_cooldown is None:
+            os.environ.pop(breaker_cooldown_key, None)
+        else:
+            os.environ[breaker_cooldown_key] = old_cooldown
+
+    assert any("ai_semantic_status=failed:request_failed" in str(note) for note in first_frame.notes)
+    assert any("ai_semantic_status=failed:request_failed" in str(note) for note in second_frame.notes)
+    assert any("ai_semantic_status=skipped:circuit_open" in str(note) for note in third_frame.notes)
+    assert ai_service.calls == 2
+
+
+def test_ai_semantic_extraction_parse_failure_does_not_open_circuit_breaker():
+    class _LooseAIService:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate_response(self, *args, **kwargs):  # noqa: ARG002
+            self.calls += 1
+            return "我大概听懂了，但先解释一下"
+
+    breaker_enabled_key = "UNIFIED_TURN_SYNC_AI_CIRCUIT_BREAKER_ENABLED"
+    breaker_threshold_key = "UNIFIED_TURN_SYNC_AI_CIRCUIT_BREAKER_THRESHOLD"
+    old_enabled = os.environ.get(breaker_enabled_key)
+    old_threshold = os.environ.get(breaker_threshold_key)
+    os.environ[breaker_enabled_key] = "1"
+    os.environ[breaker_threshold_key] = "2"
+    semantic_service = SimpleNamespace(_extract_deterministic_profile_fields=lambda message: {})
+    ai_service = _LooseAIService()
+    service = AISemanticExtractionService(semantic_service=semantic_service, ai_service=ai_service)
+    snapshot = TurnInputSnapshot(
+        user_message="94年，深圳南山，微信联系我13426689341",
+        last_response="方便简单说下自己的情况吗？",
+        message_count=1,
+        prompt_state={},
+        user_profile=SimpleNamespace(),
+    )
+    fallback = TurnUnderstandingResult(primary_turn_type="opening", subtype="dense_intro", confidence=0.9)
+    AISemanticExtractionService._reset_sync_ai_circuit_breaker_state()  # noqa: SLF001
+    try:
+        asyncio.run(
+            service.extract(
+                snapshot=snapshot,
+                fallback_result=fallback,
+                enable_ai=True,
+                ai_timeout_seconds=2.0,
+            )
+        )
+        asyncio.run(
+            service.extract(
+                snapshot=snapshot,
+                fallback_result=fallback,
+                enable_ai=True,
+                ai_timeout_seconds=2.0,
+            )
+        )
+    finally:
+        skip_status = AISemanticExtractionService._current_sync_ai_skip_status()  # noqa: SLF001
+        AISemanticExtractionService._reset_sync_ai_circuit_breaker_state()  # noqa: SLF001
+        if old_enabled is None:
+            os.environ.pop(breaker_enabled_key, None)
+        else:
+            os.environ[breaker_enabled_key] = old_enabled
+        if old_threshold is None:
+            os.environ.pop(breaker_threshold_key, None)
+        else:
+            os.environ[breaker_threshold_key] = old_threshold
+
+    assert ai_service.calls == 2
+    assert skip_status is None
+
+
+def test_ai_semantic_extraction_passes_reasoning_effort_to_ai_service():
+    class _RecordingAIService:
+        def __init__(self):
+            self.calls = []
+
+        async def generate_response(self, *args, **kwargs):  # noqa: ARG002
+            self.calls.append(dict(kwargs or {}))
+            return (
+                '{"primary_domain":"profile","acts":[],"user_questions":[],"field_observations":['
+                '{"field":"occupation","value":"在编教师","normalized_value":"在编教师","scope":"self","owner":"self",'
+                '"evidence_text":"在编教师","evidence_span":"在编教师","confidence":0.97,"write_mode":"direct_write","source":"ai_semantic_extraction"}'
+                '],"risk_flags":[],"boundaries":[],"confidence":0.95}'
+            )
+
+    semantic_service = SimpleNamespace(
+        _extract_deterministic_profile_fields=lambda message: {},
+    )
+    ai_service = _RecordingAIService()
+    service = AISemanticExtractionService(semantic_service=semantic_service, ai_service=ai_service)
+    snapshot = TurnInputSnapshot(
+        user_message="在编教师",
+        last_response="你现在是做哪方面工作的呀？",
+        message_count=3,
+        prompt_state={"asked_fields": ["occupation"], "side_fields": []},
+        user_profile=SimpleNamespace(),
+    )
+    fallback = TurnUnderstandingResult(primary_turn_type="profile_answer", subtype="single_slot_answer", confidence=0.9)
+
+    env_key = "UNIFIED_TURN_SYNC_AI_REASONING_EFFORT"
+    old_env = os.environ.get(env_key)
+    os.environ[env_key] = "medium"
+    try:
+        frame = asyncio.run(
+            service.extract(
+                snapshot=snapshot,
+                fallback_result=fallback,
+                enable_ai=True,
+                ai_timeout_seconds=5.0,
+            )
+        )
+    finally:
+        if old_env is None:
+            os.environ.pop(env_key, None)
+        else:
+            os.environ[env_key] = old_env
+
+    assert frame.source == "ai_structured_extraction"
+    assert len(ai_service.calls) == 1
+    assert ai_service.calls[0]["reasoning_effort"] == "medium"
+
+
 def test_ai_semantic_extraction_build_frame_from_slim_payload_items():
     service = AISemanticExtractionService(semantic_service=SimpleNamespace(), ai_service=None)
     frame = service._build_frame_from_slim_payload(  # noqa: SLF001
@@ -595,6 +844,243 @@ def test_ai_semantic_extraction_extract_accepts_items_shape_without_falling_back
     assert any("ai_semantic_status=success:json_frame" in str(note) for note in frame.notes)
 
 
+def test_ai_semantic_extraction_supplements_missing_fields_from_fallback_projection_on_ai_success():
+    class _OccupationOnlyAIService:
+        async def generate_response(self, *args, **kwargs):  # noqa: ARG002
+            return '{"primary_domain":"profile","items":[{"field":"occupation","scope":"self","value":"在编教师"}]}'
+
+    semantic_service = SimpleNamespace(
+        _extract_deterministic_profile_fields=lambda message: {},
+    )
+    service = AISemanticExtractionService(semantic_service=semantic_service, ai_service=_OccupationOnlyAIService())
+    snapshot = TurnInputSnapshot(
+        user_message="深圳龙华在编教师，微信是abc12345",
+        last_response="方便简单说下自己的情况吗？",
+        message_count=1,
+        prompt_state={"asked_fields": [], "side_fields": []},
+        user_profile=SimpleNamespace(),
+    )
+    fallback = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="multi_slot_compound",
+        resolved_slots={"occupation": "在编教师", "location": "深圳龙华", "wechat": "abc12345"},
+        confidence=0.9,
+    )
+
+    frame = asyncio.run(
+        service.extract(
+            snapshot=snapshot,
+            fallback_result=fallback,
+            enable_ai=True,
+            ai_timeout_seconds=2.0,
+        )
+    )
+
+    assert frame.source == "ai_structured_extraction"
+    observations = {(obs.field, obs.scope): obs for obs in frame.field_observations}
+    assert observations[("occupation", "self")].normalized_value == "在编教师"
+    assert observations[("location", "self")].normalized_value == "深圳龙华"
+    assert observations[("wechat", "contact")].normalized_value == "abc12345"
+    assert any("fallback_projection_merge=added:" in str(note) for note in frame.notes)
+
+
+def test_ai_semantic_extraction_keeps_ai_field_when_fallback_has_same_field():
+    class _AIService:
+        async def generate_response(self, *args, **kwargs):  # noqa: ARG002
+            return '{"primary_domain":"profile","items":[{"field":"occupation","scope":"self","value":"产品经理","confidence":0.95}]}'
+
+    semantic_service = SimpleNamespace(
+        _extract_deterministic_profile_fields=lambda message: {},
+    )
+    service = AISemanticExtractionService(semantic_service=semantic_service, ai_service=_AIService())
+    snapshot = TurnInputSnapshot(
+        user_message="做产品的，也在深圳",
+        last_response="你目前是做哪方面工作的？",
+        message_count=2,
+        prompt_state={"asked_fields": ["occupation"], "side_fields": []},
+        user_profile=SimpleNamespace(),
+    )
+    fallback = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="single_slot_answer",
+        resolved_slots={"occupation": "产品", "location": "深圳"},
+        confidence=0.9,
+    )
+
+    frame = asyncio.run(
+        service.extract(
+            snapshot=snapshot,
+            fallback_result=fallback,
+            enable_ai=True,
+            ai_timeout_seconds=2.0,
+        )
+    )
+
+    occupation_observations = [
+        obs for obs in frame.field_observations if str(getattr(obs, "field", "") or "") == "occupation"
+    ]
+    assert frame.source == "ai_structured_extraction"
+    assert len(occupation_observations) == 1
+    assert occupation_observations[0].normalized_value == "产品经理"
+    assert any(str(getattr(obs, "field", "") or "") == "location" for obs in frame.field_observations)
+
+
+def test_ai_semantic_extraction_allows_fallback_refinement_to_correct_ai_same_field():
+    class _AIService:
+        async def generate_response(self, *args, **kwargs):  # noqa: ARG002
+            return (
+                '{"primary_domain":"profile","items":['
+                '{"field":"location","scope":"self","value":"深圳","confidence":0.90},'
+                '{"field":"education","scope":"self","value":"硕士","confidence":0.92}'
+                ']}'
+            )
+
+    semantic_service = SimpleNamespace(
+        _extract_deterministic_profile_fields=lambda message: {},
+    )
+    service = AISemanticExtractionService(semantic_service=semantic_service, ai_service=_AIService())
+    snapshot = TurnInputSnapshot(
+        user_message="资料如上",
+        last_response="方便简单说下自己的情况吗？",
+        message_count=1,
+        prompt_state={},
+        user_profile=SimpleNamespace(),
+    )
+    fallback = TurnUnderstandingResult(
+        primary_turn_type="opening",
+        subtype="dense_intro",
+        resolved_slots={"location": "深圳南山", "education": "港硕"},
+        confidence=0.9,
+    )
+
+    frame = asyncio.run(
+        service.extract(
+            snapshot=snapshot,
+            fallback_result=fallback,
+            enable_ai=True,
+            ai_timeout_seconds=2.0,
+        )
+    )
+
+    observations = {
+        str(getattr(obs, "field", "") or "").strip(): str(getattr(obs, "normalized_value", "") or "").strip()
+        for obs in frame.field_observations
+        if str(getattr(obs, "scope", "") or "").strip() == "self"
+    }
+    assert frame.source == "ai_structured_extraction"
+    assert observations["location"] == "深圳南山"
+    assert observations["education"] == "港硕"
+    assert any("fallback_projection_merge=added:" in str(note) for note in frame.notes)
+    assert any("fallback_projection_refinement=candidates:" in str(note) for note in frame.notes)
+
+
+def test_ai_semantic_extraction_allows_authoritative_direct_observation_to_correct_ai_occupation():
+    semantic_service = TurnUnderstandingService(
+        SimpleNamespace(
+            extraction_service=ExtractionService(SimpleNamespace()),
+            user_question_service=SimpleNamespace(detect_quick_faq_intent=lambda message: None),
+            expectation_service=SimpleNamespace(is_matching_timeline_question=lambda message: False),
+        )
+    )
+
+    class _AIService:
+        async def generate_response(self, *args, **kwargs):  # noqa: ARG002
+            return (
+                '{"primary_domain":"profile","items":['
+                '{"field":"occupation","scope":"self","value":"外贸行业工作","confidence":0.90}'
+                ']}'
+            )
+
+    service = AISemanticExtractionService(semantic_service=semantic_service, ai_service=_AIService())
+    snapshot = TurnInputSnapshot(
+        user_message="94年，湖南女生在深圳南山，外贸行业工作，港硕",
+        last_response="方便简单说下自己的情况吗？",
+        message_count=1,
+        prompt_state={},
+        user_profile=SimpleNamespace(),
+    )
+    fallback = TurnUnderstandingResult(
+        primary_turn_type="opening",
+        subtype="dense_intro",
+        resolved_slots={"occupation": "外贸"},
+        confidence=0.9,
+    )
+
+    frame = asyncio.run(
+        service.extract(
+            snapshot=snapshot,
+            fallback_result=fallback,
+            enable_ai=True,
+            ai_timeout_seconds=2.0,
+        )
+    )
+
+    observations = {
+        str(getattr(obs, "field", "") or "").strip(): str(getattr(obs, "normalized_value", "") or "").strip()
+        for obs in frame.field_observations
+        if str(getattr(obs, "scope", "") or "").strip() == "self"
+    }
+    assert frame.source == "ai_structured_extraction"
+    assert observations["occupation"] == "外贸"
+    assert any("fallback_projection_refinement=candidates:" in str(note) for note in frame.notes)
+
+
+def test_ai_semantic_extraction_merges_direct_evidence_to_correct_ai_age_and_contact_channel():
+    semantic_service = TurnUnderstandingService(
+        SimpleNamespace(
+            extraction_service=ExtractionService(SimpleNamespace()),
+            user_question_service=SimpleNamespace(detect_quick_faq_intent=lambda message: None),
+            expectation_service=SimpleNamespace(is_matching_timeline_question=lambda message: False),
+        )
+    )
+
+    class _WrongAIService:
+        async def generate_response(self, *args, **kwargs):  # noqa: ARG002
+            return (
+                '{"primary_domain":"mixed","items":['
+                '{"field":"age","scope":"self","value":"30","confidence":0.93},'
+                '{"field":"location","scope":"self","value":"深圳","confidence":0.90},'
+                '{"field":"education","scope":"self","value":"硕士","confidence":0.91},'
+                '{"field":"occupation","scope":"self","value":"外贸行业工作","confidence":0.90},'
+                '{"field":"phone","scope":"contact","value":"13426689341","confidence":0.96}'
+                ']}'
+            )
+
+    service = AISemanticExtractionService(semantic_service=semantic_service, ai_service=_WrongAIService())
+    snapshot = TurnInputSnapshot(
+        user_message="94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，到时候可以微信联系我13426689341",
+        last_response="方便简单说下自己的情况吗？",
+        message_count=1,
+        prompt_state={},
+        user_profile=SimpleNamespace(),
+    )
+    fallback = TurnUnderstandingResult(primary_turn_type="opening", subtype="dense_intro", confidence=0.9)
+
+    frame = asyncio.run(
+        service.extract(
+            snapshot=snapshot,
+            fallback_result=fallback,
+            enable_ai=True,
+            ai_timeout_seconds=2.0,
+        )
+    )
+
+    observations = {
+        str(getattr(item, "field", "") or "").strip(): str(getattr(item, "normalized_value", "") or "").strip()
+        for item in frame.field_observations
+        if str(getattr(item, "scope", "") or "").strip() in {"self", "contact"}
+    }
+
+    assert frame.source == "ai_structured_extraction"
+    assert observations["age_label"] == "94年"
+    assert observations["age"] == "32"
+    assert observations["location"] == "深圳南山"
+    assert observations["education"] == "港硕"
+    assert observations["occupation"] == "外贸"
+    assert observations["wechat"] == "13426689341"
+    assert "phone" not in observations
+
+
 def test_ai_semantic_extraction_logs_failure_stage_for_non_json_output(caplog):
     class _LooseAIService:
         async def generate_response(self, *args, **kwargs):  # noqa: ARG002
@@ -633,6 +1119,63 @@ def test_ai_semantic_extraction_logs_failure_stage_for_non_json_output(caplog):
     assert any("parse_stage=non_json_output" in message for message in invalid_logs)
     assert any("final_stage=non_json_output" in message for message in fallback_logs)
     assert "ai_semantic_status=failed:non_json_output" in frame.notes
+    observations = {
+        str(getattr(item, "field", "") or "").strip(): str(getattr(item, "normalized_value", "") or "").strip()
+        for item in frame.field_observations
+        if str(getattr(item, "scope", "") or "").strip() in {"self", "contact"}
+    }
+    assert observations["wechat"] == "13426689341"
+
+
+def test_ai_semantic_extraction_fallback_projection_merges_direct_evidence_for_precise_fields():
+    semantic_service = TurnUnderstandingService(
+        SimpleNamespace(
+            extraction_service=ExtractionService(SimpleNamespace()),
+            user_question_service=SimpleNamespace(detect_quick_faq_intent=lambda message: None),
+            expectation_service=SimpleNamespace(is_matching_timeline_question=lambda message: False),
+        )
+    )
+
+    class _LooseAIService:
+        async def generate_response(self, *args, **kwargs):  # noqa: ARG002
+            return "我大概听懂了，但先解释一下"
+
+    service = AISemanticExtractionService(semantic_service=semantic_service, ai_service=_LooseAIService())
+    snapshot = TurnInputSnapshot(
+        user_message="94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，到时候可以微信联系我13426689341",
+        last_response="方便简单说下自己的情况吗？",
+        message_count=1,
+        prompt_state={},
+        user_profile=SimpleNamespace(),
+    )
+    fallback = TurnUnderstandingResult(
+        primary_turn_type="opening",
+        subtype="dense_intro",
+        resolved_slots={"location": "深圳", "education": "硕士"},
+        confidence=0.9,
+    )
+
+    frame = asyncio.run(
+        service.extract(
+            snapshot=snapshot,
+            fallback_result=fallback,
+            enable_ai=True,
+            ai_timeout_seconds=2.0,
+        )
+    )
+
+    observations = {
+        str(getattr(item, "field", "") or "").strip(): str(getattr(item, "normalized_value", "") or "").strip()
+        for item in frame.field_observations
+        if str(getattr(item, "scope", "") or "").strip() in {"self", "contact"}
+    }
+
+    assert frame.source != "ai_structured_extraction"
+    assert observations["age_label"] == "94年"
+    assert observations["location"] == "深圳南山"
+    assert observations["education"] == "港硕"
+    assert observations["occupation"] == "外贸"
+    assert observations["wechat"] == "13426689341"
 
 
 def test_ai_semantic_extraction_recovers_truncated_json_like_payload():
@@ -670,7 +1213,10 @@ def test_ai_semantic_extraction_recovers_truncated_json_like_payload():
         for item in frame.field_observations
     }
     assert frame.source == "ai_structured_extraction"
-    assert ("age_label", "1994年") in observations
+    assert any(
+        key[0] == "age_label" and key[1] in {"1994年", "94年"}
+        for key in observations
+    )
     assert ("location", "深圳南山") in observations
     assert ("education", "港硕") in observations
     assert ("occupation", "外贸行业工作") in observations

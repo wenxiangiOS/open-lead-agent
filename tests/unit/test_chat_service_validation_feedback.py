@@ -241,6 +241,33 @@ async def test_handle_contact_validation_does_not_force_same_turn_phone_followup
 
 
 @pytest.mark.anyio
+async def test_handle_contact_validation_accepts_short_wechat_in_phone_context():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="user_validation_short_wechat_switch")
+    profile.location = "深圳"
+    profile.sex = "女"
+    profile.age = 32
+    profile.education = "港硕"
+    profile.occupation = "外贸"
+    profile.phone_ask_count = 1
+    profile.last_contact_request_type = "phone"
+
+    response = await chat_service._handle_contact_validation(
+        "user_validation_short_wechat_switch",
+        profile,
+        {"all_fields": []},
+        "原始回复",
+        "可以微信M2345联系 白天上班也不方便接电话",
+    )
+
+    assert "手机号" not in response
+    assert "号码" not in response
+    assert profile.wechat == "M2345"
+    assert profile.wechat_collected is True
+    assert profile.phone_collected is False
+
+
+@pytest.mark.anyio
 async def test_handle_contact_validation_adds_wechat_followup_after_valid_phone_when_profile_complete():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="user_validation_phone_complete")

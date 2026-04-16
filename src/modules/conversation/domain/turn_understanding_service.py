@@ -381,6 +381,9 @@ class TurnUnderstandingService:
         "老师": "老师",
         "医生": "医生",
         "护士": "护士",
+        "在编女教师": "在编教师",
+        "在编男教师": "在编教师",
+        "在编教师": "在编教师",
         "公务员": "公务员",
         "财会": "财务",
         "财务": "财务",
@@ -393,6 +396,10 @@ class TurnUnderstandingService:
         "医美": "医美",
     }
     _OCCUPATION_FALLBACK_CHARS = {"恶", "呃", "额", "嗯", "啊", "哈", "哎"}
+    _COMPACT_INTRO_LOCATION_RE = (
+        r"(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)"
+        r"(?:南山|福田|宝安|龙岗|龙华|坪山)?"
+    )
     _NON_OCCUPATION_PHRASES = {
         "不方便说",
         "不想说",
@@ -2377,7 +2384,7 @@ class TurnUnderstandingService:
                 digits = digits[2:]
             if re.match(r"^1[3-9]\d{9}$", digits) or re.match(r"^[5-9]\d{7}$", digits):
                 return {"value": digits, "type": "phone", "contaminated": False}
-        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{5,19}", text):
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{4,19}", text):
             return {"value": text, "type": "wechat", "contaminated": False}
         return None
 
@@ -2414,6 +2421,14 @@ class TurnUnderstandingService:
                 r"(?:^|[，,、\s])"
                 r"(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)?"
                 r"\s*(男生|女生|男的|女的)\s*[，,、]",
+                message,
+            )
+            if mixed_intro_sex:
+                raw = mixed_intro_sex.group(1)
+                extracted["sex"] = "男" if "男" in raw else "女"
+        if "sex" not in extracted:
+            mixed_intro_sex = re.search(
+                r"(?:^|[，,、\s])(?:[\u4e00-\u9fa5]{1,6})?(男生|女生|男的|女的)\s*(?:在|现居|坐标|来自|人在)",
                 message,
             )
             if mixed_intro_sex:
@@ -2474,6 +2489,27 @@ class TurnUnderstandingService:
                 candidate = self._normalize_occupation_candidate(short_self_occupation.group(1))
                 if candidate and not self._is_low_quality_occupation_text(candidate):
                     extracted["occupation"] = candidate
+
+        if not extracted.get("occupation"):
+            compact_intro_match = re.search(
+                r"(?:^|[，,、\s])(?:\d{2}(?:年|后)?)?"
+                rf"(?P<location>{self._COMPACT_INTRO_LOCATION_RE})"
+                r"(?P<occupation>在编(?:男|女)?(?:教师|老师)|(?:男|女)?(?:教师|老师|程序员|开发|运营|产品|设计|财务|医生|销售|行政|客服))",
+                message,
+            )
+            if compact_intro_match:
+                compact_location = str(compact_intro_match.group("location") or "").strip()
+                compact_occupation = self._normalize_occupation_candidate(
+                    str(compact_intro_match.group("occupation") or "").strip()
+                )
+                if compact_location and not extracted.get("location"):
+                    extracted["location"] = compact_location
+                if compact_occupation and not self._is_low_quality_occupation_text(compact_occupation):
+                    extracted["occupation"] = compact_occupation
+                if not extracted.get("sex"):
+                    inferred_sex = self._infer_sex_from_compact_intro_occupation(compact_intro_match.group("occupation") or "")
+                    if inferred_sex:
+                        extracted["sex"] = inferred_sex
 
         if not extracted.get("occupation"):
             for token in self_tokens:
@@ -2603,6 +2639,22 @@ class TurnUnderstandingService:
         return cls._OCCUPATION_ALIASES.get(normalized, text)
 
     @classmethod
+    def _infer_sex_from_compact_intro_occupation(cls, occupation: str) -> str | None:
+        text = str(occupation or "").strip()
+        if not text:
+            return None
+        if re.search(
+            r"(?:^|在编)(?P<sex>男|女)(?:教师|老师|程序员|开发|运营|产品|设计|财务|医生|销售|行政|客服)$",
+            text,
+        ):
+            return "男" if "男" in text else "女"
+        if text.startswith("女"):
+            return "女"
+        if text.startswith("男"):
+            return "男"
+        return None
+
+    @classmethod
     def _is_low_quality_occupation_text(cls, value: str) -> bool:
         text = str(value or "").strip()
         if not text:
@@ -2629,6 +2681,11 @@ class TurnUnderstandingService:
         if any(token in compact for token in ("年薪", "月薪", "月收入", "月入", "收入", "工资", "年收入", "年包")):
             return True
         if re.search(r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|南京|香港|南山|福田|宝安|龙岗|龙华)", compact):
+            return True
+        if re.fullmatch(
+            r"(?:北京|上海|天津|重庆|河北|山西|辽宁|吉林|黑龙江|江苏|浙江|安徽|福建|江西|山东|河南|湖北|湖南|广东|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|香港|澳门|内蒙古|广西|西藏|宁夏|新疆|深圳|广州|杭州|成都|武汉|苏州|南京|长沙|郑州|青岛|厦门|宁波|东莞|佛山)(?:人)?",
+            compact,
+        ):
             return True
         if compact.startswith(("姓", "我叫", "叫我")):
             return True
@@ -4362,7 +4419,7 @@ class TurnUnderstandingService:
 
     @staticmethod
     def _looks_like_contaminated_contact(message: str, candidate_value: str) -> bool:
-        dirty_tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{5,19}[\u4e00-\u9fff]+[a-zA-Z0-9_-]+", str(message or ""))
+        dirty_tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{4,19}[\u4e00-\u9fff]+[a-zA-Z0-9_-]+", str(message or ""))
         lower_candidate = str(candidate_value or "").lower()
         return any(token.lower().startswith(lower_candidate) for token in dirty_tokens)
 
@@ -4392,7 +4449,7 @@ class TurnUnderstandingService:
             re.search(r"(微信|wx|weixin|电话|手机|手机号|号码|联系)", compact, re.IGNORECASE)
             and (
                 re.search(r"1[3-9]\d{9}", compact)
-                or re.search(r"[A-Za-z][A-Za-z0-9_-]{5,19}", compact)
+                or re.search(r"[A-Za-z][A-Za-z0-9_-]{4,19}", compact)
             )
         )
         if not has_contact_marker and not bool({"phone", "wechat", "contact"} & set((resolved_slots or {}).keys())):

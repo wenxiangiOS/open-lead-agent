@@ -468,6 +468,21 @@
       ]
     },
     {
+      "id": "contact_short_wechat_after_phone_prompt_should_not_be_treated_as_invalid_phone",
+      "category": "contact",
+      "tags": ["critical", "contact_phone", "contact_wechat", "retry", "normalization"],
+      "description": "电话语境下，用户明确说电话不方便并提供 5 位短微信号时，应识别为微信而不是回成手机号格式错误。",
+      "messages": [
+        "94年，湖南女生在深圳南山，外贸工作，深户，港硕，E人，感情经历简单，未婚单身，年薪20+，平常喜欢做饭旅游，原生家庭幸福美满，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，暂时就这么多，到时候电话还是微信联系啊",
+        "可以微信M2345联系 白天上班也不方便接电话"
+      ],
+      "assertions": [
+        { "type": "profile_field_truthy", "field": "wechat" },
+        { "type": "profile_field_falsey", "field": "phone" },
+        { "type": "final_response_not_contains_any", "values": ["格式有点不太对", "核对一下常用手机号", "再确认一下常用手机号"] }
+      ]
+    },
+    {
       "id": "contact_wechat_invalid_format_retry",
       "category": "contact",
       "tags": ["contact_wechat", "retry", "normalization"],

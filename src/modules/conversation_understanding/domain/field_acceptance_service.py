@@ -9,6 +9,7 @@ from src.modules.conversation_understanding.domain.models import (
     RejectedField,
     TurnSemanticFrame,
 )
+from src.modules.profile_collection.domain.extraction_service import ExtractionService
 
 
 class FieldAcceptanceService:
@@ -20,6 +21,7 @@ class FieldAcceptanceService:
     _HIGH_RISK_FIELDS = {"occupation", "age", "monthly_income", "contact", "partner_requirement", "sex"}
     _COMMIT_THRESHOLD = {"high": 0.92, "core": 0.88, "medium": 0.82, "low": 0.72}
     _WEAK_PARTNER_REQUIREMENT_VALUES = {"都行", "都可以", "可以", "随缘", "看感觉", "再说"}
+    _SELF_PROFILE_NOISE_IN_PARTNER_REQUIREMENT_RE = re.compile(r"(做饭|旅游|原生家庭|感情经历|[EI]人)")
 
     def accept(
         self,
@@ -98,6 +100,8 @@ class FieldAcceptanceService:
 
             threshold = self._resolve_commit_threshold(field_name)
             confidence = float(observation.confidence or 0.0)
+            if field_name == "partner_requirement" and explicit_partner_marker_commit:
+                threshold = min(threshold, 0.90)
             if source_channel == "ai":
                 accepted.append(
                     AcceptedField(
@@ -313,7 +317,7 @@ class FieldAcceptanceService:
     @staticmethod
     def _resolve_best_partner_requirement_observation(*, frame: TurnSemanticFrame) -> FieldObservation | None:
         best: FieldObservation | None = None
-        best_len = 0
+        best_score: tuple[int, int, int, int, float] = (-1, -1, -1, -1, -1.0)
         for observation in list(getattr(frame, "field_observations", []) or []):
             if str(getattr(observation, "field", "") or "").strip() != "partner_requirement":
                 continue
@@ -323,8 +327,26 @@ class FieldAcceptanceService:
             value_text = str(getattr(observation, "normalized_value", "") or "").strip()
             if not value_text:
                 continue
-            value_len = len(value_text)
-            if value_len > best_len:
+            source = str(getattr(observation, "source", "") or "").strip()
+            source_rank = 0
+            if source == "semantic_chunk_partner_requirement":
+                source_rank = 4
+            elif source.startswith("ai_"):
+                source_rank = 3
+            elif source == "semantic_chunk_partner_preference":
+                source_rank = 2
+            elif source.startswith("semantic_"):
+                source_rank = 1
+            subslot_count = len(ExtractionService._extract_partner_preference_subslots(value_text))  # noqa: SLF001
+            noise_free = 0 if FieldAcceptanceService._SELF_PROFILE_NOISE_IN_PARTNER_REQUIREMENT_RE.search(value_text) else 1
+            score = (
+                noise_free,
+                subslot_count,
+                len(value_text),
+                source_rank,
+                float(getattr(observation, "confidence", 0.0) or 0.0),
+            )
+            if score > best_score:
                 best = observation
-                best_len = value_len
+                best_score = score
         return best

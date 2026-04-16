@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import re
+import time
+from datetime import datetime
 from typing import Any, Iterable
 
 from src.core.exceptions import AIServiceException
@@ -36,6 +38,7 @@ class AISemanticExtractionService:
         ("safety", r"(靠谱吗|安全|真实吗|正规吗)"),
         ("contact_policy", r"(怎么联系|能不能直接联系|联系方式)"),
     )
+    _COMPACT_INTRO_FILLER_PATTERN = r"(?:可以(?:啊|呀|哒)?|好(?:呀|的)?|嗯(?:嗯)?|你好|嗨)"
     _SUPPORTED_EXTRACTION_FIELDS: tuple[str, ...] = (
         "sex",
         "age",
@@ -60,6 +63,22 @@ class AISemanticExtractionService:
         "partner_pref_age_relation",
         "partner_pref_locality",
     )
+    _TRANSPORT_FAILURE_MARKERS: tuple[str, ...] = (
+        "超时",
+        "timeout",
+        "timed out",
+        "connection error",
+        "connecterror",
+        "readerror",
+        "read error",
+        "apiconnectionerror",
+        "nodename nor servname provided",
+        "temporary failure in name resolution",
+    )
+    _SYNC_AI_CIRCUIT_BREAKER_STATE: dict[str, float | int] = {
+        "consecutive_transport_failures": 0,
+        "open_until_monotonic": 0.0,
+    }
 
     def __init__(self, semantic_service: object | None = None, ai_service: object | None = None) -> None:
         self.semantic_service = semantic_service
@@ -72,20 +91,180 @@ class AISemanticExtractionService:
         fallback_result: TurnUnderstandingResult,
         enable_ai: bool = False,
         ai_timeout_seconds: float | None = None,
+        enforce_mainline_blocking_cap: bool = False,
     ) -> TurnSemanticFrame:
         if not enable_ai:
-            return self._project_from_fallback(snapshot=snapshot, fallback_result=fallback_result)
+            frame = self._project_from_fallback(snapshot=snapshot, fallback_result=fallback_result)
+            frame = self._merge_direct_evidence_into_frame(
+                frame=frame,
+                snapshot=snapshot,
+            )
+            self._attach_chunk_summary_notes(frame, snapshot.user_message)
+            return frame
+        skip_status = self._current_sync_ai_skip_status()
+        if skip_status is not None:
+            logger.info(
+                "[unified_understanding.ai_semantic_extraction] skipped: status=%s message_chars=%s",
+                skip_status,
+                len(str(snapshot.user_message or "")),
+            )
+            frame = self._project_from_fallback(snapshot=snapshot, fallback_result=fallback_result)
+            frame = self._merge_direct_evidence_into_frame(
+                frame=frame,
+                snapshot=snapshot,
+            )
+            frame.notes.append(f"ai_semantic_status=skipped:{skip_status}")
+            self._attach_chunk_summary_notes(frame, snapshot.user_message)
+            return frame
         ai_frame, ai_status = await self._extract_via_ai(
             snapshot=snapshot,
             fallback_result=fallback_result,
             ai_timeout_seconds=ai_timeout_seconds,
+            enforce_mainline_blocking_cap=enforce_mainline_blocking_cap,
         )
         if ai_frame is not None:
+            ai_frame = self._merge_fallback_projection_into_ai_frame(
+                frame=ai_frame,
+                snapshot=snapshot,
+                fallback_result=fallback_result,
+            )
+            ai_frame = self._merge_direct_evidence_into_frame(
+                frame=ai_frame,
+                snapshot=snapshot,
+            )
+            self._attach_chunk_summary_notes(ai_frame, snapshot.user_message)
             return ai_frame
         fallback_frame = self._project_from_fallback(snapshot=snapshot, fallback_result=fallback_result)
+        fallback_frame = self._merge_direct_evidence_into_frame(
+            frame=fallback_frame,
+            snapshot=snapshot,
+        )
         if ai_status:
             fallback_frame.notes.append(f"ai_semantic_status={ai_status}")
+        self._attach_chunk_summary_notes(fallback_frame, snapshot.user_message)
         return fallback_frame
+
+    def _merge_direct_evidence_into_frame(
+        self,
+        *,
+        frame: TurnSemanticFrame,
+        snapshot: TurnInputSnapshot,
+    ) -> TurnSemanticFrame:
+        merged_observations = list(getattr(frame, "field_observations", []) or [])
+        direct_observations = self._extract_direct_observations(snapshot)
+        if direct_observations and str(getattr(frame, "source", "") or "").strip() == "ai_structured_extraction":
+            seen = {
+                (str(getattr(item, "field", "") or "").strip(), str(getattr(item, "normalized_value", "") or ""), str(getattr(item, "scope", "") or "").strip())
+                for item in merged_observations
+            }
+            for observation in direct_observations:
+                self._append_observation(merged_observations, seen, observation)
+        merged_observations = self._arbitrate_evidence_first_observations(merged_observations)
+        notes = list(getattr(frame, "notes", []) or [])
+        if not any(str(note).startswith("evidence_merge=") for note in notes):
+            notes.append(f"evidence_merge=direct:{len(direct_observations)}")
+        frame.field_observations = merged_observations
+        frame.notes = notes
+        return frame
+
+    def _merge_fallback_projection_into_ai_frame(
+        self,
+        *,
+        frame: TurnSemanticFrame,
+        snapshot: TurnInputSnapshot,
+        fallback_result: TurnUnderstandingResult,
+    ) -> TurnSemanticFrame:
+        if str(getattr(frame, "source", "") or "").strip() != "ai_structured_extraction":
+            return frame
+
+        merged_observations = list(getattr(frame, "field_observations", []) or [])
+        ai_field_scope_pairs = {
+            (
+                str(getattr(item, "field", "") or "").strip(),
+                str(getattr(item, "scope", "") or "").strip(),
+            )
+            for item in merged_observations
+            if str(getattr(item, "field", "") or "").strip()
+        }
+        seen = {
+            (
+                str(getattr(item, "field", "") or "").strip(),
+                str(getattr(item, "normalized_value", "") or ""),
+                str(getattr(item, "scope", "") or "").strip(),
+            )
+            for item in merged_observations
+        }
+        supplemented = 0
+        refinement_candidates = 0
+        fallback_observations = self._collect_observations(snapshot, fallback_result)
+        for observation in fallback_observations:
+            field_name = str(getattr(observation, "field", "") or "").strip()
+            scope = str(getattr(observation, "scope", "") or "").strip()
+            if not field_name:
+                continue
+            has_same_field_scope = (field_name, scope) in ai_field_scope_pairs
+            if has_same_field_scope:
+                if not self._should_include_fallback_same_field_in_ai_arbitration(
+                    observation=observation,
+                    existing_observations=merged_observations,
+                ):
+                    continue
+                refinement_candidates += 1
+            before_count = len(merged_observations)
+            self._append_observation(merged_observations, seen, observation)
+            if len(merged_observations) > before_count:
+                supplemented += 1
+
+        if supplemented <= 0 and refinement_candidates <= 0:
+            return frame
+        notes = list(getattr(frame, "notes", []) or [])
+        if not any(str(note).startswith("fallback_projection_merge=") for note in notes):
+            notes.append(f"fallback_projection_merge=added:{supplemented}")
+        if refinement_candidates > 0 and not any(str(note).startswith("fallback_projection_refinement=") for note in notes):
+            notes.append(f"fallback_projection_refinement=candidates:{refinement_candidates}")
+        frame.field_observations = merged_observations
+        frame.notes = notes
+        return frame
+
+    def _should_include_fallback_same_field_in_ai_arbitration(
+        self,
+        *,
+        observation: FieldObservation,
+        existing_observations: list[FieldObservation],
+    ) -> bool:
+        field_name = str(getattr(observation, "field", "") or "").strip()
+        scope = str(getattr(observation, "scope", "") or "").strip()
+        candidate_value = str(getattr(observation, "normalized_value", "") or "").strip()
+        if not field_name or not scope or not candidate_value:
+            return False
+
+        competing = [
+            item
+            for item in existing_observations
+            if str(getattr(item, "field", "") or "").strip() == field_name
+            and str(getattr(item, "scope", "") or "").strip() == scope
+        ]
+        if not competing:
+            return False
+
+        for current in competing:
+            current_value = str(getattr(current, "normalized_value", "") or "").strip()
+            if not current_value or current_value == candidate_value:
+                continue
+            if self._is_refinement_observation(
+                field_name=field_name,
+                candidate=observation,
+                baseline=current,
+            ):
+                return True
+            if field_name == "partner_requirement":
+                richer = self._pick_richer_partner_requirement(current_value, candidate_value)
+                if richer == candidate_value and richer != current_value:
+                    return True
+            if self._is_authoritative_direct_observation(observation) and self._observation_priority(observation) > self._observation_priority(current):
+                return True
+
+        return False
 
     def _project_from_fallback(
         self,
@@ -117,6 +296,7 @@ class AISemanticExtractionService:
         snapshot: TurnInputSnapshot,
         fallback_result: TurnUnderstandingResult,
         ai_timeout_seconds: float | None = None,
+        enforce_mainline_blocking_cap: bool = False,
     ) -> tuple[TurnSemanticFrame | None, str]:
         if self.ai_service is None:
             return None, "disabled:no_ai_service"
@@ -127,7 +307,10 @@ class AISemanticExtractionService:
             asked_fields=asked_fields,
         )
 
-        attempts = self._build_ai_attempt_plan(ai_timeout_seconds)
+        attempts = self._build_ai_attempt_plan(
+            ai_timeout_seconds,
+            enforce_blocking_cap=enforce_mainline_blocking_cap,
+        )
         last_error: AIServiceException | None = None
         last_failure_stage = "unknown"
         for index, attempt in enumerate(attempts, start=1):
@@ -159,11 +342,15 @@ class AISemanticExtractionService:
                     model_name=model_name,
                     disable_retry=True,
                     use_max_completion_tokens=False,
-                    reasoning_effort=None,
+                    reasoning_effort=reasoning_effort,
                 )
             except AIServiceException as exc:
                 last_error = exc
                 last_failure_stage = "request_failed"
+                if self._is_transport_failure(exc):
+                    self._record_transport_failure(exc)
+                else:
+                    self._reset_transport_failure_streak(reason="non_transport_error")
                 logger.warning(
                     "[unified_understanding.ai_semantic_extraction] failed: attempt=%s/%s timeout=%.1fs model=%s max_tokens=%s reasoning_effort=%s temperature=%.2f error=%s",
                     index,
@@ -206,7 +393,9 @@ class AISemanticExtractionService:
                     parse_detail,
                     self._build_preview(raw),
                 )
+                self._reset_transport_failure_streak(reason=f"parse_failure:{parse_stage or '-'}")
                 continue
+            self._reset_transport_failure_streak(reason="ai_success")
             logger.info(
                 "[unified_understanding.ai_semantic_extraction] parsed_frame: attempt=%s/%s model=%s parse_stage=%s observations=%s primary_domain=%s",
                 index,
@@ -429,6 +618,396 @@ class AISemanticExtractionService:
 
         return observations
 
+    def _arbitrate_evidence_first_observations(
+        self,
+        observations: list[FieldObservation],
+    ) -> list[FieldObservation]:
+        curated = list(observations or [])
+        curated = self._arbitrate_single_value_field(curated, "sex")
+        curated = self._arbitrate_single_value_field(curated, "age_label")
+        curated = self._arbitrate_age_from_authoritative_label(curated)
+        curated = self._arbitrate_single_value_field(curated, "age")
+        curated = self._arbitrate_single_value_field(curated, "location")
+        curated = self._arbitrate_single_value_field(curated, "education")
+        curated = self._arbitrate_single_value_field(curated, "occupation")
+        curated = self._arbitrate_single_value_field(curated, "marital_status")
+        curated = self._arbitrate_single_value_field(curated, "monthly_income")
+        curated = self._arbitrate_single_value_field(curated, "partner_gender_preference")
+        curated = self._arbitrate_single_value_field(curated, "wechat")
+        curated = self._arbitrate_single_value_field(curated, "phone")
+        curated = self._arbitrate_contact_channel_conflicts(curated)
+        return self._dedupe_observations_preserving_order(curated)
+
+    def _arbitrate_single_value_field(
+        self,
+        observations: list[FieldObservation],
+        field_name: str,
+    ) -> list[FieldObservation]:
+        candidates = [
+            observation
+            for observation in observations
+            if str(getattr(observation, "field", "") or "").strip() == field_name
+        ]
+        if len(candidates) <= 1:
+            return observations
+
+        best = candidates[0]
+        for candidate in candidates[1:]:
+            best = self._pick_preferred_single_value_observation(
+                field_name=field_name,
+                current=best,
+                candidate=candidate,
+            )
+        resolved: list[FieldObservation] = []
+        inserted = False
+        for observation in observations:
+            if str(getattr(observation, "field", "") or "").strip() != field_name:
+                resolved.append(observation)
+                continue
+            if not inserted:
+                resolved.append(best)
+                inserted = True
+        return resolved
+
+    def _arbitrate_age_from_authoritative_label(
+        self,
+        observations: list[FieldObservation],
+    ) -> list[FieldObservation]:
+        age_label_observation = next(
+            (
+                observation
+                for observation in observations
+                if str(getattr(observation, "field", "") or "").strip() == "age_label"
+                and str(getattr(observation, "scope", "") or "").strip() == "self"
+            ),
+            None,
+        )
+        if age_label_observation is None:
+            return observations
+
+        derived_age = self._derive_precise_age_from_label(
+            str(getattr(age_label_observation, "normalized_value", "") or "").strip()
+        )
+        if derived_age is None:
+            return observations
+
+        derived_observation = FieldObservation(
+            field="age",
+            value=str(derived_age),
+            normalized_value=str(derived_age),
+            scope="self",
+            owner="self",
+            evidence_text=str(getattr(age_label_observation, "evidence_text", "") or "").strip()
+            or str(getattr(age_label_observation, "normalized_value", "") or "").strip(),
+            evidence_span=str(getattr(age_label_observation, "evidence_span", "") or "").strip()
+            or str(getattr(age_label_observation, "normalized_value", "") or "").strip(),
+            confidence=max(0.98, float(getattr(age_label_observation, "confidence", 0.0) or 0.0)),
+            write_mode=str(getattr(age_label_observation, "write_mode", "") or "direct_write").strip() or "direct_write",
+            source="semantic_age_label_derived",
+            raw_value=str(getattr(age_label_observation, "normalized_value", "") or "").strip(),
+        )
+
+        resolved: list[FieldObservation] = []
+        inserted_age = False
+        for observation in observations:
+            field_name = str(getattr(observation, "field", "") or "").strip()
+            scope = str(getattr(observation, "scope", "") or "").strip()
+            if field_name == "age" and scope == "self":
+                if not inserted_age:
+                    resolved.append(derived_observation)
+                    inserted_age = True
+                continue
+            resolved.append(observation)
+            if (
+                field_name == "age_label"
+                and scope == "self"
+                and not inserted_age
+            ):
+                resolved.append(derived_observation)
+                inserted_age = True
+        if not inserted_age:
+            resolved.append(derived_observation)
+        return resolved
+
+    def _arbitrate_contact_channel_conflicts(
+        self,
+        observations: list[FieldObservation],
+    ) -> list[FieldObservation]:
+        best_wechat = self._find_best_field_observation(observations, "wechat")
+        best_phone = self._find_best_field_observation(observations, "phone")
+        if best_wechat is None or best_phone is None:
+            return observations
+
+        wechat_value = str(getattr(best_wechat, "normalized_value", "") or "").strip()
+        phone_value = str(getattr(best_phone, "normalized_value", "") or "").strip()
+        if not wechat_value or wechat_value != phone_value:
+            return observations
+
+        if self._is_authoritative_direct_observation(best_wechat) and self._is_ai_observation(best_phone):
+            return [
+                observation
+                for observation in observations
+                if not (
+                    str(getattr(observation, "field", "") or "").strip() == "phone"
+                    and str(getattr(observation, "normalized_value", "") or "").strip() == phone_value
+                )
+            ]
+        if self._is_authoritative_direct_observation(best_phone) and self._is_ai_observation(best_wechat):
+            return [
+                observation
+                for observation in observations
+                if not (
+                    str(getattr(observation, "field", "") or "").strip() == "wechat"
+                    and str(getattr(observation, "normalized_value", "") or "").strip() == wechat_value
+                )
+            ]
+        return observations
+
+    def _find_best_field_observation(
+        self,
+        observations: list[FieldObservation],
+        field_name: str,
+    ) -> FieldObservation | None:
+        candidates = [
+            observation
+            for observation in observations
+            if str(getattr(observation, "field", "") or "").strip() == field_name
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=self._observation_priority)
+
+    def _pick_preferred_single_value_observation(
+        self,
+        *,
+        field_name: str,
+        current: FieldObservation,
+        candidate: FieldObservation,
+    ) -> FieldObservation:
+        candidate_refines_current = self._is_refinement_observation(
+            field_name=field_name,
+            candidate=candidate,
+            baseline=current,
+        )
+        current_refines_candidate = self._is_refinement_observation(
+            field_name=field_name,
+            candidate=current,
+            baseline=candidate,
+        )
+        if candidate_refines_current and not current_refines_candidate:
+            return candidate
+        if current_refines_candidate and not candidate_refines_current:
+            return current
+        return candidate if self._observation_priority(candidate) > self._observation_priority(current) else current
+
+    def _is_refinement_observation(
+        self,
+        *,
+        field_name: str,
+        candidate: FieldObservation,
+        baseline: FieldObservation,
+    ) -> bool:
+        candidate_value = str(getattr(candidate, "normalized_value", "") or "").strip()
+        baseline_value = str(getattr(baseline, "normalized_value", "") or "").strip()
+        if not candidate_value or not baseline_value or candidate_value == baseline_value:
+            return False
+        if field_name == "location":
+            return baseline_value in candidate_value and len(candidate_value) > len(baseline_value)
+        if field_name == "occupation":
+            return self._is_occupation_refinement(candidate_value, baseline_value)
+        if field_name == "education":
+            return self._is_education_refinement(candidate_value, baseline_value)
+        if field_name == "age_label":
+            return self._is_age_label_refinement(candidate_value, baseline_value)
+        return False
+
+    @staticmethod
+    def _is_occupation_refinement(candidate_value: str, baseline_value: str) -> bool:
+        candidate = str(candidate_value or "").strip()
+        baseline = str(baseline_value or "").strip()
+        if not candidate or not baseline or candidate == baseline:
+            return False
+        if baseline not in candidate or len(candidate) <= len(baseline):
+            return False
+        if re.search(r"(?:行业|(?:行业)?工作)$", candidate):
+            return False
+        return True
+
+    @staticmethod
+    def _education_bucket(value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if "博士" in text:
+            return "博士"
+        if any(token in text for token in ("硕", "研究生")):
+            return "硕士"
+        if any(token in text for token in ("本",)):
+            return "本科"
+        if any(token in text for token in ("大专", "专科")):
+            return "大专"
+        return text
+
+    @classmethod
+    def _education_precision_rank(cls, value: str) -> int:
+        text = str(value or "").strip()
+        if not text:
+            return 0
+        bucket = cls._education_bucket(text)
+        if bucket not in {"本科", "硕士", "博士", "大专"}:
+            return 1
+        if any(token in text for token in ("港", "海归", "海外", "留学")):
+            return 3
+        return 2
+
+    @classmethod
+    def _is_education_refinement(cls, candidate_value: str, baseline_value: str) -> bool:
+        candidate_bucket = cls._education_bucket(candidate_value)
+        baseline_bucket = cls._education_bucket(baseline_value)
+        if not candidate_bucket or candidate_bucket != baseline_bucket:
+            return False
+        return cls._education_precision_rank(candidate_value) > cls._education_precision_rank(baseline_value)
+
+    @staticmethod
+    def _age_label_precision_rank(value: str) -> int:
+        text = str(value or "").strip()
+        if re.fullmatch(r"(19\d{2}|20\d{2})年", text):
+            return 4
+        if re.fullmatch(r"\d{2}年", text):
+            return 3
+        if re.fullmatch(r"\d{1,2}岁", text):
+            return 2
+        if re.fullmatch(r"\d{2}后", text):
+            return 1
+        return 0
+
+    @classmethod
+    def _normalize_age_label_key(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        exact_year_match = re.fullmatch(r"(19\d{2}|20\d{2})年", text)
+        if exact_year_match:
+            return f"birth_year:{exact_year_match.group(1)}"
+        short_year_match = re.fullmatch(r"(\d{2})年", text)
+        if short_year_match:
+            suffix = int(short_year_match.group(1))
+            current_suffix = datetime.now().year % 100
+            birth_year = 2000 + suffix if suffix <= current_suffix else 1900 + suffix
+            return f"birth_year:{birth_year}"
+        age_match = re.fullmatch(r"(\d{1,2})岁", text)
+        if age_match:
+            return f"age:{age_match.group(1)}"
+        cohort_match = re.fullmatch(r"(\d{2})后", text)
+        if cohort_match:
+            return f"cohort:{cohort_match.group(1)}"
+        return text
+
+    @classmethod
+    def _is_age_label_refinement(cls, candidate_value: str, baseline_value: str) -> bool:
+        candidate_rank = cls._age_label_precision_rank(candidate_value)
+        baseline_rank = cls._age_label_precision_rank(baseline_value)
+        if candidate_rank <= baseline_rank:
+            return False
+        candidate_key = cls._normalize_age_label_key(candidate_value)
+        baseline_key = cls._normalize_age_label_key(baseline_value)
+        if candidate_key and candidate_key == baseline_key:
+            return True
+        baseline_cohort = re.fullmatch(r"(\d{2})后", str(baseline_value or "").strip())
+        candidate_year = re.fullmatch(r"(\d{2})年", str(candidate_value or "").strip())
+        if baseline_cohort and candidate_year and baseline_cohort.group(1) == candidate_year.group(1):
+            return True
+        return False
+
+    @classmethod
+    def _dedupe_observations_preserving_order(
+        cls,
+        observations: list[FieldObservation],
+    ) -> list[FieldObservation]:
+        deduped: list[FieldObservation] = []
+        seen: set[tuple[str, str, str]] = set()
+        for observation in observations:
+            key = (
+                str(getattr(observation, "field", "") or "").strip(),
+                str(getattr(observation, "normalized_value", "") or ""),
+                str(getattr(observation, "scope", "") or "").strip(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(observation)
+        return deduped
+
+    @classmethod
+    def _observation_priority(
+        cls,
+        observation: FieldObservation,
+    ) -> tuple[int, float, int, int, int]:
+        source = str(getattr(observation, "source", "") or "").strip()
+        source_rank = 50
+        if source == "semantic_explicit_self_marker":
+            source_rank = 100
+        elif source == "semantic_contact_candidate":
+            source_rank = 99
+        elif source == "semantic_age_label_derived":
+            source_rank = 98
+        elif source == "semantic_chunk_partner_requirement":
+            source_rank = 97
+        elif source == "semantic_deterministic":
+            source_rank = 96
+        elif source == "semantic_chunk_partner_preference":
+            source_rank = 95
+        elif source == "semantic_chunk_deterministic":
+            source_rank = 94
+        elif source.startswith("semantic_"):
+            source_rank = 93
+        elif source.startswith("ai_"):
+            source_rank = 80
+        elif source.startswith("legacy_"):
+            source_rank = 70
+        confidence = float(getattr(observation, "confidence", 0.0) or 0.0)
+        evidence_span_rank = 1 if str(getattr(observation, "evidence_span", "") or "").strip() else 0
+        value_length = len(str(getattr(observation, "normalized_value", "") or "").strip())
+        scope_rank = 1 if str(getattr(observation, "scope", "") or "").strip() != "mixed" else 0
+        return source_rank, confidence, evidence_span_rank, value_length, scope_rank
+
+    @staticmethod
+    def _is_ai_observation(observation: FieldObservation | None) -> bool:
+        if observation is None:
+            return False
+        source = str(getattr(observation, "source", "") or "").strip()
+        return source.startswith("ai_")
+
+    @staticmethod
+    def _is_authoritative_direct_observation(observation: FieldObservation | None) -> bool:
+        if observation is None:
+            return False
+        source = str(getattr(observation, "source", "") or "").strip()
+        return source.startswith("semantic_")
+
+    @staticmethod
+    def _derive_precise_age_from_label(label: str) -> int | None:
+        text = str(label or "").strip()
+        if not text:
+            return None
+
+        exact_year_match = re.fullmatch(r"(19\d{2}|20\d{2})年", text)
+        if exact_year_match:
+            return max(1, datetime.now().year - int(exact_year_match.group(1)))
+
+        short_year_match = re.fullmatch(r"(\d{2})年", text)
+        if short_year_match:
+            suffix = int(short_year_match.group(1))
+            current_suffix = datetime.now().year % 100
+            birth_year = 2000 + suffix if suffix <= current_suffix else 1900 + suffix
+            return max(1, datetime.now().year - birth_year)
+
+        age_match = re.fullmatch(r"(\d{1,2})岁", text)
+        if age_match:
+            return int(age_match.group(1))
+
+        return None
+
     def _extract_direct_observations(self, snapshot: TurnInputSnapshot) -> list[FieldObservation]:
         text = str(getattr(snapshot, "user_message", "") or "").strip()
         if not text:
@@ -499,6 +1078,12 @@ class AISemanticExtractionService:
             self._append_numeric_observations(observations, seen, text, analysis)
 
         self._append_height_weight_shorthand(observations, seen, text)
+        self._append_chunk_level_observations(
+            observations,
+            seen,
+            text,
+            prompt_state=prompt_state,
+        )
         self._append_partner_numeric_preference_observations(observations, seen, text)
         self._append_contact_observations(observations, seen, text)
         return observations
@@ -584,11 +1169,17 @@ class AISemanticExtractionService:
         return max(0.0, min(1.0, value))
 
     @classmethod
-    def _build_ai_attempt_plan(cls, timeout_override: float | None) -> list[dict[str, object]]:
+    def _build_ai_attempt_plan(
+        cls,
+        timeout_override: float | None,
+        *,
+        enforce_blocking_cap: bool = False,
+    ) -> list[dict[str, object]]:
         primary_timeout = cls._resolve_ai_timeout(timeout_override)
-        blocking_cap = cls._resolve_sync_ai_blocking_cap()
-        if blocking_cap is not None:
-            primary_timeout = min(primary_timeout, blocking_cap)
+        if timeout_override is None or enforce_blocking_cap:
+            blocking_cap = cls._resolve_sync_ai_blocking_cap()
+            if blocking_cap is not None:
+                primary_timeout = min(primary_timeout, blocking_cap)
         primary_model = cls._resolve_primary_model_name()
         attempts: list[dict[str, object]] = [{"timeout": primary_timeout, "model_name": primary_model}]
         if not cls._sync_ai_retry_enabled():
@@ -597,6 +1188,98 @@ class AISemanticExtractionService:
         retry_model = cls._resolve_retry_model_name()
         attempts.append({"timeout": retry_timeout, "model_name": retry_model})
         return attempts
+
+    @staticmethod
+    def _env_enabled(name: str, default: bool) -> bool:
+        raw = str(os.getenv(name, "1" if default else "0") or "").strip().lower()
+        return raw not in {"0", "false", "off", "no"}
+
+    @classmethod
+    def _sync_ai_circuit_breaker_enabled(cls) -> bool:
+        return cls._env_enabled("UNIFIED_TURN_SYNC_AI_CIRCUIT_BREAKER_ENABLED", True)
+
+    @staticmethod
+    def _resolve_sync_ai_circuit_breaker_threshold() -> int:
+        raw = str(os.getenv("UNIFIED_TURN_SYNC_AI_CIRCUIT_BREAKER_THRESHOLD", "2") or "").strip()
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 2
+        return max(1, min(10, value))
+
+    @staticmethod
+    def _resolve_sync_ai_circuit_breaker_cooldown_seconds() -> float:
+        raw = str(os.getenv("UNIFIED_TURN_SYNC_AI_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "180") or "").strip()
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = 180.0
+        return max(5.0, value)
+
+    @classmethod
+    def _reset_sync_ai_circuit_breaker_state(cls) -> None:
+        cls._SYNC_AI_CIRCUIT_BREAKER_STATE["consecutive_transport_failures"] = 0
+        cls._SYNC_AI_CIRCUIT_BREAKER_STATE["open_until_monotonic"] = 0.0
+
+    @classmethod
+    def _current_sync_ai_skip_status(cls) -> str | None:
+        if not cls._sync_ai_circuit_breaker_enabled():
+            return None
+        open_until = float(cls._SYNC_AI_CIRCUIT_BREAKER_STATE.get("open_until_monotonic") or 0.0)
+        if open_until > time.monotonic():
+            return "circuit_open"
+        return None
+
+    @classmethod
+    def _is_transport_failure(cls, exc: Exception) -> bool:
+        message = str(exc or "").strip().lower()
+        if not message:
+            return False
+        return any(marker in message for marker in cls._TRANSPORT_FAILURE_MARKERS)
+
+    @classmethod
+    def _record_transport_failure(cls, exc: Exception) -> None:
+        if not cls._sync_ai_circuit_breaker_enabled():
+            return
+        state = cls._SYNC_AI_CIRCUIT_BREAKER_STATE
+        consecutive_failures = int(state.get("consecutive_transport_failures") or 0) + 1
+        state["consecutive_transport_failures"] = consecutive_failures
+        threshold = cls._resolve_sync_ai_circuit_breaker_threshold()
+        if consecutive_failures < threshold:
+            logger.info(
+                "[unified_understanding.ai_semantic_extraction.circuit_breaker] transport_failure: consecutive=%s threshold=%s error=%s",
+                consecutive_failures,
+                threshold,
+                exc,
+            )
+            return
+        cooldown_seconds = cls._resolve_sync_ai_circuit_breaker_cooldown_seconds()
+        state["open_until_monotonic"] = time.monotonic() + cooldown_seconds
+        logger.warning(
+            "[unified_understanding.ai_semantic_extraction.circuit_breaker] opened: consecutive=%s threshold=%s cooldown=%.1fs error=%s",
+            consecutive_failures,
+            threshold,
+            cooldown_seconds,
+            exc,
+        )
+
+    @classmethod
+    def _reset_transport_failure_streak(cls, *, reason: str) -> None:
+        if not cls._sync_ai_circuit_breaker_enabled():
+            return
+        state = cls._SYNC_AI_CIRCUIT_BREAKER_STATE
+        consecutive_failures = int(state.get("consecutive_transport_failures") or 0)
+        open_until = float(state.get("open_until_monotonic") or 0.0)
+        if consecutive_failures <= 0 and open_until <= 0:
+            return
+        state["consecutive_transport_failures"] = 0
+        state["open_until_monotonic"] = 0.0
+        logger.info(
+            "[unified_understanding.ai_semantic_extraction.circuit_breaker] reset: reason=%s previous_consecutive=%s was_open=%s",
+            reason,
+            consecutive_failures,
+            1 if open_until > time.monotonic() else 0,
+        )
 
     @staticmethod
     def _serialize_profile(user_profile: object | None) -> str:
@@ -1194,6 +1877,15 @@ class AISemanticExtractionService:
             extra = extraction_service._extract_deterministic_self_field_candidates(message)  # noqa: SLF001
             if isinstance(extra, dict):
                 for field_name, value in extra.items():
+                    if self._infer_scope(field_name) == "self" and hasattr(extraction_service, "_is_high_quality_field_value"):
+                        is_high_quality = extraction_service._is_high_quality_field_value(  # noqa: SLF001
+                            str(field_name),
+                            value,
+                            user_message=message,
+                            scope="self",
+                        )
+                        if not is_high_quality:
+                            continue
                     if field_name not in fields and value not in (None, ""):
                         fields[field_name] = value
 
@@ -1250,6 +1942,11 @@ class AISemanticExtractionService:
                         composed_requirement.strip(),
                     )
 
+        correction_overrides = self._extract_explicit_correction_overrides(message)
+        for field_name, value in correction_overrides.items():
+            if value not in (None, ""):
+                fields[field_name] = value
+
         if not self._looks_like_profile_intro(message):
             asked_fields = self._extract_prompt_asked_fields(prompt_state)
             followup_self_fields = asked_fields & {
@@ -1261,6 +1958,12 @@ class AISemanticExtractionService:
                 "marital_status",
                 "monthly_income",
             }
+            if correction_overrides:
+                followup_self_fields.update(
+                    field_name
+                    for field_name in correction_overrides
+                    if self._infer_scope(field_name) == "self"
+                )
             if "age" in followup_self_fields:
                 followup_self_fields.add("age_label")
             for field_name in list(fields.keys()):
@@ -1288,14 +1991,17 @@ class AISemanticExtractionService:
         if candidate in current and len(current) >= len(candidate):
             return current
 
-        def _score(text: str) -> int:
+        def _score(text: str) -> tuple[int, int, int, int]:
             compact = re.sub(r"\s+", "", text)
-            score = len(re.split(r"[，,、]", compact))
-            if re.search(r"(成熟|稳重|工作稳定|稳定|多金|有钱|90后|80后|学历|同城|本地|身高|收入|行业|年龄)", compact):
-                score += 2
-            if "，" in text or "," in text or "、" in text:
-                score += 1
-            return score
+            noise_free = 0 if re.search(r"(做饭|旅游|原生家庭|感情经历|[EI]人)", compact) else 1
+            signal_count = len(
+                re.findall(
+                    r"(同老家|同在|同城|本地|最好|优先|不要\d{2}|不要|有房有车|工作稳定|积极阳光|三观正|情绪稳定|成熟稳重|90后|80后|学历|身高|收入|行业|年龄|比自己大|比自己小)",
+                    compact,
+                )
+            )
+            segment_count = len([part for part in re.split(r"[，,、]", compact) if part])
+            return noise_free, signal_count, segment_count, len(compact)
 
         return candidate if _score(candidate) >= _score(current) else current
 
@@ -1307,7 +2013,7 @@ class AISemanticExtractionService:
         compact = re.sub(r"\s+", "", text)
         return bool(
             re.search(
-                r"(另一半|对象|择偶|想找|找(?:男朋友|女朋友|对象|[男女]生)|希望对方|看重|偏好|偏向|最好)",
+                r"(另一半|对象|择偶|想找|找(?:男朋友|女朋友|对象|[男女]生)|期待|遇见|希望对方|看重|偏好|偏向|最好)",
                 compact,
             )
         )
@@ -1318,11 +2024,20 @@ class AISemanticExtractionService:
             return {}
 
         fields: dict[str, Any] = {}
+        precise_age_label = self._extract_compact_intro_age_label(text)
+        if precise_age_label:
+            fields["age_label"] = precise_age_label
+        precise_location = self._extract_precise_self_location(text)
+        if precise_location:
+            fields["location"] = precise_location
+        precise_education = self._extract_precise_self_education(text)
+        if precise_education:
+            fields["education"] = precise_education
         compact_match = self._match_compact_intro(text)
         if compact_match:
             location = str(compact_match.group("location") or "").strip()
             occupation = str(compact_match.group("occupation") or "").strip()
-            if location:
+            if location and "location" not in fields:
                 fields["location"] = location
             normalized_occupation = self._normalize_occupation_candidate(occupation)
             if normalized_occupation:
@@ -1334,9 +2049,77 @@ class AISemanticExtractionService:
         return fields
 
     @staticmethod
+    def _extract_compact_intro_age_label(text: str) -> str:
+        message = str(text or "").strip()
+        if not message:
+            return ""
+        message = AISemanticExtractionService._strip_compact_intro_leading_fillers(message)
+        if not message:
+            return ""
+        match = re.match(
+            r"^\s*(?P<age>(?:19\d{2}|20\d{2})年|\d{2}(?:年|后)?)"
+            r"(?=(?:\s|，|,|、)?(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华|坪山|"
+            r"男生|女生|男的|女的|未婚|单身|离异|在编|教师|老师|护士|医生|程序员|开发|运营|产品|设计|财务|销售|行政|客服|外贸|本科|大专|硕士|博士|研究生))",
+            message,
+        )
+        if not match:
+            return ""
+        age_token = str(match.group("age") or "").strip()
+        if not age_token:
+            return ""
+        if re.fullmatch(r"\d{2}", age_token):
+            return f"{age_token}年"
+        return age_token
+
+    @classmethod
+    def _strip_compact_intro_leading_fillers(cls, text: str) -> str:
+        message = str(text or "").strip()
+        if not message:
+            return ""
+        return re.sub(
+            rf"^\s*(?:(?:{cls._COMPACT_INTRO_FILLER_PATTERN})[\s，,、。！？!?]*)+",
+            "",
+            message,
+            count=1,
+        ).strip()
+
+    @staticmethod
+    def _extract_precise_self_location(text: str) -> str:
+        message = str(text or "").strip()
+        if not message:
+            return ""
+        location_pattern = (
+            r"(?P<location>"
+            r"(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)"
+            r"(?:南山|福田|宝安|龙岗|龙华|坪山|罗湖|盐田|光明)?"
+            r")"
+        )
+        explicit_patterns = (
+            rf"(?:我在|人在|目前在|现在在|住在|现居|坐标){location_pattern}",
+            rf"(?:男生|女生|男的|女的|先生|女士)在{location_pattern}",
+            rf"(?:来自[\u4e00-\u9fa5]{{1,8}}(?:的)?(?:男生|女生|男的|女的)?在){location_pattern}",
+        )
+        for pattern in explicit_patterns:
+            match = re.search(pattern, message)
+            if match:
+                return str(match.group("location") or "").strip()
+        return ""
+
+    @staticmethod
+    def _extract_precise_self_education(text: str) -> str:
+        message = str(text or "").strip()
+        if not message:
+            return ""
+        match = re.search(r"(港硕|港本)", message)
+        if match:
+            return str(match.group(1) or "").strip()
+        return ""
+
+    @staticmethod
     def _match_compact_intro(text: str):
         return re.search(
-            r"(?P<location>(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)(?:南山|福田|宝安|龙岗|龙华)?)"
+            r"(?:\d{2}(?:年|后)?)?"
+            r"(?P<location>(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)(?:南山|福田|宝安|龙岗|龙华|坪山)?)"
             r"(?P<occupation>在编(?:男|女)?(?:教师|老师)|(?:男|女)?(?:教师|老师|程序员|开发|运营|产品|设计|财务|医生|销售|行政|客服))",
             text,
         )
@@ -1373,6 +2156,7 @@ class AISemanticExtractionService:
             r"(?:我是|本人|我)\s*(?:男生|女生|男的|女的|男|女)",
             r"^\s*(?:男生|女生|男的|女的|男|女)\s*(?:单身|未婚|离异|已婚|分居)",
             r"(?:^|[，,、\s])(?:男生|女生|男的|女的)\s*找(?:个|一个)?(?:男朋友|女朋友|对象|另一半)(?:$|[，,、\s])",
+            r"(?:^|[，,、\s])(?:[\u4e00-\u9fa5]{1,6})?(?:男生|女生|男的|女的)\s*(?:在|现居|坐标|来自|人在)",
         )
         for pattern in explicit_patterns:
             match = re.search(pattern, text)
@@ -1454,7 +2238,11 @@ class AISemanticExtractionService:
             return None
         explicit_patterns = (
             r"(?:我是|我做|我在做|我从事|职业是|工作是|目前做|现在做)\s*[^\s，,。！？!?]{1,16}",
-            r"^\s*(?:在编)?(?:教师|老师|程序员|开发|运营|产品|设计|财务|医生|销售|行政|客服)\s*$",
+            r"[A-Za-z\u4e00-\u9fa5]{2,12}(?:行业)?工作",
+            r"^\s*(?:在编)?(?:教师|老师|程序员|开发|运营|产品|设计|财务|医生|护士|销售|行政|客服|外贸)\s*$",
+            r"^\s*(?:\d{2}(?:年|后)?\s*)?(?:(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港)(?:南山|福田|宝安|龙岗|龙华|坪山|罗湖|盐田|光明)?\s*)?"
+            r"(?:在编(?:男|女)?(?:教师|老师)|(?:男|女)?(?:教师|老师|程序员|开发|运营|产品|设计|财务|医生|护士|销售|行政|客服|外贸))"
+            r"(?:(?:\s|，|,|、)*(?:本科|大专|硕士|博士|研究生|未婚|单身|离异|找|想找|最好|希望|偏向|倾向|同在|同城)|$)",
         )
         for pattern in explicit_patterns:
             match = re.search(pattern, text)
@@ -1503,7 +2291,82 @@ class AISemanticExtractionService:
         )
         if has_age_candidate and self._looks_like_age_followup_answer(text):
             return text
+        leading_compact_age = self._extract_compact_intro_age_label(text)
+        if leading_compact_age:
+            raw_match = re.match(
+                rf"^\s*(?:(?:{self._COMPACT_INTRO_FILLER_PATTERN})[\s，,、。！？!?]*)*((?:19\d{2}|20\d{2})年|\d{2}(?:年|后)?)",
+                text,
+            )
+            if raw_match:
+                return str(raw_match.group(1) or "").strip()
         return None
+
+    def _extract_explicit_correction_overrides(self, message: str) -> dict[str, Any]:
+        text = str(message or "").strip()
+        if not text or not self._looks_like_correction_message(text):
+            return {}
+
+        correction_tail_match = re.search(
+            r"(?:不是|不在|不做|不算|说错了|搞错了).{0,12}?(?:是|在|做|改成|改为)\s*(?P<tail>.+)$",
+            text,
+        )
+        if not correction_tail_match:
+            return {}
+        correction_tail = str(correction_tail_match.group("tail") or "").strip("，,、。！？!? ")
+        if not correction_tail:
+            return {}
+
+        overrides: dict[str, Any] = {}
+        tail_fields = self._extract_self_field_candidates_from_fragment(correction_tail)
+        for field_name, value in tail_fields.items():
+            if self._infer_scope(field_name) == "self" and value not in (None, ""):
+                overrides[field_name] = value
+        return overrides
+
+    def _extract_self_field_candidates_from_fragment(self, message: str) -> dict[str, Any]:
+        text = str(message or "").strip()
+        if not text:
+            return {}
+
+        fields: dict[str, Any] = {}
+        fields.update(self._extract_compact_intro_overrides(text))
+
+        if self.semantic_service is not None and hasattr(self.semantic_service, "_extract_deterministic_profile_fields"):
+            extracted = self.semantic_service._extract_deterministic_profile_fields(text)  # noqa: SLF001
+            if isinstance(extracted, dict):
+                for field_name, value in extracted.items():
+                    normalized_field = str(field_name or "").strip()
+                    if self._infer_scope(normalized_field) == "self" and value not in (None, ""):
+                        fields[normalized_field] = value
+
+        extraction_service = self._get_extraction_service()
+        if extraction_service is not None and hasattr(extraction_service, "_extract_deterministic_self_field_candidates"):
+            extra = extraction_service._extract_deterministic_self_field_candidates(text)  # noqa: SLF001
+            if isinstance(extra, dict):
+                for field_name, value in extra.items():
+                    normalized_field = str(field_name or "").strip()
+                    if self._infer_scope(normalized_field) != "self":
+                        continue
+                    if hasattr(extraction_service, "_is_high_quality_field_value"):
+                        is_high_quality = extraction_service._is_high_quality_field_value(  # noqa: SLF001
+                            normalized_field,
+                            value,
+                            user_message=text,
+                            scope="self",
+                        )
+                        if not is_high_quality:
+                            continue
+                    if value not in (None, ""):
+                        fields[normalized_field] = value
+        return fields
+
+    def _looks_like_correction_message(self, message: str) -> bool:
+        text = str(message or "").strip()
+        if not text:
+            return False
+        if self.semantic_service is not None and hasattr(self.semantic_service, "_looks_like_correction"):
+            return bool(self.semantic_service._looks_like_correction(text))  # noqa: SLF001
+        return bool(re.search(r"(不是.+是.+|不是这个|刚刚说的是|说错了|改成|改为)", text))
 
     @staticmethod
     def _looks_like_age_followup_answer(text: str) -> bool:
@@ -1655,6 +2518,387 @@ class AISemanticExtractionService:
                     source="semantic_contact_candidate",
                 ),
             )
+            if not self._looks_like_same_number_contact_reply(message):
+                continue
+            mirrored_field = "wechat" if hinted_type == "phone" else "phone"
+            self._append_observation(
+                observations,
+                seen,
+                FieldObservation(
+                    field=mirrored_field,
+                    value=value,
+                    normalized_value=value,
+                    scope="contact",
+                    owner="self",
+                    evidence_text=message,
+                    evidence_span=value,
+                    confidence=0.97,
+                    write_mode="direct_write",
+                    source="semantic_contact_same_as_other_channel",
+                ),
+            )
+
+    def _looks_like_same_number_contact_reply(self, message: str) -> bool:
+        text = str(message or "").strip()
+        if not text:
+            return False
+        if self.semantic_service is not None and hasattr(self.semantic_service, "_looks_like_wechat_same_as_phone_reply"):
+            return bool(self.semantic_service._looks_like_wechat_same_as_phone_reply(text))  # noqa: SLF001
+        compact = re.sub(r"\s+", "", text)
+        patterns = (
+            r"(?:微信|wx|vx).*(?:同号|一个号|一样|同一个)",
+            r"(?:跟|和)?(?:电话|手机号|号码).*(?:一样|同号|同一个号)",
+            r"(?:电话|手机号|号码).*(?:也可以加|也能加|也可以搜到|也能搜到|可以搜到|能搜到|可以加到|能加到)",
+            r"(?:上面|刚才|前面)(?:那个|这个|的)?号(?:就行|可以|也行)",
+            r"(?:电话|号码)也可以(?:当|做)?微信",
+            r"(?:号码|电话)(?:也)?可以搜微信",
+        )
+        return any(re.search(pattern, compact) for pattern in patterns)
+
+    def _append_chunk_level_observations(
+        self,
+        observations: list[FieldObservation],
+        seen: set[tuple[str, str, str]],
+        message: str,
+        *,
+        prompt_state: dict[str, Any] | None = None,
+    ) -> None:
+        chunks = self._split_semantic_chunks(message)
+        if not chunks:
+            return
+
+        extraction_service = self._get_extraction_service()
+        partner_parts: list[str] = []
+        for chunk_type, chunk_text in chunks:
+            if chunk_type == "partner":
+                partner_parts.append(chunk_text)
+                continue
+            if chunk_type != "self_profile":
+                continue
+            normalized_chunk_text = self._sanitize_self_profile_chunk(chunk_text)
+            normalized_chunk_text, partner_tail = self._split_partner_tail_from_self_chunk(normalized_chunk_text)
+            if partner_tail:
+                partner_parts.append(partner_tail)
+            if not normalized_chunk_text:
+                continue
+
+            chunk_fields: dict[str, Any] = {}
+            if self.semantic_service is not None and hasattr(self.semantic_service, "_extract_deterministic_profile_fields"):
+                extracted = self.semantic_service._extract_deterministic_profile_fields(normalized_chunk_text)  # noqa: SLF001
+                if isinstance(extracted, dict):
+                    for field_name, value in extracted.items():
+                        if value not in (None, ""):
+                            chunk_fields[str(field_name).strip()] = value
+            if extraction_service is not None and hasattr(extraction_service, "_extract_deterministic_self_field_candidates"):
+                deterministic_self = extraction_service._extract_deterministic_self_field_candidates(normalized_chunk_text)  # noqa: SLF001
+                if isinstance(deterministic_self, dict):
+                    for field_name, value in deterministic_self.items():
+                        normalized_field = str(field_name or "").strip()
+                        if value not in (None, "") and normalized_field not in chunk_fields:
+                            chunk_fields[normalized_field] = value
+            if "sex" not in chunk_fields:
+                explicit_sex = self._extract_explicit_self_sex_candidate_from_chunk(normalized_chunk_text)
+                if explicit_sex:
+                    chunk_fields["sex"] = explicit_sex
+
+            explicit_self_sex_evidence = self._resolve_explicit_self_sex_evidence(
+                normalized_chunk_text,
+                prompt_state=prompt_state,
+                deterministic_fields=chunk_fields,
+            )
+            explicit_self_age_evidence = self._resolve_explicit_self_age_evidence(
+                normalized_chunk_text,
+                prompt_state=prompt_state,
+                deterministic_fields=chunk_fields,
+            )
+            explicit_self_occupation_evidence = self._resolve_explicit_self_occupation_evidence(
+                normalized_chunk_text,
+                prompt_state=prompt_state,
+                deterministic_fields=chunk_fields,
+            )
+
+            for field_name, value in chunk_fields.items():
+                if self._infer_scope(field_name) != "self":
+                    continue
+                if field_name not in {
+                    "sex",
+                    "age",
+                    "age_label",
+                    "location",
+                    "education",
+                    "occupation",
+                    "marital_status",
+                    "monthly_income",
+                }:
+                    continue
+                confidence = 0.95
+                source = "semantic_chunk_deterministic"
+                evidence_span = str(value)
+                if field_name == "sex" and explicit_self_sex_evidence:
+                    confidence = 0.98
+                    source = "semantic_explicit_self_marker"
+                    evidence_span = explicit_self_sex_evidence
+                elif field_name == "age" and explicit_self_age_evidence:
+                    confidence = 0.98
+                    source = "semantic_explicit_self_marker"
+                    evidence_span = explicit_self_age_evidence
+                elif field_name == "occupation" and explicit_self_occupation_evidence:
+                    confidence = 0.98
+                    source = "semantic_explicit_self_marker"
+                    evidence_span = explicit_self_occupation_evidence
+                elif field_name in {"education", "location", "marital_status"}:
+                    confidence = 0.96
+
+                self._append_observation(
+                    observations,
+                    seen,
+                    FieldObservation(
+                        field=field_name,
+                        value=value,
+                        normalized_value=value,
+                        scope="self",
+                        owner="self",
+                        evidence_text=normalized_chunk_text,
+                        evidence_span=evidence_span,
+                        confidence=confidence,
+                        write_mode="direct_write",
+                        source=source,
+                    ),
+                )
+
+        if partner_parts:
+            self._append_partner_chunk_observations(
+                observations,
+                seen,
+                "，".join(partner_parts),
+            )
+
+    def _append_partner_chunk_observations(
+        self,
+        observations: list[FieldObservation],
+        seen: set[tuple[str, str, str]],
+        partner_text: str,
+    ) -> None:
+        text = str(partner_text or "").strip()
+        if not text:
+            return
+        extraction_service = self._get_extraction_service()
+        if extraction_service is None:
+            return
+        if hasattr(extraction_service, "_extract_partner_preference_subslots"):
+            subslots = extraction_service._extract_partner_preference_subslots(text)  # noqa: SLF001
+            for field_name, value in dict(subslots or {}).items():
+                normalized_field = str(field_name or "").strip()
+                normalized_value = str(value or "").strip()
+                if not normalized_field or not normalized_value:
+                    continue
+                self._append_observation(
+                    observations,
+                    seen,
+                    FieldObservation(
+                        field=normalized_field,
+                        value=normalized_value,
+                        normalized_value=normalized_value,
+                        scope="partner",
+                        owner="partner",
+                        evidence_text=text,
+                        evidence_span=normalized_value,
+                        confidence=0.94,
+                        write_mode="direct_write",
+                        source="semantic_chunk_partner_preference",
+                    ),
+                )
+        if hasattr(extraction_service, "_resolve_partner_requirement_from_message"):
+            partner_requirement = str(
+                extraction_service._resolve_partner_requirement_from_message(  # noqa: SLF001
+                    text,
+                    allow_legacy_fallback=True,
+                    prefer_structured=True,
+                )
+                or ""
+            ).strip()
+            if partner_requirement:
+                self._append_observation(
+                    observations,
+                    seen,
+                    FieldObservation(
+                        field="partner_requirement",
+                        value=partner_requirement,
+                        normalized_value=partner_requirement,
+                        scope="partner",
+                        owner="partner",
+                        evidence_text=text,
+                        evidence_span=partner_requirement,
+                        confidence=0.93,
+                        write_mode="direct_write",
+                        source="semantic_chunk_partner_requirement",
+                    ),
+                )
+
+    @staticmethod
+    def _extract_explicit_self_sex_candidate_from_chunk(chunk_text: str) -> str | None:
+        text = str(chunk_text or "").strip()
+        if not text:
+            return None
+        if re.search(r"(?:女生|女的|女教师|女老师|女士)", text):
+            return "女"
+        if re.search(r"(?:男生|男的|男教师|男老师|先生)", text):
+            return "男"
+        if re.fullmatch(r"(?:女|男)", text):
+            return text
+        return None
+
+    @staticmethod
+    def _sanitize_self_profile_chunk(chunk_text: str) -> str:
+        text = str(chunk_text or "").strip()
+        if not text:
+            return ""
+        return re.sub(
+            r"^\s*(?:(?:是的|对|对的|嗯|嗯嗯|好的|好呀|好哒|好|可以啊|可以呀|可以哒|可以|行啊|行的|行|ok|OK)[，,、 ]*)+",
+            "",
+            text,
+        ).strip()
+
+    @classmethod
+    def _split_partner_tail_from_self_chunk(cls, chunk_text: str) -> tuple[str, str]:
+        text = str(chunk_text or "").strip()
+        if not text:
+            return "", ""
+        compact = re.sub(r"\s+", "", text)
+        if not compact:
+            return "", ""
+        pure_partner_like_patterns = (
+            r"^(?:想着\d{2}后(?:男生|女生).*)$",
+            r"^(?:想找|找(?:对象|男朋友|女朋友|个对象|个男朋友|个女朋友)|希望对方|最好|优先|能接受).*$",
+            r"^(?:\d{2}后.{0,8}(?:工作稳定|情绪稳定|都可以|就行)).*$",
+        )
+        if any(re.search(pattern, compact) for pattern in pure_partner_like_patterns):
+            return "", text
+
+        split_patterns = (
+            r"[，,、]\s*(?P<partner>想着\d{2}后(?:男生|女生).*)$",
+            r"[，,、]\s*(?P<partner>(?:想找|找(?:起码|至少|对象|男朋友|女朋友|个对象|个男朋友|个女朋友)|希望对方|最好|优先|能接受).*)$",
+            r"[，,、]\s*(?P<partner>(?:\d{2}后.{0,8}(?:工作稳定|情绪稳定|都可以|就行)).*)$",
+            r"[，,、]\s*(?P<partner>(?:起码\d{2,3}\+|至少\d{2,3}\+|身高\d{2,3}\+).*)$",
+        )
+        for pattern in split_patterns:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            partner_text = str(match.group("partner") or "").strip("，,、 ")
+            self_text = text[:match.start()].strip("，,、 ")
+            if partner_text:
+                return self_text, partner_text
+        return text, ""
+
+    @classmethod
+    def _split_semantic_chunks(cls, message: str) -> list[tuple[str, str]]:
+        text = str(message or "").strip()
+        if not text:
+            return []
+        raw_parts = [part.strip() for part in re.split(r"[，,、；;。！？!?]\s*", text) if part.strip()]
+        if len(raw_parts) <= 1:
+            return []
+
+        chunks: list[tuple[str, str]] = []
+        previous_type = ""
+        for part in raw_parts:
+            chunk_type = cls._classify_semantic_chunk(part, previous_type=previous_type)
+            if not chunk_type:
+                continue
+            if chunks and chunks[-1][0] == chunk_type:
+                chunks[-1] = (chunk_type, f"{chunks[-1][1]}，{part}")
+            else:
+                chunks.append((chunk_type, part))
+            previous_type = chunk_type
+        return chunks
+
+    @classmethod
+    def _classify_semantic_chunk(cls, chunk_text: str, *, previous_type: str = "") -> str:
+        text = str(chunk_text or "").strip()
+        if not text:
+            return ""
+        compact = re.sub(r"\s+", "", text)
+        if re.search(r"(?:微信|电话|手机号|联系方式|vx|wx|weixin)|(?:1[3-9]\d{9})", compact, flags=re.IGNORECASE):
+            return "contact"
+        if re.search(r"(怎么收费|收费|多少钱|价格|费用|流程|怎么安排|靠谱吗|真实吗|正规吗)", compact):
+            return "faq"
+        if cls._looks_like_partner_chunk(compact, previous_type=previous_type):
+            return "partner"
+        if cls._looks_like_self_profile_chunk(compact):
+            return "self_profile"
+        if cls._looks_like_soft_trait_chunk(compact):
+            return "soft_trait"
+        return ""
+
+    @staticmethod
+    def _looks_like_partner_chunk(compact_text: str, *, previous_type: str = "") -> bool:
+        if not compact_text:
+            return False
+        if re.search(r"(?:找对象|找男朋友|找女朋友|想找|想着|期待|遇见|希望|另一半|对象|最好|优先|不要\d{2}|不要|同城|本地|同在|有房有车|能接受)", compact_text):
+            return True
+        if re.search(r"(?:\d{2}后.{0,8}(?:工作稳定|情绪稳定|都可以|就行)|起码\d{2,3}\+|至少\d{2,3}\+|身高\d{2,3}\+)", compact_text):
+            return True
+        if previous_type in {"partner", "soft_trait"} and re.search(r"(积极阳光|三观正|情绪稳定|成熟稳重|工作稳定|有房有车|深户|本科|硕士|博士|未婚)", compact_text):
+            return True
+        return False
+
+    @staticmethod
+    def _looks_like_self_profile_chunk(compact_text: str) -> bool:
+        if not compact_text:
+            return False
+        return bool(
+            re.search(r"(?:19\d{2}|20\d{2}|\d{2}年|\d{2}后|\d{1,2}岁)", compact_text)
+            or re.search(r"(女生|男生|女的|男的).{0,6}(?:在|现居|坐标|来自|人在)", compact_text)
+            or re.search(r"(?:我在|来自|人在|目前在|现在在|住在|坐标)(?:深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)", compact_text)
+            or re.search(r"(本科|大专|硕士|博士|港硕|未婚|单身|离异|已婚|在编|教师|老师|护士|医生|程序员|开发|运营|产品|设计|财务|销售|外贸|年薪|月薪|收入|深户)", compact_text)
+        )
+
+    @staticmethod
+    def _looks_like_soft_trait_chunk(compact_text: str) -> bool:
+        if not compact_text:
+            return False
+        return bool(re.search(r"([EI]人|喜欢|爱好|旅游|做饭|原生家庭|感情经历|性格|慢热|外向|内向)", compact_text))
+
+    def _attach_chunk_summary_notes(self, frame: TurnSemanticFrame, user_message: str) -> None:
+        summaries = self._extract_chunk_summaries(user_message)
+        if not summaries:
+            return
+        notes = list(getattr(frame, "notes", []) or [])
+        existing_prefixes = {str(note).split("=", 1)[0] for note in notes if "=" in str(note)}
+        for key, value in summaries.items():
+            if not value or key in existing_prefixes:
+                continue
+            notes.append(f"{key}={value}")
+        frame.notes = notes
+
+    @classmethod
+    def _extract_chunk_summaries(cls, user_message: str) -> dict[str, str]:
+        chunks = cls._split_semantic_chunks(user_message)
+        if not chunks:
+            return {}
+
+        def _unique_join(values: list[str]) -> str:
+            ordered: list[str] = []
+            seen: set[str] = set()
+            for item in values:
+                clean = str(item or "").strip()
+                if not clean or clean in seen:
+                    continue
+                seen.add(clean)
+                ordered.append(clean)
+            return "，".join(ordered)
+
+        partner_parts = [chunk_text for chunk_type, chunk_text in chunks if chunk_type == "partner"]
+        soft_parts = [chunk_text for chunk_type, chunk_text in chunks if chunk_type == "soft_trait"]
+        summaries: dict[str, str] = {}
+        partner_summary = _unique_join(partner_parts)
+        soft_profile_summary = _unique_join(soft_parts)
+        if partner_summary:
+            summaries["partner_summary"] = partner_summary
+        if soft_profile_summary:
+            summaries["soft_profile_summary"] = soft_profile_summary
+        return summaries
 
     def _append_partner_numeric_preference_observations(
         self,
@@ -1683,6 +2927,8 @@ class AISemanticExtractionService:
                 continue
             operator = str(item.get("operator") or "").strip()
             raw_value = str(item.get("value") or "").strip()
+            if raw_field == "age" and self._has_self_income_semantics_near_numeric_value(message, raw_value):
+                continue
             normalized_value = self._normalize_partner_numeric_preference_value(raw_field, operator, raw_value)
             if not normalized_value:
                 continue
@@ -1705,6 +2951,32 @@ class AISemanticExtractionService:
                     relation=operator or None,
                 ),
             )
+
+    @staticmethod
+    def _has_self_income_semantics_near_numeric_value(message: str, raw_value: str) -> bool:
+        text = str(message or "")
+        value = str(raw_value or "").strip()
+        if not text or not value:
+            return False
+        income_pattern = r"(收入|月入|月薪|工资|年薪|年新|年收入|年包|税前|税后|k|K|w|W|万)"
+        clause_delimiters = ("，", ",", "、", "；", ";", "。", "！", "？", "!", "?")
+        for match in re.finditer(re.escape(value), text):
+            clause_start = max(text.rfind(delimiter, 0, match.start()) for delimiter in clause_delimiters)
+            right_boundaries = [
+                boundary
+                for delimiter in clause_delimiters
+                if (boundary := text.find(delimiter, match.end())) != -1
+            ]
+            clause_end = min(right_boundaries) if right_boundaries else len(text)
+            clause = text[clause_start + 1:clause_end]
+            relative_start = max(0, match.start() - (clause_start + 1))
+            prefix_window = clause[max(0, relative_start - 12):relative_start]
+            # Only treat the numeric as income-like when the income cue is in the
+            # same clause and appears before the number. This keeps
+            # "年薪20左右" blocked while allowing "30+的，月入2w+的".
+            if re.search(income_pattern, prefix_window):
+                return True
+        return False
 
     def _get_extraction_service(self) -> object | None:
         chat_service = getattr(self.semantic_service, "chat_service", None)
@@ -1813,6 +3085,22 @@ class AISemanticExtractionService:
         seen: set[tuple[str, str, str]],
         observation: FieldObservation,
     ) -> None:
+        if observation.field == "partner_requirement" and observation.scope in {"partner", "mixed"}:
+            for index, existing in enumerate(observations):
+                if existing.field != observation.field or existing.scope != observation.scope:
+                    continue
+                chosen_value = AISemanticExtractionService._pick_richer_partner_requirement(
+                    str(getattr(existing, "normalized_value", "") or ""),
+                    str(getattr(observation, "normalized_value", "") or ""),
+                )
+                if chosen_value == str(getattr(existing, "normalized_value", "") or ""):
+                    return
+                existing_key = (existing.field, str(existing.normalized_value), existing.scope)
+                if existing_key in seen:
+                    seen.remove(existing_key)
+                observations[index] = observation
+                seen.add((observation.field, str(observation.normalized_value), observation.scope))
+                return
         key = (observation.field, str(observation.normalized_value), observation.scope)
         if key in seen:
             return

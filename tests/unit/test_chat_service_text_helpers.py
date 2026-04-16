@@ -93,6 +93,12 @@ def test_contact_validation_text_helpers_cover_retry_and_close_response():
 
 def test_response_cleanup_helpers_strip_broken_edges_and_soften_age_question():
     assert ChatServiceResponseCleanupService.strip_broken_edge_fragments("了。 你是哪年的呀？") == "你是哪年的呀？"
+    assert (
+        ChatServiceResponseCleanupService.strip_broken_edge_fragments(
+            "我看你资料和。 你在深圳南山做外贸这块是吧，留个手机号会更方便一点。"
+        )
+        == "你在深圳南山做外贸这块是吧，留个手机号会更方便一点。"
+    )
     softened = ChatServiceResponseCleanupService.soften_awkward_age_question("你是哪年的呀？")
     assert "哪一年" in softened or "哪年" in softened
 

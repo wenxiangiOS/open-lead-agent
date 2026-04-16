@@ -63,7 +63,7 @@ class _StubChatService:
         phone = re.search(r"1[3-9]\d{9}", text)
         if phone:
             return {"type": "phone", "value": phone.group(0)}
-        wx = re.search(r"微信(?:是|号)?\s*([a-zA-Z][a-zA-Z0-9_-]{5,19})", text)
+        wx = re.search(r"微信(?:是|号)?\s*([a-zA-Z][a-zA-Z0-9_-]{4,19})", text)
         if wx:
             return {"type": "wechat", "value": wx.group(1)}
         return None
@@ -1279,6 +1279,13 @@ def test_turn_understanding_preserves_wx_prefixed_wechat_id_candidate():
     candidate = service._extract_contact_candidate("wx23234242")  # noqa: SLF001
     assert candidate["type"] == "wechat"
     assert candidate["value"] == "wx23234242"
+
+
+def test_turn_understanding_extracts_short_wechat_candidate_with_marker():
+    service = TurnUnderstandingService(_StubChatService())
+    candidate = service._extract_contact_candidate("可以微信M2345联系 白天上班也不方便接电话")  # noqa: SLF001
+    assert candidate["type"] == "wechat"
+    assert candidate["value"] == "M2345"
 
 
 def test_turn_understanding_does_not_extract_age_from_wechat_id_message():

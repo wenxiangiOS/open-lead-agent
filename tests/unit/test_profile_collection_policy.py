@@ -192,11 +192,11 @@ class TestProfileCollectionPolicy:
 
         assert self.policy.should_allow_contact_instruction(profile, "ASK_PHONE") is False
 
-    def test_can_enter_contact_no_longer_requires_monthly_income_when_other_fields_are_ready(self):
+    def test_can_enter_contact_requires_monthly_income_coverage_before_contact_gate(self):
         profile = UserProfile(account_id="u_contact_income_gate")
         self._mark_collected(profile, "sex", "age", "location", "education", "occupation", "marital_status", "partner_requirement")
 
-        assert self.policy.can_enter_contact(profile) is True
+        assert self.policy.can_enter_contact(profile) is False
 
     def test_can_enter_contact_accepts_structured_partner_preference_without_partner_requirement_text(self):
         profile = UserProfile(account_id="u_contact_structured_partner_pref")
@@ -205,6 +205,77 @@ class TestProfileCollectionPolicy:
         profile.collection_progress["partner_pref_age"] = True
 
         assert self.policy.can_enter_contact(profile) is True
+
+    def test_passive_phone_collection_does_not_block_monthly_income_gate(self):
+        profile = UserProfile(account_id="u_passive_phone_resume_income")
+        self._mark_collected(
+            profile,
+            "sex",
+            "age",
+            "location",
+            "education",
+            "occupation",
+            "marital_status",
+            "partner_requirement",
+        )
+        profile.phone = "13800138000"
+        profile.phone_collected = True
+
+        assert self.policy.has_ongoing_contact_flow(profile) is False
+        assert self.policy.should_ask_monthly_income(profile) is True
+        assert self.policy.get_uncovered_medium_fields(profile) == ["monthly_income"]
+        assert self.policy.can_enter_contact(profile) is False
+
+    def test_decide_prefers_monthly_income_over_wechat_after_passive_phone_collection(self):
+        profile = UserProfile(account_id="u_passive_phone_decide_income")
+        self._mark_collected(
+            profile,
+            "sex",
+            "age",
+            "location",
+            "education",
+            "occupation",
+            "marital_status",
+            "partner_requirement",
+        )
+        profile.phone = "13800138000"
+        profile.phone_collected = True
+
+        decision = self.policy.decide(
+            profile,
+            user_message="单身呢",
+            message_count=6,
+        )
+
+        assert decision.can_enter_contact is False
+        assert decision.next_mode == "collect_medium"
+        assert decision.main_target == "monthly_income"
+
+    def test_no_reask_fields_temporarily_cover_known_fields(self):
+        profile = UserProfile(account_id="u_no_reask_fields")
+        profile.set_last_semantic_summary(
+            {
+                "no_reask_fields": ["age_label", "occupation"],
+            }
+        )
+
+        assert self.policy.is_core_field_covered(profile, "age") is True
+        assert self.policy.is_core_field_covered(profile, "occupation") is True
+        assert self.policy.can_actively_ask(profile, "age") is False
+        assert self.policy.can_actively_ask(profile, "occupation") is False
+
+    def test_pending_birth_year_bucket_keeps_age_active_even_when_no_reask_present(self):
+        profile = UserProfile(account_id="u_no_reask_age_confirmation")
+        profile.pending_birth_year_bucket = "90后"
+        profile.birth_year_confirmation_closed = False
+        profile.set_last_semantic_summary(
+            {
+                "no_reask_fields": ["age"],
+            }
+        )
+
+        assert self.policy.is_core_field_covered(profile, "age") is False
+        assert self.policy.can_actively_ask(profile, "age") is True
 
     def test_opening_with_location_and_occupation_prefers_low_pressure_missing_core(self):
         profile = UserProfile(account_id="u_opening_profile")

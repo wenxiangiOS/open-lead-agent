@@ -1,0 +1,101 @@
+{
+  "scenarios": [
+    {
+      "id": "long_intro_regression_01",
+      "category": "manual_long_intro",
+      "tags": ["manual", "long_intro", "critical"],
+      "description": "94 年深圳南山外贸港硕女生，自我介绍 + 择偶要求 + 微信。",
+      "messages": [
+        "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "sex", "expected": "女" },
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳南山" },
+        { "type": "profile_field_equals", "field": "education", "expected": "港硕" },
+        { "type": "profile_field_equals", "field": "occupation", "expected": "外贸" },
+        { "type": "profile_field_truthy", "field": "wechat" }
+      ]
+    },
+    {
+      "id": "long_intro_regression_02",
+      "category": "manual_long_intro",
+      "tags": ["manual", "long_intro", "critical"],
+      "description": "深圳龙华在编女教师，一次性给电话并顺带问收费。",
+      "messages": [
+        "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "sex", "expected": "女" },
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳龙华" },
+        { "type": "profile_field_equals", "field": "education", "expected": "本科" },
+        { "type": "profile_field_equals", "field": "occupation", "expected": "在编教师" },
+        { "type": "profile_field_truthy", "field": "phone" }
+      ]
+    },
+    {
+      "id": "long_intro_regression_03",
+      "category": "manual_long_intro",
+      "tags": ["manual", "long_intro"],
+      "description": "90 年护士本科，紧凑型自我介绍 + 择偶要求。",
+      "messages": [
+        "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地。"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "age_label", "expected": "90年" },
+        { "type": "profile_field_equals", "field": "education", "expected": "本科" },
+        { "type": "profile_field_equals", "field": "occupation", "expected": "护士" },
+        { "type": "profile_field_truthy", "field": "partner_requirement" }
+      ]
+    },
+    {
+      "id": "long_intro_regression_04",
+      "category": "manual_long_intro",
+      "tags": ["manual", "long_intro", "critical", "contact_phone", "contact_wechat"],
+      "description": "98 年外贸女生，微信和电话同号，必须双通道同时入档。",
+      "messages": [
+        "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系 13423674892微信和电话同号。"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳" },
+        { "type": "profile_field_equals", "field": "education", "expected": "本科" },
+        { "type": "profile_field_equals", "field": "occupation", "expected": "外贸" },
+        { "type": "profile_field_equals", "field": "marital_status", "expected": "单身" },
+        { "type": "profile_field_truthy", "field": "phone" },
+        { "type": "profile_field_truthy", "field": "wechat" }
+      ]
+    },
+    {
+      "id": "long_intro_regression_05",
+      "category": "manual_long_intro",
+      "tags": ["manual", "long_intro"],
+      "description": "女生找男朋友，含收入和身高要求。",
+      "messages": [
+        "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "sex", "expected": "女" },
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳" },
+        { "type": "profile_field_equals", "field": "education", "expected": "本科" },
+        { "type": "profile_field_equals", "field": "marital_status", "expected": "单身" },
+        { "type": "profile_field_equals", "field": "monthly_income", "expected": "一年18左右" },
+        { "type": "profile_field_truthy", "field": "partner_requirement" }
+      ]
+    },
+    {
+      "id": "long_intro_regression_06",
+      "category": "manual_long_intro",
+      "tags": ["manual", "long_intro"],
+      "description": "96 年深圳坪山在编教师，带身高体重和择偶要求。",
+      "messages": [
+        "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不。"
+      ],
+      "assertions": [
+        { "type": "profile_field_equals", "field": "age_label", "expected": "96年" },
+        { "type": "profile_field_equals", "field": "location", "expected": "深圳坪山" },
+        { "type": "profile_field_equals", "field": "education", "expected": "本科" },
+        { "type": "profile_field_equals", "field": "occupation", "expected": "在编教师" },
+        { "type": "profile_field_truthy", "field": "partner_requirement" }
+      ]
+    }
+  ]
+}

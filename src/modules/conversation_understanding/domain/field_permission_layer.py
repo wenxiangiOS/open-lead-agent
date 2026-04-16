@@ -99,6 +99,23 @@ class FieldPermissionLayer:
             return fields
         return set(cls._effective_resolved_slots(result).keys())
 
+    def _resolve_preserve_mixed_extra_fields(
+        self,
+        *,
+        message: str,
+        result_fields: set[str],
+        reply_act: str,
+    ) -> set[str]:
+        extras = set(self._CONTACT_ONLY_FIELDS)
+        if (
+            reply_act == "preference_statement"
+            or "partner_requirement" in result_fields
+            or "partner_gender_preference" in result_fields
+            or self._looks_like_self_and_preference_mixed(message)
+        ):
+            extras |= set(self._PARTNER_ONLY_FIELDS)
+        return extras
+
     def decide(
         self,
         *,
@@ -125,6 +142,11 @@ class FieldPermissionLayer:
         mixed_profile_payload = self._looks_like_mixed_profile_payload(message) or self._looks_like_self_and_preference_mixed(message)
         preserve_mixed_semantics = mixed_profile_payload
         allow_mixed = allow_mixed or preserve_mixed_semantics
+        preserve_mixed_extra_fields = self._resolve_preserve_mixed_extra_fields(
+            message=message,
+            result_fields=result_fields,
+            reply_act=reply_act_result.reply_act,
+        )
         contact_only_turn = bool(
             semantic_result.primary_turn_type == "contact_answer"
             or reply_act_result.reply_act == "contact_answer"
@@ -161,7 +183,7 @@ class FieldPermissionLayer:
 
         if semantic_result.primary_turn_type == "faq_concern":
             if preserve_mixed_semantics:
-                fields = result_fields
+                fields = result_fields | set(preserve_mixed_extra_fields)
                 return FieldPermissionResult(
                     allowed_fields=fields,
                     blocked_fields=set(),
@@ -179,7 +201,7 @@ class FieldPermissionLayer:
 
         if reply_act_result.reply_act == "preference_statement":
             if preserve_mixed_semantics:
-                fields = result_fields
+                fields = result_fields | set(preserve_mixed_extra_fields)
                 return FieldPermissionResult(
                     allowed_fields=fields,
                     blocked_fields=set(),
@@ -197,7 +219,7 @@ class FieldPermissionLayer:
 
         if reply_act_result.reply_act == "new_question":
             if preserve_mixed_semantics:
-                fields = result_fields
+                fields = result_fields | set(preserve_mixed_extra_fields)
                 return FieldPermissionResult(
                     allowed_fields=fields,
                     blocked_fields=set(),
@@ -265,7 +287,7 @@ class FieldPermissionLayer:
             blocked = set(asked_fields) - allowed
 
         if preserve_mixed_semantics:
-            allowed |= result_fields
+            allowed |= result_fields | set(preserve_mixed_extra_fields)
             blocked -= result_fields
             expected_scope = "mixed"
 

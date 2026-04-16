@@ -164,6 +164,12 @@ class ChatServiceFinalizeService:
                 turn_decision=turn_decision,
                 collection_result=collection_result,
             )
+            final_response = self._maybe_enforce_dense_intro_single_question_response(
+                final_response=final_response,
+                user_profile=user_profile,
+                user_message=user_message,
+                turn_decision=turn_decision,
+            )
             final_response = self._maybe_enforce_contact_followup_response(
                 user_profile=user_profile,
                 final_response=final_response,
@@ -249,6 +255,12 @@ class ChatServiceFinalizeService:
             final_response=final_response,
             turn_decision=turn_decision,
             collection_result=collection_result,
+        )
+        final_response = self._maybe_enforce_dense_intro_single_question_response(
+            final_response=final_response,
+            user_profile=user_profile,
+            user_message=user_message,
+            turn_decision=turn_decision,
         )
         final_response = self._maybe_eliminate_dangling_progress_hold(
             user_profile=user_profile,
@@ -619,6 +631,113 @@ class ChatServiceFinalizeService:
             original_response=text,
             fallback_response=fallback,
         )
+
+    def _maybe_enforce_dense_intro_single_question_response(
+        self,
+        *,
+        final_response: str,
+        user_profile: UserProfile,
+        user_message: str,
+        turn_decision: TurnDecision,
+    ) -> str:
+        text = str(final_response or "").strip()
+        if not text:
+            return text
+        if getattr(turn_decision, "prioritize_user_question", False):
+            return text
+
+        stage = str(getattr(turn_decision, "stage", "") or "").strip()
+        dense_intro_like = stage == "opening"
+        checker = getattr(self.host, "_looks_like_dense_intro_message_for_budget_guard", None)
+        if callable(checker):
+            try:
+                dense_intro_like = dense_intro_like or bool(
+                    checker(user_profile=user_profile, user_message=user_message)
+                )
+            except Exception:
+                dense_intro_like = dense_intro_like or False
+        if not dense_intro_like:
+            return text
+
+        re_mod = __import__("re")
+        extract_question_segments = getattr(self.host, "_extract_explicit_question_segments", None)
+        question_segments: list[str] = []
+        if callable(extract_question_segments):
+            try:
+                question_segments = [
+                    segment.strip()
+                    for segment in (extract_question_segments(text) or [])
+                    if str(segment or "").strip()
+                ]
+            except Exception:
+                question_segments = []
+        if not question_segments:
+            question_segments = [
+                segment.strip()
+                for segment in re_mod.findall(r"[^。!！\n]*?[？?]", text)
+                if segment.strip()
+            ]
+
+        prefix_clauses: list[str] = []
+        first_question_clause = ""
+        if len(question_segments) >= 2:
+            first_question_clause = question_segments[0].strip()
+            prefix_text = text
+            first_question_index = text.find(first_question_clause)
+            if first_question_index >= 0:
+                prefix_text = text[:first_question_index]
+            prefix_clauses = [
+                clause.strip()
+                for clause in re_mod.split(r"[。!！\n]+", prefix_text)
+                if clause.strip()
+            ]
+        else:
+            split_pattern = r"[。!！\n]+"
+            clauses = [clause.strip() for clause in re_mod.split(split_pattern, text) if clause.strip()]
+            if not clauses:
+                return text
+
+            question_like_clauses: list[str] = []
+            for clause in clauses:
+                detected_fields = set()
+                detect_segment = getattr(self.host, "_detect_question_fields_in_segment", None)
+                if callable(detect_segment):
+                    try:
+                        detected_fields = set(detect_segment(clause) or set())
+                    except Exception:
+                        detected_fields = set()
+                looks_like_question = bool(
+                    detected_fields
+                    or "？" in clause
+                    or "?" in clause
+                    or "吗" in clause
+                    or "呢" in clause
+                    or "呀" in clause
+                    or "方便" in clause
+                    or "请问" in clause
+                )
+                if looks_like_question:
+                    question_like_clauses.append(clause)
+                    if not first_question_clause:
+                        first_question_clause = clause
+                    continue
+                if not first_question_clause:
+                    prefix_clauses.append(clause)
+
+            if len(question_like_clauses) < 2 or not first_question_clause:
+                return text
+
+        collapsed_question = first_question_clause.strip()
+        if collapsed_question and not any(collapsed_question.endswith(mark) for mark in ("？", "?", "。", "！", "!")):
+            collapsed_question = f"{collapsed_question}？"
+        collapsed_prefix = "。 ".join(
+            part.rstrip("。！？!? ").strip()
+            for part in prefix_clauses
+            if str(part or "").strip()
+        ).strip()
+        collapsed_parts = [part for part in (collapsed_prefix, collapsed_question) if str(part or "").strip()]
+        collapsed = "。 ".join(collapsed_parts).strip()
+        return self.host._safe_clean_response(collapsed) if collapsed else text
 
     async def _maybe_repair_contact_completion_ending(
         self,

@@ -48,8 +48,8 @@ class PhoneValidator:
 class WechatValidator:
     """微信号验证器"""
 
-    # 微信号规则：6-20位，字母开头，可包含字母、数字、下划线、减号
-    PATTERN = r'^[a-zA-Z][a-zA-Z0-9_-]{5,19}$'
+    # 微信号规则：5-20位，字母开头，可包含字母、数字、下划线、减号
+    PATTERN = r'^[a-zA-Z][a-zA-Z0-9_-]{4,19}$'
 
     @classmethod
     def is_valid(cls, wechat: str) -> Tuple[bool, Optional[str]]:
@@ -66,7 +66,7 @@ class WechatValidator:
             return False, "方便留个能联系到的微信号吗呀～"
 
         if not re.match(cls.PATTERN, wechat):
-            return False, "这个微信号好像格式不太对呢～是字母开头的6-20位字符吗呀"
+            return False, "这个微信号好像格式不太对呢～是字母开头的5-20位字符吗呀"
 
         return True, None
 

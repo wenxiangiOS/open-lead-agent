@@ -923,11 +923,15 @@ class ProfileCollectionPolicy:
             and not getattr(profile, "birth_year_confirmation_closed", False)
         ):
             return False
+        if self._is_temporarily_no_reask_field(profile, field):
+            return True
         return self.is_collected(profile, field) or profile.get_effective_ask_count(field) >= 2
 
     def is_medium_field_covered(self, profile: UserProfile, field: str) -> bool:
         if self._has_pending_resume_for_field(profile, field):
             return False
+        if self._is_temporarily_no_reask_field(profile, field):
+            return True
         if field == "monthly_income" and not self.should_ask_monthly_income(profile):
             return True
         if profile.skipped_fields.get(field, False) or profile.is_active_ask_closed(field):
@@ -947,7 +951,31 @@ class ProfileCollectionPolicy:
             return True
         return False
 
+    @staticmethod
+    def _canonicalize_temporary_field(field_name: str) -> str:
+        field = str(field_name or "").strip()
+        if field == "age_label":
+            return "age"
+        if field in {"phone", "wechat"}:
+            return "contact"
+        if field == "partner_gender_preference" or field.startswith("partner_pref_"):
+            return "partner_requirement"
+        return field
+
+    def _temporary_no_reask_fields(self, profile: UserProfile) -> set[str]:
+        summary = dict(getattr(profile, "last_semantic_summary", {}) or {})
+        return {
+            self._canonicalize_temporary_field(item)
+            for item in list(summary.get("no_reask_fields", []) or [])
+            if self._canonicalize_temporary_field(item)
+        }
+
+    def _is_temporarily_no_reask_field(self, profile: UserProfile, field: str) -> bool:
+        return self._canonicalize_temporary_field(field) in self._temporary_no_reask_fields(profile)
+
     def is_field_covered(self, profile: UserProfile, field: str) -> bool:
+        if self._is_temporarily_no_reask_field(profile, field):
+            return True
         if field in self.CORE_CONTACT_FIELDS:
             return self.is_core_field_covered(profile, field)
         if field in self.MEDIUM_COVERAGE_FIELDS:
@@ -1073,7 +1101,7 @@ class ProfileCollectionPolicy:
         return "contact_ready"
 
     def has_ongoing_contact_flow(self, profile: UserProfile) -> bool:
-        """判断当前是否处于联系方式阶段或联系方式处理中。"""
+        """判断当前是否处于主动联系方式阶段或联系方式处理中。"""
         if (
             bool(getattr(profile, "contact_complete", False))
             or (
@@ -1111,10 +1139,21 @@ class ProfileCollectionPolicy:
             [
                 bool(profile.phone_ask_count > 0),
                 bool(profile.wechat_ask_count > 0),
-                bool(profile.phone_collected),
-                bool(profile.wechat_collected),
-                bool(profile.rejected_phone),
-                bool(profile.rejected_wechat),
+                bool(str(getattr(profile, "pending_contact_field", "") or "").strip()),
+                bool(str(getattr(profile, "pending_contact_candidate", "") or "").strip()),
+                bool(str(getattr(profile, "pending_contact_hint", "") or "").strip()),
+                bool(
+                    str(getattr(profile, "last_contact_request_type", "") or "").strip() == "phone"
+                    and not getattr(profile, "phone_collected", False)
+                    and not getattr(profile, "rejected_phone", False)
+                ),
+                bool(
+                    str(getattr(profile, "last_contact_request_type", "") or "").strip() == "wechat"
+                    and not getattr(profile, "wechat_collected", False)
+                    and not getattr(profile, "rejected_wechat", False)
+                ),
+                bool(profile.rejected_phone and not profile.phone_collected),
+                bool(profile.rejected_wechat and not profile.wechat_collected),
             ]
         )
 
@@ -1165,12 +1204,6 @@ class ProfileCollectionPolicy:
         """判断当前是否适合进入联系方式逻辑"""
         if self.has_divorce_confirmation_pending(profile):
             return False
-        if (
-            self.get_core_success_count(profile) >= 4
-            and self.is_collected(profile, "marital_status")
-            and self.is_collected(profile, "partner_requirement")
-        ):
-            return True
         return self.is_coverage_complete(profile) and self.is_profile_sufficient_for_contact(profile)
 
     def has_serviceable_profile(self, profile: UserProfile) -> bool:
@@ -1238,6 +1271,8 @@ class ProfileCollectionPolicy:
             return self.ACTIVE
         if str(getattr(profile, "pending_retry_field", "") or "").strip() == field:
             return self.ACTIVE
+        if self._is_temporarily_no_reask_field(profile, field):
+            return self.DISABLED
         if profile.skipped_fields.get(field, False):
             return self.DISABLED
         if profile.is_active_ask_closed(field):

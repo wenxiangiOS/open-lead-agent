@@ -133,7 +133,7 @@ class TestContactValidator:
 
     def test_is_valid_invalid(self):
         """测试无效联系方式"""
-        # "invalid" 实际上匹配微信号规则（字母开头，6-20位），所以是有效的
+        # "invalid" 实际上匹配微信号规则（字母开头，5-20位），所以是有效的
         # 需要使用真正无效的输入
         is_valid, contact_type, _ = ContactValidator.is_valid_contact("123")  # 纯数字，不是手机号也不是微信号
         assert is_valid is False

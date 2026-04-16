@@ -111,6 +111,24 @@ def test_remove_unspoken_partner_requirement_content_strips_trailing_repair_nois
     assert cleaned == "90后工作稳定就行"
 
 
+def test_remove_unspoken_partner_requirement_content_keeps_leading_requirement_before_contact_tail():
+    cleaned = ExtractionService._remove_unspoken_inferred_partner_requirement_content(  # noqa: SLF001
+        "不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下",
+        "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下",
+    )
+
+    assert cleaned == "不要92"
+
+
+def test_remove_unspoken_partner_requirement_content_strips_tail_noise_but_keeps_emotional_stability():
+    cleaned = ExtractionService._remove_unspoken_inferred_partner_requirement_content(  # noqa: SLF001
+        "情绪稳定就行，其他没有要求，也可以加我微信联系",
+        "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系",
+    )
+
+    assert cleaned == "情绪稳定"
+
+
 def test_low_quality_self_field_gate_rejects_question_fragments_and_dirty_education():
     assert ExtractionService._is_low_quality_self_field_value(
         "occupation",
@@ -253,12 +271,66 @@ def test_normalize_partner_requirement_part_collapses_match_region_object_phrase
     assert ExtractionService._normalize_partner_requirement_part("希望匹配香港地区的对象") == "香港"
 
 
+def test_normalize_partner_requirement_part_canonicalizes_standalone_height_alias():
+    assert ExtractionService._normalize_partner_requirement_part("起码180+") == "身高180cm以上"
+    assert ExtractionService._normalize_partner_requirement_part("180往上") == "身高180cm以上"
+    assert ExtractionService._normalize_partner_requirement_part("180+的男生") == "身高180cm以上"
+
+
 def test_extract_partner_requirement_from_user_message_supports_compact_intro_partner_preferences():
     extracted = ExtractionService._extract_partner_requirement_from_user_message(
         "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地"
     )
 
     assert extracted == "同医疗体系，同在深圳发展，本地优先，比自己大"
+
+
+def test_extract_partner_preference_subslots_supports_bare_height_alias_in_mixed_intro():
+    subslots = ExtractionService._extract_partner_preference_subslots(
+        "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行"
+    )
+
+    assert subslots["partner_pref_age"] == "90后"
+    assert subslots["partner_pref_height"] == "身高180cm以上"
+
+
+def test_split_compact_intro_tokens_skips_hobby_like_xihuan_and_collapses_broken_cjk_spaces():
+    self_tokens, preference_tokens = ExtractionService._split_compact_intro_tokens(  # noqa: SLF001
+        "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，"
+        "原生家庭幸福美满关系简单，期待遇见同在深圳工 作发展90后男生，积极阳光，三观正"
+    )
+
+    assert "喜欢做饭旅游" in self_tokens
+    assert "原生家庭幸福美满关系简单" in self_tokens
+    assert preference_tokens[0] == "期待遇见同在深圳工作发展90后男生"
+
+
+def test_resolve_partner_requirement_from_message_does_not_leak_hobby_chunks_in_spaced_dense_intro():
+    extracted = ExtractionService._resolve_partner_requirement_from_message(  # noqa: SLF001
+        "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，"
+        "原生家庭幸福美满关系简单，期待遇见同在深圳工 作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341",
+        allow_legacy_fallback=True,
+        prefer_structured=True,
+    )
+
+    assert "做饭旅游" not in extracted
+    assert "原生家庭" not in extracted
+    assert "期待遇见同在深圳工作发展90后" in extracted
+    assert "积极阳光" in extracted
+    assert "三观正" in extracted
+
+
+def test_resolve_partner_requirement_from_message_keeps_stability_and_drops_tail_noise_in_mixed_intro():
+    resolved = ExtractionService._resolve_partner_requirement_from_message(  # noqa: SLF001
+        "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系 13423674892微信和电话同号。",
+        allow_legacy_fallback=True,
+        prefer_structured=True,
+    )
+
+    assert "90后" in resolved
+    assert "情绪稳定" in resolved
+    assert "其他没有要求" not in resolved
+    assert "也可以加我微信联系" not in resolved
 
 
 def test_extract_partner_requirement_from_user_message_preserves_partner_age_bucket_in_compact_intro():
@@ -373,6 +445,37 @@ def test_compose_partner_requirement_from_subslots_prefers_structured_parts_but_
             "深圳，最好深户，有房有车，学历本科及以上",
         )
         == "深圳，学历本科及以上，最好深户，有房有车"
+    )
+
+
+def test_compose_partner_requirement_from_subslots_dedupes_semantic_height_alias():
+    subslots = {
+        "partner_pref_age": "90后",
+        "partner_pref_height": "身高180cm以上",
+    }
+
+    assert (
+        ExtractionService._compose_partner_requirement_from_subslots(
+            subslots,
+            "90后工作稳定就行，起码180+",
+        )
+        == "90后工作稳定就行，身高180cm以上"
+    )
+
+
+def test_compose_partner_requirement_from_subslots_dedupes_subslots_covered_by_richer_raw_fragment():
+    subslots = {
+        "partner_pref_location": "深圳",
+        "partner_pref_industry": "同医疗体系",
+        "partner_pref_age_relation": "比自己大",
+    }
+
+    assert (
+        ExtractionService._compose_partner_requirement_from_subslots(
+            subslots,
+            "同医疗体系比自己大都可以同在深圳发展，最好本地",
+        )
+        == "同医疗体系比自己大都可以同在深圳发展，最好本地"
     )
 
 

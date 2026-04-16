@@ -1000,6 +1000,47 @@ class ChatService:
         """
         return getattr(self.ai_service, "model_name", settings.model_name)
 
+    def _maybe_build_model_free_followup_response(
+        self,
+        *,
+        user_profile: UserProfile,
+        user_message: str,
+        turn_decision: TurnDecision | None = None,
+    ) -> str:
+        decision = turn_decision
+        if decision is None:
+            return ""
+        if str(getattr(decision, "response_channel", "") or "").strip() != "model":
+            return ""
+        if str(getattr(decision, "primary_move", "") or "").strip() not in {"ack_and_ask", "light_followup"}:
+            return ""
+        if str(getattr(decision, "followup_topic", "") or "").strip() not in {"profile_ack", "opening_profile_ack"}:
+            return ""
+        if bool(getattr(decision, "prioritize_user_question", False)):
+            return ""
+        if bool(getattr(decision, "allow_medium_target", False)):
+            return ""
+        if str(getattr(decision, "risk", "none") or "").strip() not in {"", "none"}:
+            return ""
+
+        ask_field = str(getattr(decision, "ask_field", "") or "").strip()
+        if not ask_field or ask_field == "contact":
+            return ""
+
+        followup = self._build_followup_seed_for_model_rewrite(
+            ask_field,
+            user_profile,
+            user_message=user_message,
+        ).strip()
+        if not followup:
+            return ""
+
+        ack = (
+            self.turn_understanding_service._build_opening_profile_ack(user_message)  # noqa: SLF001
+            or self.turn_understanding_service._build_lightweight_field_ack(user_message, user_profile)  # noqa: SLF001
+        )
+        return self._sanitize_robotic_tone(" ".join(part for part in (ack, followup) if part).strip())
+
     @staticmethod
     def _normalize_reasoning_effort(value: str) -> str | None:
         normalized = str(value or "").strip().lower()
@@ -3813,7 +3854,13 @@ class ChatService:
         if not question_segments:
             return fields
 
-        pattern_map = {
+        for segment in question_segments:
+            fields |= self._detect_question_fields_in_segment(segment)
+        return fields
+
+    @staticmethod
+    def _question_field_pattern_map() -> dict[str, tuple[str, ...]]:
+        return {
             "sex": (r"男生还是女生", r"男生女生", r"你是男生", r"你是女生", r"女孩子", r"男孩子"),
             "age": (r"多大", r"几岁", r"年龄", r"年纪", r"几几年的", r"哪一年的", r"哪年出生", r"哪一年出生"),
             "location": (r"哪个城市", r"什么城市", r"在哪个城市", r"在哪边", r"哪里生活"),
@@ -3823,11 +3870,83 @@ class ChatService:
             "monthly_income": (r"月收入", r"月薪", r"收入", r"工资", r"收入区间", r"收入大概"),
             "partner_requirement": (r"另一半", r"要求", r"看重", r"想找个什么样", r"更在意哪方面", r"更看重哪一点"),
         }
-        for segment in question_segments:
-            for field, patterns in pattern_map.items():
-                if any(re.search(pattern, segment) for pattern in patterns):
-                    fields.add(field)
-        return fields
+
+    @classmethod
+    def _detect_question_fields_in_segment(cls, segment: str) -> set[str]:
+        text = str(segment or "").strip()
+        if not text:
+            return set()
+
+        detected: set[str] = set()
+        for field, patterns in cls._question_field_pattern_map().items():
+            if any(re.search(pattern, text) for pattern in patterns):
+                detected.add(field)
+        return detected
+
+    @staticmethod
+    def _extract_explicit_question_segments(response: str) -> list[str]:
+        text = str(response or "").strip()
+        if not text:
+            return []
+        return [
+            segment.strip()
+            for segment in re.findall(r"[^。!！\n]*?[？?]", text)
+            if segment.strip()
+        ]
+
+    def _count_questioned_fields_in_response(self, response: str) -> Dict[str, int]:
+        text = str(response or "").strip()
+        if not text:
+            return {}
+
+        counts: Dict[str, int] = {}
+        segments = self._extract_explicit_question_segments(text)
+        if not segments:
+            segments = [
+                segment.strip()
+                for segment in re.split(r"[。!！\n]+", text)
+                if segment.strip() and any(cue in segment for cue in ASK_GUARD_QUESTION_CUES)
+            ]
+        for segment in segments:
+            normalized_segment = re.sub(r"[？?]+\s*$", "", segment).strip()
+            if not normalized_segment:
+                continue
+            for field in self._detect_question_fields_in_segment(normalized_segment):
+                counts[field] = counts.get(field, 0) + 1
+        return counts
+
+    def _resolve_primary_followup_field_from_response(
+        self,
+        *,
+        response: str,
+        planned_ask_field: str = "",
+    ) -> str:
+        planned = str(planned_ask_field or "").strip()
+        if planned:
+            return planned
+
+        for segment in self._extract_explicit_question_segments(response):
+            normalized_segment = re.sub(r"[？?]+\s*$", "", str(segment or "")).strip()
+            detected_fields = list(self._detect_question_fields_in_segment(normalized_segment))
+            if detected_fields:
+                return detected_fields[0]
+        return ""
+
+    @staticmethod
+    def _looks_like_dense_intro_message_for_budget_guard(
+        *,
+        user_profile: UserProfile,
+        user_message: str,
+    ) -> bool:
+        semantic_summary = dict(getattr(user_profile, "last_semantic_summary", {}) or {})
+        if str(semantic_summary.get("turn_mode") or "").strip() == "dense_intro":
+            return True
+
+        message = str(user_message or "").strip()
+        if len(message) < 20:
+            return False
+        punctuation_count = len(re.findall(r"[，,、；;。.!！？]", message))
+        return punctuation_count >= 3
 
     def _append_safe_short_answer_followup(
         self,
@@ -5632,6 +5751,57 @@ class ChatService:
             if len(allow_fields) >= 2 and "monthly_income" in allow_fields:
                 allow_fields.discard("monthly_income")
 
+        repeated_question_fields = {
+            field
+            for field, count in self._count_questioned_fields_in_response(text).items()
+            if count > 1
+        }
+        primary_followup_field = self._resolve_primary_followup_field_from_response(
+            response=text,
+            planned_ask_field=ask_field,
+        )
+        if primary_followup_field and repeated_question_fields:
+            logger.info(
+                "[问题预算护栏] 命中重复追问，回退到单主问题稳定追问: ask_field=%s repeated=%s",
+                primary_followup_field,
+                sorted(repeated_question_fields),
+            )
+            fallback = self._build_budget_guard_fallback_response(
+                user_profile=user_profile,
+                user_message=user_message,
+                ask_field=primary_followup_field,
+                allow_medium_target=False,
+            )
+            if fallback:
+                return fallback
+
+        stage = str(getattr(turn_decision, "stage", "") or "").strip()
+        explicit_question_segments = self._extract_explicit_question_segments(text)
+        if (
+            primary_followup_field
+            and len(explicit_question_segments) > 1
+            and (
+                stage == "opening"
+                or self._looks_like_dense_intro_message_for_budget_guard(
+                    user_profile=user_profile,
+                    user_message=user_message,
+                )
+            )
+        ):
+            logger.info(
+                "[问题预算护栏] dense_intro/opening轮多问并列，回退到单主问题稳定追问: ask_field=%s question_segments=%s",
+                primary_followup_field,
+                len(explicit_question_segments),
+            )
+            fallback = self._build_budget_guard_fallback_response(
+                user_profile=user_profile,
+                user_message=user_message,
+                ask_field=primary_followup_field,
+                allow_medium_target=False,
+            )
+            if fallback:
+                return fallback
+
         if len(asked_fields) <= 2:
             if ask_field and getattr(turn_decision, "allow_medium_target", False):
                 for candidate in sorted(asked_fields - {ask_field}):
@@ -6204,7 +6374,7 @@ class ChatService:
                 contacts["phone"] = phone_value
 
         wechat_match = re.search(
-            r'(?:微信|vx|wx|weixin)[^a-zA-Z0-9_-]*(?:就是手机号)?([a-zA-Z][a-zA-Z0-9_-]{5,19}|1[3-9]\d{9}|[5-9]\d{7})\b',
+            r'(?:微信|vx|wx|weixin)[^a-zA-Z0-9_-]*(?:就是手机号)?([a-zA-Z][a-zA-Z0-9_-]{4,19}|1[3-9]\d{9}|[5-9]\d{7})\b',
             user_message,
             re.IGNORECASE,
         )
@@ -6257,11 +6427,11 @@ class ChatService:
                 return None, None
             if re.search(r"[a-z]", cleaned) and re.search(r"\d", cleaned):
                 return cleaned, "wechat"
-            explicit_id_match = re.search(r"\b(?:wx|vx|weixin)[:：\s]*([a-z][a-z0-9_-]{5,19})\b", lowered)
+            explicit_id_match = re.search(r"\b(?:wx|vx|weixin)[:：\s]*([a-z][a-z0-9_-]{4,19})\b", lowered)
             if explicit_id_match:
                 return explicit_id_match.group(1), "wechat"
             # 仅出现“微信”意向词（例如“用微信联系吧”）不应当作“已提供微信号”。
-            if re.match(r"^[a-z][a-z0-9_-]{5,19}$", cleaned):
+            if re.match(r"^[a-z][a-z0-9_-]{4,19}$", cleaned):
                 return cleaned, "wechat"
 
         return None, None
@@ -6323,7 +6493,37 @@ class ChatService:
             derivations = dict(getattr(understanding_result, "field_derivations", {}) or {})
             for field_name, field_value in derivations.items():
                 extracted.setdefault(field_name, field_value)
-            # unified understanding 已运行时，禁止再用原文 deterministic 二次解释。
+            if self._should_merge_non_ai_understanding_fallback(understanding_result):
+                deterministic = dict(self.turn_understanding_service._extract_deterministic_profile_fields(user_message))  # noqa: SLF001
+                deterministic = self.turn_understanding_service._apply_extraction_guards(  # noqa: SLF001
+                    deterministic,
+                    user_message,
+                    last_response=last_response,
+                )
+                for field_name, field_value in deterministic.items():
+                    if field_value in (None, ""):
+                        continue
+                    extracted.setdefault(field_name, field_value)
+                extraction_service = getattr(self, "extraction_service", None)
+                if (
+                    "partner_requirement" not in extracted
+                    and extraction_service is not None
+                    and hasattr(extraction_service, "_resolve_partner_requirement_from_message")
+                ):
+                    partner_requirement = str(
+                        extraction_service._resolve_partner_requirement_from_message(  # noqa: SLF001
+                            user_message,
+                            allow_legacy_fallback=True,
+                            prefer_structured=True,
+                        )
+                        or ""
+                    ).strip()
+                    if partner_requirement:
+                        extracted["partner_requirement"] = partner_requirement
+                if "partner_gender_preference" not in extracted:
+                    partner_gender = self.turn_understanding_service._extract_partner_gender_preference(user_message)  # noqa: SLF001
+                    if partner_gender:
+                        extracted["partner_gender_preference"] = partner_gender
             return extracted
 
         deterministic = dict(self.turn_understanding_service._extract_deterministic_profile_fields(user_message))  # noqa: SLF001
@@ -6349,6 +6549,136 @@ class ChatService:
                 return False
         return bool(re.search(r"(\d{1,2}岁|(?:19|20)\d{2}年|\d{2}后|\d{2}年)", str(user_message or "")))
 
+    @staticmethod
+    def _should_merge_non_ai_understanding_fallback(understanding_result: TurnUnderstandingResult | None) -> bool:
+        if understanding_result is None:
+            return False
+        semantic_frame = getattr(understanding_result, "semantic_frame", None)
+        source = str(getattr(semantic_frame, "source", "") or "").strip()
+        if source == "ai_structured_extraction":
+            return False
+        return source in {"hybrid_semantic_projection", "legacy_projection"}
+
+    @staticmethod
+    def _canonicalize_no_reask_field(field_name: str) -> str:
+        field = str(field_name or "").strip()
+        if field in {"age_label"}:
+            return "age"
+        if field in {"phone", "wechat"}:
+            return "contact"
+        if field == "partner_gender_preference" or field.startswith("partner_pref_"):
+            return "partner_requirement"
+        return field
+
+    @classmethod
+    def _is_explicit_no_reask_observation(cls, *, user_message: str, observation: Any) -> bool:
+        field_name = cls._canonicalize_no_reask_field(str(getattr(observation, "field", "") or "").strip())
+        scope = str(getattr(observation, "scope", "") or "").strip()
+        evidence_text = str(getattr(observation, "evidence_text", "") or "").strip()
+        normalized_value = str(getattr(observation, "normalized_value", "") or "").strip()
+        source = str(getattr(observation, "source", "") or "").strip()
+        message = str(user_message or "")
+
+        if scope not in {"self", "contact", "partner"}:
+            return False
+        if field_name == "contact":
+            return scope == "contact" and bool(normalized_value or evidence_text)
+        if field_name == "partner_requirement":
+            return scope == "partner" and bool(normalized_value or evidence_text)
+        if field_name == "age":
+            pattern = r"((?:19|20)\d{2}年|\d{2}年(?:的)?|\d{2}后|(?:今年)?\d{1,2}岁)"
+            return bool(re.search(pattern, evidence_text or normalized_value or message))
+        if field_name == "sex":
+            return bool(
+                scope == "self"
+                and (
+                    source.endswith("explicit_self_marker")
+                    or re.search(r"(女生|男生|女的|男的|我是女|我是男|本人女|本人男)", evidence_text or message)
+                )
+            )
+        if field_name == "marital_status":
+            return bool(re.search(r"(未婚|单身|离异|已婚|感情状态)", evidence_text or normalized_value or message))
+        if field_name == "monthly_income":
+            return bool(re.search(r"(收入|月薪|年薪|年入|年新)", evidence_text or normalized_value or message))
+        return bool(normalized_value or evidence_text)
+
+    def _extract_no_reask_fields(
+        self,
+        *,
+        user_message: str,
+        understanding_result: TurnUnderstandingResult | None,
+    ) -> list[str]:
+        semantic_frame = getattr(understanding_result, "semantic_frame", None) if understanding_result is not None else None
+        if semantic_frame is None:
+            return []
+        fields: list[str] = []
+        for observation in list(getattr(semantic_frame, "field_observations", []) or []):
+            if not self._is_explicit_no_reask_observation(user_message=user_message, observation=observation):
+                continue
+            field_name = self._canonicalize_no_reask_field(str(getattr(observation, "field", "") or "").strip())
+            if field_name:
+                fields.append(field_name)
+        ordered_unique: list[str] = []
+        seen: set[str] = set()
+        for field_name in fields:
+            if field_name in seen:
+                continue
+            seen.add(field_name)
+            ordered_unique.append(field_name)
+        return ordered_unique
+
+    def _build_last_semantic_summary_payload(
+        self,
+        *,
+        user_message: str,
+        understanding_result: TurnUnderstandingResult | None,
+    ) -> Dict[str, Any]:
+        semantic_frame = getattr(understanding_result, "semantic_frame", None) if understanding_result is not None else None
+        persistence_plan = getattr(understanding_result, "persistence_plan", None) if understanding_result is not None else None
+        if semantic_frame is None:
+            return {}
+        turn_mode = "default"
+        soft_profile_summary = ""
+        partner_summary = ""
+        for note in list(getattr(understanding_result, "notes", []) or []):
+            clean_note = str(note or "").strip()
+            if clean_note.startswith("turn_mode="):
+                turn_mode = clean_note.split("=", 1)[1].strip() or "default"
+                break
+        for note in list(getattr(semantic_frame, "notes", []) or []):
+            clean_note = str(note or "").strip()
+            if clean_note.startswith("soft_profile_summary="):
+                soft_profile_summary = clean_note.split("=", 1)[1].strip()
+            elif clean_note.startswith("partner_summary="):
+                partner_summary = clean_note.split("=", 1)[1].strip()
+        return {
+            "primary_domain": getattr(semantic_frame, "primary_domain", None),
+            "acts": list(getattr(semantic_frame, "acts", []) or []),
+            "user_questions": [
+                str(getattr(item, "topic", "") or "").strip()
+                for item in list(getattr(semantic_frame, "user_questions", []) or [])
+                if str(getattr(item, "topic", "") or "").strip()
+            ],
+            "observed_fields": [
+                str(getattr(item, "field", "") or "").strip()
+                for item in list(getattr(semantic_frame, "field_observations", []) or [])
+                if str(getattr(item, "field", "") or "").strip()
+            ],
+            "pending_fields": [
+                str(getattr(item, "field", "") or "").strip()
+                for item in list(getattr(persistence_plan, "pending_fields", []) or [])
+                if str(getattr(item, "field", "") or "").strip()
+            ],
+            "resume_target": getattr(persistence_plan, "next_resume_target", None) if persistence_plan is not None else None,
+            "no_reask_fields": self._extract_no_reask_fields(
+                user_message=user_message,
+                understanding_result=understanding_result,
+            ),
+            "turn_mode": turn_mode,
+            "soft_profile_summary": soft_profile_summary,
+            "partner_summary": partner_summary,
+        }
+
     def _build_shadow_profile_for_decision(
         self,
         user_profile: UserProfile,
@@ -6365,6 +6695,13 @@ class ChatService:
         - 不直接改真实 profile，不影响正式落库
         """
         shadow_profile = user_profile.model_copy(deep=True)
+        if understanding_result is not None:
+            semantic_summary_payload = self._build_last_semantic_summary_payload(
+                user_message=user_message,
+                understanding_result=understanding_result,
+            )
+            if semantic_summary_payload:
+                shadow_profile.set_last_semantic_summary(semantic_summary_payload)
         extracted = self._extract_turn_level_fields(
             user_message,
             understanding_result=understanding_result,
@@ -7113,7 +7450,7 @@ class ChatService:
         digits_only = re.sub(r"\D", "", text)
         if re.match(r"^1[3-9]\d{9}$", digits_only) or re.match(r"^[5-9]\d{7}$", digits_only):
             return True
-        return bool(re.match(r"^[A-Za-z][A-Za-z0-9_-]{5,19}$", text))
+        return bool(re.match(r"^[A-Za-z][A-Za-z0-9_-]{4,19}$", text))
 
     def _is_contact_like_user_message(
         self,

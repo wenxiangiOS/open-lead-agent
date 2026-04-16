@@ -27,11 +27,11 @@ class TestWechatAndPhoneLogic:
             has_digit = bool(re.search(r"\d", text_stripped))
 
             if has_letter and has_digit:
-                wechat_pattern = r"^[a-zA-Z][a-zA-Z0-9_-]{5,19}$"
+                wechat_pattern = r"^[a-zA-Z][a-zA-Z0-9_-]{4,19}$"
                 if re.match(wechat_pattern, text_stripped):
                     return (False, "完整输入匹配微信号格式")
 
-                potential_wechat = re.search(r"[a-zA-Z][a-zA-Z0-9_-]{5,19}", text_stripped)
+                potential_wechat = re.search(r"[a-zA-Z][a-zA-Z0-9_-]{4,19}", text_stripped)
                 if potential_wechat:
                     return (False, f"包含微信号格式: {potential_wechat.group()}")
 
@@ -52,6 +52,7 @@ class TestWechatAndPhoneLogic:
         """微信号表达不应被轻易误判为乱码。"""
         test_cases = [
             ("留微信，我微信fwf474774747", False),
+            ("可以微信M2345联系 白天上班也不方便接电话", False),
             ("我的微信是abc123456", False),
             ("微信wx123456789", False),
             ("微信号test_wx_123", False),

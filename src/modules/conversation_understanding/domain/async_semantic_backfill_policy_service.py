@@ -38,6 +38,10 @@ class AsyncSemanticBackfillPolicyService:
         "partner_pref_other",
     }
     _LOW_SIGNAL_TURN_TYPES = {"closing_exit", "confirmation", "invalid_input"}
+    _SOFT_PROFILE_SUMMARY_RE = re.compile(r"(喜欢|爱好|旅游|做饭|原生家庭|感情经历|[EI]人|性格|慢热|外向|内向)")
+    _PARTNER_SUMMARY_RE = re.compile(
+        r"(找对象|找男朋友|找女朋友|想找|想着|期待|遇见|希望对方|最好|优先|不要\d{2}|不要|同城|本地|同在|有房有车|工作稳定|积极阳光|三观正|情绪稳定)"
+    )
 
     def decide(
         self,
@@ -64,17 +68,22 @@ class AsyncSemanticBackfillPolicyService:
 
         semantic_frame = getattr(turn_understanding, "semantic_frame", None)
         semantic_source = str(getattr(semantic_frame, "source", "") or "").strip()
-        if semantic_source == "ai_structured_extraction":
+        primary_turn_type = str(getattr(turn_understanding, "primary_turn_type", "") or "").strip()
+        has_conflict = primary_turn_type == "correction" or self._has_conflict_observation(semantic_frame)
+        summary_gap = self._has_summary_gap(
+            user_message=user_message,
+            semantic_frame=semantic_frame,
+        )
+
+        target_fields = self._collect_target_fields(persistence_plan)
+        if semantic_source == "ai_structured_extraction" and not (target_fields or has_conflict or summary_gap):
             return AsyncSemanticBackfillDecision(
                 should_schedule=False,
                 reason="already_ai",
                 route_name=route,
             )
-
-        target_fields = self._collect_target_fields(persistence_plan)
         observed_fields = self._collect_observed_fields(turn_understanding=turn_understanding, persistence_plan=persistence_plan)
         high_risk_fields = sorted({field for field in observed_fields if self._is_high_risk_field(field)})
-        primary_turn_type = str(getattr(turn_understanding, "primary_turn_type", "") or "").strip()
         priority_task = str(
             getattr(getattr(turn_understanding, "priority_decision", None), "primary_task", "") or ""
         ).strip()
@@ -90,8 +99,10 @@ class AsyncSemanticBackfillPolicyService:
             reason_parts.append("mixed_question")
         if self._is_multi_slot_turn(observed_fields=observed_fields, observation_count=observation_count):
             reason_parts.append("multi_slot")
-        if primary_turn_type == "correction" or self._has_conflict_observation(semantic_frame):
+        if has_conflict:
             reason_parts.append("correction_or_conflict")
+        if summary_gap:
+            reason_parts.append("missing_summary")
         if self._has_partner_signal(observed_fields=observed_fields):
             reason_parts.append("partner_preference")
         if priority_task == "status_confirmation" and observed_fields:
@@ -175,6 +186,25 @@ class AsyncSemanticBackfillPolicyService:
         for observation in list(getattr(semantic_frame, "field_observations", []) or []):
             if str(getattr(observation, "conflict_hint", "") or "").strip():
                 return True
+        return False
+
+    @classmethod
+    def _has_summary_gap(cls, *, user_message: str, semantic_frame: Any) -> bool:
+        notes = {
+            str(note).split("=", 1)[0]: str(note).split("=", 1)[1]
+            for note in list(getattr(semantic_frame, "notes", []) or [])
+            if "=" in str(note)
+        }
+        text = str(user_message or "").strip()
+        if not text:
+            return False
+        compact = re.sub(r"\s+", "", text)
+        if not compact:
+            return False
+        if cls._PARTNER_SUMMARY_RE.search(compact) and not str(notes.get("partner_summary") or "").strip():
+            return True
+        if cls._SOFT_PROFILE_SUMMARY_RE.search(compact) and not str(notes.get("soft_profile_summary") or "").strip():
+            return True
         return False
 
     @classmethod

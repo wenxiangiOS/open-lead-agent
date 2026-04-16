@@ -32,6 +32,19 @@
 3. 回退路径不再拥有高风险字段正式写库权
 4. 回复时延与质量并行，避免理解阻塞导致长尾超时
 
+## 1.1 当前实施口径（2026-04-15 补充）
+
+当前统一理解优化仍处于过渡态，但主链边界必须明确：
+
+1. `UnifiedTurnUnderstandingService` 是唯一正式理解入口，也是唯一正式决策主脑
+2. `TurnUnderstandingService` 仍保留，但当前定位只能是 helper / fallback library，不再允许作为第二个主脑独立决定最终 turn intent
+3. 当前阶段允许新旧并存，但不允许“双重决策并存”
+4. 同步 AI 结构化理解仍可保留，但定位改为“增强器”，不能再成为主链是否听懂用户的唯一依赖
+5. 用户体验目标不是“每轮一次性抽满全部字段”，而是：
+   - 明显核心字段尽量稳
+   - AI 失败时不要暴露“没听懂”
+   - 缺失字段用自然补问收口
+
 ---
 
 ## 2. 核心原则（保留）
@@ -143,6 +156,165 @@
 - 完整语义补全后执行冲突合并
 - 触发状态提升（`provisional -> committed`）
 - 全程受版本保护与覆盖规则约束
+
+### 5.3 密集自我介绍同步理解（新增）
+
+适用场景：
+
+- 用户一上来发长句，混合了本人资料、择偶要求、联系方式、FAQ
+- 当前轮如果只靠 fallback，很容易出现“明明说了还继续问”的傻感
+
+执行规则：
+
+- 统一理解先判定 `turn_mode=dense_intro`
+- 命中后，如果 `UNIFIED_TURN_SYNC_AI_DENSE_INTRO_ENABLED=1`：
+  - 规则层覆盖不足时，本轮同步 AI 触发原因为 `sync_dense_intro`
+  - 规则层已经稳定覆盖核心自我信息，且 partner/contact 信号也已入槽时，直接走 `dense_intro_async_backfill_only`
+  - 对于“长句自介 + 联系方式 + 明显择偶意图”这类高信息量开场，即使 partner 子槽尚未在前置语义层完全投影，只要本人资料已稳定覆盖，也应优先走 `dense_intro_async_backfill_only`
+  - 对于“长句自介 + 收费问题”这类 mixed FAQ，只要规则层已经稳定覆盖本人资料，且文本里仍有明显择偶/资料信号，也不应仅因 `怎么收费` 继续阻塞主链同步 AI
+- `dense_intro` 专用超时读取 `UNIFIED_TURN_SYNC_AI_DENSE_INTRO_TIMEOUT_SECONDS`
+- 但主链实际同步阻塞仍受 `UNIFIED_TURN_SYNC_AI_MAX_BLOCKING_SECONDS` 约束
+- 即：当前轮实际等待时长 = `min(UNIFIED_TURN_SYNC_AI_DENSE_INTRO_TIMEOUT_SECONDS, UNIFIED_TURN_SYNC_AI_MAX_BLOCKING_SECONDS)`
+- 如果只是为了排障/离线验证想真的等到更长时间，需要同时抬高 `UNIFIED_TURN_SYNC_AI_MAX_BLOCKING_SECONDS`
+
+目标：
+
+- 让长句高信息量输入在“当前轮”就完成理解，当前轮回复不要回头问已经明确给出的字段
+- 异步 backfill 继续保留，但只负责补细节和补档，不负责修正当前轮已经发出的问句
+
+### 5.4 当前轮不重复追问摘要（新增）
+
+统一理解完成后，需要把以下摘要同步到 `last_semantic_summary`：
+
+- `turn_mode`
+- `observed_fields`
+- `pending_fields`
+- `resume_target`
+- `no_reask_fields`
+
+约束：
+
+- `no_reask_fields` 的语义只是“当前轮/下一轮暂时不要主动再问”，不是“字段已经 committed”
+- ChatService 决策阶段必须先把这份摘要注入 shadow profile，再决定下一问
+- `pending_birth_year_bucket` 这类明确待确认状态优先级更高，不能被 `no_reask_fields=["age"]` 直接压掉
+
+### 5.4.1 AI 成功后的 fallback 融合补填（新增）
+
+- 当 `ai_structured_extraction` 成功时，不再把 fallback 完全丢弃
+- 当前阶段先做“缺失字段补填”：
+  - 如果某个 `field + scope` 已经由 AI 给出，则保留 AI 结果，不用 fallback 同字段覆盖
+  - 如果某个 `field + scope` AI 没给，但 fallback 投影里有，则把 fallback observation 补进同一份 semantic frame
+- 这一步的目标是让 AI 和 fallback 从“二选一”变成“AI 主体 + fallback 补缺”
+- 同字段冲突目前只放开“可证明更优”的 refinement：
+  - 例如 `深圳 -> 深圳南山`、`硕士 -> 港硕`
+  - 或 authoritative direct observation 对 AI 粗值的纠偏，例如 `外贸行业工作 -> 外贸`
+- 更宽的同字段冲突合议仍暂缓，避免一次性改动过大
+
+### 5.5 同步 AI 超时后的主链降级（新增硬规范）
+
+适用场景：
+
+- `sync_dense_intro`
+- 资料回答轮
+- 混合长句：本人资料 + 择偶要求 + 联系方式 + FAQ
+
+硬规则：
+
+1. 同步 AI 一旦超时、报错或返回不可用结果，主链必须留在 unified pipeline 内继续完成降级，不允许直接把整句视为“未理解”
+2. 降级顺序固定为：
+   - 先做长句切块
+   - 再做块级高置信字段抽取
+   - 再做自然摘要收口
+   - 最后生成 `no_reask_fields`
+3. 长句切块最少要覆盖：
+   - `self_profile_chunk`
+   - `partner_requirement_chunk`
+   - `contact_chunk`
+   - `faq_chunk`
+   - `soft_trait_chunk`
+4. `no_reask_fields` 只能来自显性硬证据，不得来自模糊摘要
+5. 当前轮回复只允许消费：
+   - 已确认硬字段
+   - 当前轮自然摘要
+   - 当前最明显的用户问题
+6. AI 超时后，系统仍必须避免回头问已经明确给出的字段，例如：
+   - `女生`
+   - `94年`
+   - `深圳南山`
+   - `港硕`
+   - `微信联系我 134...`
+
+字段分流约束：
+
+- 硬字段：`sex, age, location, education, occupation, marital_status, monthly_income, contact`
+- 软画像：例如 `E人、喜欢做饭旅游、感情经历简单、原生家庭幸福`
+- 择偶摘要：例如 `90后男生、同在深圳发展、积极阳光、三观正`
+
+目标：
+
+- AI 成功时提高精度
+- AI 失败时保证主链不变傻
+- 回复层先承接重点，再补 1 个关键问题，而不是机械重问
+
+补充说明：
+
+- 若业务验收允许 `120s` 内回复，`UNIFIED_TURN_SYNC_AI_DENSE_INTRO_TIMEOUT_SECONDS` 仍可以保留较宽松的质量上限
+- 但这不代表主链可以真的卡满该值；主链当前轮仍必须受 `UNIFIED_TURN_SYNC_AI_MAX_BLOCKING_SECONDS` 控制
+- 这时主链的关键不是“10 秒内一定返回”，而是“单次坏调用不要拖满 45 秒，连续异常也不要每轮都卡满超时”
+- 因此统一理解主链需要额外具备同步 AI 熔断能力：
+  - 仅对 `timeout / connection / read` 类底层失败计数
+  - 连续达到阈值后，短时间内跳过同步 AI
+  - 主链立即回落到增强 fallback
+  - 再由异步 AI 补 pending / provisional / conflict / summary
+
+### 5.6 字段级仲裁（新增硬规范）
+
+统一理解输出不是最终真值，正式写库前必须经过字段级仲裁。
+
+仲裁优先级固定为：
+
+1. 原文显性硬证据
+2. 系统可验证派生值
+3. AI 结构化值
+4. 弱推断值
+
+字段分层：
+
+- 硬证据字段：
+  - `sex`
+  - `age_label`
+  - `age`
+  - `phone`
+  - `wechat`
+  - `location`
+  - `education`
+  - `occupation`
+  - `marital_status`
+  - 显性 `monthly_income`
+- 半结构化偏好字段：
+  - `partner_gender_preference`
+  - `partner_pref_*`
+  - `partner_requirement`
+- 软画像字段：
+  - `soft_profile_summary`
+  - `partner_summary`
+
+硬规则：
+
+1. 只要当前轮已经提取到明确 `age_label/birth_year`，则 `age` 必须由系统派生；AI 给出的冲突年龄不得直接 committed
+2. 联系方式必须服从原文类型证据
+   - `微信联系我 xxx` 不得自动扩写成 `phone + wechat`
+   - `电话 xxx` 不得自动改写为 `wechat`
+3. AI 成功并不意味着 fallback/证据层失效；证据层必须继续参与仲裁
+4. 无法验证且与显性证据冲突的 AI 值，必须进入 `rejected` 或 `pending_confirm`
+5. `partner_requirement` 与本人信息、兴趣、自我标签必须严格分流，禁止串槽
+
+目标：
+
+- AI 负责理解复杂语义
+- 证据层负责守住硬真值
+- 仲裁层负责输出可写真值
+- 下游不再自行决定“到底该信谁”
 
 ---
 
@@ -257,17 +429,26 @@
 
 ## 11. 时延与稳定性策略（新增硬规范）
 
-1. 同步主链路按场景启用 AI 语义提取，默认覆盖资料收集答案轮
-   当当前轮看起来是在回答资料字段、补充本人信息、补充择偶要求或确认联系方式时，同步链路必须优先启用 AI 结构化，避免“AI 只在异步补写可见，主链仍按 fallback 提交”的断裂。
-2. 非高价值轮次仍默认走同步轻链 + 异步 backfill，避免全量每轮都打 AI
-3. 超时立即降级到阶段 A 可用输出
-4. 异步 backfill 调度必须做到“全入口统一评估”，但不是“全量每轮都打 AI”
-5. 异步 backfill 任务必须做 account 级并发去重，避免同账号重复堆积
-6. 异步 backfill 任务必须做 message fingerprint 去重，避免同一句高价值输入被重复补写
-7. 异步 backfill 连续失败或 `ai_not_ready` 后必须进入 cooldown，避免高价值轮次反复打空枪
-8. 异步补全不阻塞当前回复
+1. 同步主链路先做切块 + 高置信 deterministic 提取，再按场景启用 AI 语义增强
+2. 同步 AI 的职责是提高精度，不再承担“主链唯一理解器”角色
+3. 非高价值轮次默认走同步轻链 + 异步 backfill，避免全量每轮都打 AI
+4. 同步 AI 超时后必须立刻降级到阶段 A 可用输出，且该输出必须包含块级抽取结果与摘要，不得退化成“没听懂”
+5. 异步 backfill 调度必须做到“全入口统一评估”，但不是“全量每轮都打 AI”
+6. 异步 backfill 不再采用 `already_ai -> 一刀切跳过`
+7. 只有当主链没有 `pending/provisional/conflict/missing_summary` 时，才允许 `already_ai` 直接 skip
+8. 异步 backfill 一旦触发，任务必须缩窄为“定向补洞”，优先补：
+   - `pending_fields`
+   - `provisional_fields`
+   - 冲突字段
+   - `soft_profile_summary`
+   - `partner_summary`
+9. 异步 backfill 任务必须做 account 级并发去重，避免同账号重复堆积
+10. 异步 backfill 任务必须做 message fingerprint 去重，避免同一句高价值输入被重复补写
+11. 异步 backfill 连续失败或 `ai_not_ready` 后必须进入 cooldown，避免高价值轮次反复打空枪
+12. 异步补全不阻塞当前回复
+13. 生产环境下 dense intro 同步 AI 预算应保持短预算，默认目标 `8~12s`；更长超时只用于排障验证，不应作为常态主链配置
 
-### 11.2 AI 提交契约
+### 11.1 AI 提交契约
 
 统一口径：
 
@@ -283,7 +464,7 @@
 3. 覆盖稳定旧值且没有纠正语义
 4. CAS guard 失败
 
-### 11.1 全入口统一 async backfill 调度
+### 11.2 全入口统一 async backfill 调度
 
 统一原则：
 
@@ -303,7 +484,7 @@
 - `already_ended` 等无统一理解结果的超早返回路径，也要进入统一调度入口，但会因 `missing_understanding` 被明确跳过
 - 不允许再出现“只有 model 路径会评估 backfill，其他路由直接绕过”的实现
 
-### 11.2 高价值触发策略（不是每轮都打 AI）
+### 11.3 高价值触发策略（不是每轮都打 AI）
 
 只有命中高价值条件的轮次才允许真正触发异步 AI 语义补全。
 
@@ -322,7 +503,7 @@
 2. 纯确认 / 纯寒暄 / 纯结束语
 3. 无新增信息、无高风险字段、无 provisional/pending 的低价值轮次
 
-### 11.3 调度门控与去重
+### 11.4 调度门控与去重
 
 调度顺序固定为：
 
@@ -340,7 +521,7 @@
 3. cooldown 必须是 account 级，防止单账号在 AI 超时期间持续打满异步任务
 4. `skip reason` 必须可观测，不能只记“没触发”
 
-### 11.4 最终回复生成链路解耦（新增硬规范）
+### 11.5 最终回复生成链路解耦（新增硬规范）
 
 1. 最终回复模型只负责生成用户可见文案，不再承担字段抽取职责
 2. 最终回复 prompt 禁止再拼接 `<extract>` 或其他结构化抽取协议
@@ -353,7 +534,7 @@
    - 若 provider 不支持高级参数，允许自动兼容回退，但必须打日志
 7. 目标是把“可见回复生成”从多任务重载链路收口为单任务短链路，避免再出现 `max_tokens=360` 但 `completion_tokens` 异常膨胀的问题
 
-### 11.5 与 `11_AI_RESPONSE_UNIFIED_GENERATION_DESIGN.md` 的职责边界（本次新增）
+### 11.6 与 `11_AI_RESPONSE_UNIFIED_GENERATION_DESIGN.md` 的职责边界（本次新增）
 
 统一理解域和统一生成域必须严格解耦，边界如下：
 
@@ -373,7 +554,7 @@
 - 统一生成继续保证真人感输出
 - 两者都不能通过“生成后再改正文”来相互补锅
 
-### 11.6 提交字段单一真相（避免“像没记忆”）
+### 11.7 提交字段单一真相（避免“像没记忆”）
 
 为消除“本轮识别正确但下一轮决策看不到”的断裂，必须收口为单一提交视图：
 
@@ -439,11 +620,13 @@
 
 ## 14. 实施顺序（质量优先）
 
-1. 字段状态机 + 高风险硬门控 + 写库入口只吃 committed
-2. 冲突策略 + CAS 版本保护
-3. 异步补全与状态提升
-4. 清理所有 legacy 原文解释路径
-5. 全量回归 + 灰度 + 指标验收达标后全量切换
+1. 长句切块 + 块分类 + 显性 `no_reask_fields`
+2. 硬字段 / 软画像 / 择偶摘要分流
+3. 字段状态机 + 高风险硬门控 + 写库入口只吃 committed
+4. 同步 AI 降级为增强器，异步 backfill 负责补细节和状态提升
+5. 冲突策略 + CAS 版本保护
+6. 清理所有 legacy 原文解释路径
+7. 全量回归 + 灰度 + 指标验收达标后全量切换
 
 ---
 
@@ -455,3 +638,4 @@
 - `TurnPersistencePlan` 是唯一正式写库计划
 - `resolved_slots` 是 compat 投影，不得反向主导语义
 - 统一理解域收回解释权，同时引入状态机、CAS 和 SLO，确保“质量优先”可工程化落地
+- 当前阶段允许新旧实现并存，但正式主链只能有一个脑子：`UnifiedTurnUnderstandingService`

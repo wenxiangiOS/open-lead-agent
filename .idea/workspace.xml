@@ -7,85 +7,47 @@
     <list default="true" id="dab58ba2-b9a5-4583-a575-0c0dcae04bd8" name="Changes" comment="Changes">
       <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/00_00_README.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/00_00_README.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/05_PROFILE_COLLECTION_STRATEGY.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/05_PROFILE_COLLECTION_STRATEGY.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/06_CONTACT_COLLECTION.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/06_CONTACT_COLLECTION.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/08_OPENING_GUARD_DESIGN.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/08_OPENING_GUARD_DESIGN.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/09_TURN_UNDERSTANDING_REFACTOR_DESIGN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/09_TURN_PRIORITY_POLICY_DESIGN.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/09_TURN_PRIORITY_POLICY_DESIGN.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/10_UNIFIED_TURN_UNDERSTANDING_PIPELINE_DESIGN.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/10_UNIFIED_TURN_UNDERSTANDING_PIPELINE_DESIGN.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/11_AI_RESPONSE_UNIFIED_GENERATION_CLEANUP_CHECKLIST.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/11_AI_RESPONSE_UNIFIED_GENERATION_CLEANUP_CHECKLIST.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/11_AI_RESPONSE_UNIFIED_GENERATION_DESIGN.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/11_AI_RESPONSE_UNIFIED_GENERATION_DESIGN.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/contact_collection_cheatsheet.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/contact_collection_cheatsheet.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/api/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/api/app.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/api/middleware/error_handling.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/api/middleware/error_handling.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/api/routes/chat.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/api/routes/chat.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/settings.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/compat_cleanup_plan.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/compat_cleanup_plan.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/real_ai_policy_regression.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/real_ai_policy_regression.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/reports/real_ai/latest.json" beforeDir="false" afterPath="$PROJECT_DIR$/reports/real_ai/latest.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/reports/real_ai/latest.md" beforeDir="false" afterPath="$PROJECT_DIR$/reports/real_ai/latest.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/models/user_profile.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/user_profile.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/ai_response_unified_generation/domain/response_observability_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/ai_response_unified_generation/domain/response_observability_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/ai_response_unified_generation/domain/response_validation_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/ai_response_unified_generation/domain/response_validation_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation/application/process_chat_turn.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation/application/process_chat_turn.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation/domain/collection_concern_detector.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation/domain/collection_concern_detector.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation/domain/conversation_ending_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation/domain/conversation_ending_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation/domain/expectation_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation/domain/expectation_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation/domain/turn_decision.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation/domain/turn_decision.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation/domain/turn_understanding_models.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation/domain/turn_understanding_models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/modules/conversation/domain/input_fallback_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation/domain/input_fallback_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/modules/conversation/domain/turn_understanding_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation/domain/turn_understanding_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation/domain/user_question_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation/domain/user_question_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation_response/domain/ai_response_generator.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_response/domain/ai_response_generator.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/modules/conversation_response/domain/response_plan_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_response/domain/response_plan_builder.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/ai_context_disambiguation_layer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/contextual_slot_governance_layer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/contextual_slot_governance_layer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/field_arbitration_layer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/field_derivation_layer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/field_derivation_layer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/ai_semantic_extraction_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/ai_semantic_extraction_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/async_semantic_backfill_policy_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/async_semantic_backfill_policy_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/field_acceptance_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/field_acceptance_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/field_permission_layer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/field_permission_layer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/followup_planning_layer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/followup_planning_layer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/models.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/reply_act_classification_layer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/reply_act_classification_layer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/unified_turn_understanding_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/conversation_understanding/domain/unified_turn_understanding_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/profile_collection/application/profile_collection_coordinator.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/profile_collection/application/profile_collection_coordinator.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/modules/profile_collection/domain/extraction_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/profile_collection/domain/extraction_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/modules/profile_collection/domain/profile_collection_policy.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/profile_collection/domain/profile_collection_policy.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/modules/profile_collection/domain/validation_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/modules/profile_collection/domain/validation_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/ai_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/ai_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/collection/contact_collection_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/collection/contact_collection_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/core/chat_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_collection_extraction_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_collection_extraction_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_collection_postprocess_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_collection_postprocess_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_contact_context_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_contact_context_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_contact_validation_flow_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_contact_validation_flow_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_delivery_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_delivery_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_finalize_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_finalize_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_followup_prompt_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_followup_prompt_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_generation_prompt_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_generation_prompt_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_generation_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_generation_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_pre_generation_resolution_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_pre_generation_resolution_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_preparation_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_preparation_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_summary_helper_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_summary_helper_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_text_cleanup_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_text_cleanup_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_validation_recovery_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_validation_recovery_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/core/dialogue_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/dialogue_manager.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/data/redis_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/data/redis_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/data/user_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/data/user_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/services/prompts/prompts.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/prompts/prompts.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/workers/reply_sender_worker.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/workers/reply_sender_worker.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/testChat.py" beforeDir="false" afterPath="$PROJECT_DIR$/testChat.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_ai_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_ai_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_ask_tracking_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_ask_tracking_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_chat_service_finalize_subservices.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_chat_service_finalize_subservices.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/services/core/chat_service_response_cleanup_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/services/core/chat_service_response_cleanup_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/validators.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/validators.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/integration/test_profile_collection_policy_integration.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/integration/test_profile_collection_policy_integration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/real_ai/scenarios/contact_regression.json" beforeDir="false" afterPath="$PROJECT_DIR$/tests/real_ai/scenarios/contact_regression.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/unit/test_chat_service_regressions.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_chat_service_regressions.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_chat_service_summary_helpers.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_chat_service_summary_helpers.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/unit/test_chat_service_text_helpers.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_chat_service_text_helpers.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/unit/test_chat_service_validation_feedback.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_chat_service_validation_feedback.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_contact_collection_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_contact_collection_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_conversation_ending_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_conversation_ending_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_dialogue_manager_prompt_helpers.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_dialogue_manager_prompt_helpers.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/unit/test_conversation_understanding_layers.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_conversation_understanding_layers.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/unit/test_extraction_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_extraction_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_followup_planning_layer.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_followup_planning_layer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_process_chat_turn_use_case.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_process_chat_turn_use_case.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/unit/test_phone_validation.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_phone_validation.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/unit/test_process_chat_turn_async_backfill.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_process_chat_turn_async_backfill.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/unit/test_profile_collection_policy.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_profile_collection_policy.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/unit/test_services.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_services.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/unit/test_turn_understanding_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_turn_understanding_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/unit/test_unified_turn_understanding_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_unified_turn_understanding_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/unit/test_user_profile_age_normalization.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_user_profile_age_normalization.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/unit/test_wechat_and_phone_logic.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/unit/test_wechat_and_phone_logic.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

@@ -1,0 +1,312 @@
+{
+  "started_at": "2026-04-16T10:03:10",
+  "ended_at": "2026-04-16T10:03:56",
+  "scenario_file": "/tmp/real_ai_all_2eh0ds2w",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "total_duration_seconds": 46.302,
+    "avg_duration_seconds": 46.302,
+    "max_duration_seconds": 46.302,
+    "token_usage": {
+      "prompt_tokens": 7755,
+      "completion_tokens": 3084,
+      "total_tokens": 10839,
+      "call_count": 3
+    },
+    "failure_breakdown": {}
+  },
+  "results": [
+    {
+      "scenario_id": "contact_short_wechat_after_phone_prompt_should_not_be_treated_as_invalid_phone",
+      "source_file": "/tmp/real_ai_all_2eh0ds2w/scenarios__contact_regression.json",
+      "category": "contact",
+      "tags": [
+        "critical",
+        "contact_phone",
+        "contact_wechat",
+        "retry",
+        "normalization"
+      ],
+      "description": "电话语境下，用户明确说电话不方便并提供 5 位短微信号时，应识别为微信而不是回成手机号格式错误。",
+      "passed": true,
+      "checks_total": 3,
+      "checks_passed": 3,
+      "failures": [],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "94年，湖南女生在深圳南山，外贸工作，深户，港硕，E人，感情经历简单，未婚单身，年薪20+，平常喜欢做饭旅游，原生家庭幸福美满，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，暂时就这么多，到时候电话还是微信联系啊",
+          "assistant_response": "我看你资料和。 你在深圳南山做外贸这块是吧，留个手机号会更方便一点，后面有合适的我也好联系上你。",
+          "collected_info": {
+            "sex": "女",
+            "last_name": "未留称呼",
+            "age": "94年(32岁)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "深圳南山",
+            "education": "港硕",
+            "marital_status": "单身",
+            "monthly_income": "未留",
+            "occupation": "外贸",
+            "occupation_inference_candidate": "无",
+            "contact": "电话争取中",
+            "partner_gender_preference": "未留",
+            "partner_requirement": "期待遇见同在深圳工作发展90后，积极阳光，三观正，90后，深圳"
+          }
+        },
+        {
+          "index": 2,
+          "user_message": "可以微信M2345联系 白天上班也不方便接电话",
+          "assistant_response": "微信我看到了。你要是方便的话，也可以补个常用手机号。",
+          "collected_info": {
+            "sex": "女",
+            "last_name": "未留称呼",
+            "age": "94年(32岁)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "深圳南山",
+            "education": "港硕",
+            "marital_status": "单身",
+            "monthly_income": "未留",
+            "occupation": "外贸",
+            "occupation_inference_candidate": "无",
+            "contact": "微信: M2345",
+            "partner_gender_preference": "未留",
+            "partner_requirement": "期待遇见同在深圳工作发展90后，积极阳光，三观正"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_contact_short_wechat_after_phone_prompt_should_not_be_treated_as_invalid_phone_03ff8d30",
+        "created_at": "2026-04-16T10:03:10.650530",
+        "updated_at": "2026-04-16T10:03:56.821992",
+        "profile_version": 13,
+        "sex": "女",
+        "last_name": null,
+        "age": 32,
+        "age_label": "94年",
+        "pending_birth_year_bucket": null,
+        "birth_year_confirmation_closed": false,
+        "height": null,
+        "weight": null,
+        "location": "深圳南山",
+        "education": "港硕",
+        "marital_status": "单身",
+        "monthly_income": null,
+        "occupation": "外贸",
+        "occupation_inference_candidate": null,
+        "contact": null,
+        "phone": null,
+        "wechat": "M2345",
+        "partner_requirement": "期待遇见同在深圳工作发展90后，积极阳光，三观正，90后，深圳",
+        "partner_gender_preference": null,
+        "partner_pref_location": "深圳",
+        "partner_pref_age": "90后",
+        "partner_pref_industry": null,
+        "partner_pref_age_relation": null,
+        "partner_pref_locality": null,
+        "partner_pref_height": null,
+        "partner_pref_education": null,
+        "partner_pref_personality": null,
+        "partner_pref_income": null,
+        "partner_pref_other": null,
+        "extraction_evidence": {
+          "sex": {
+            "value": "女",
+            "source_text": "女",
+            "turn_id": 1,
+            "confidence": 0.9,
+            "source": "persistence_plan:ai",
+            "reason": "direct_write",
+            "updated_at": "2026-04-16T10:03:43.106265"
+          },
+          "location": {
+            "value": "深圳南山",
+            "source_text": "深圳南山",
+            "turn_id": 1,
+            "confidence": 0.9,
+            "source": "persistence_plan:ai",
+            "reason": "direct_write",
+            "updated_at": "2026-04-16T10:03:43.111942"
+          },
+          "education": {
+            "value": "港硕",
+            "source_text": "94年，湖南女生在深圳南山，外贸工作，深户，港硕，E人，感情经历简单，未婚单身，年薪20+，平常喜欢做饭旅游，原生家庭幸福美满，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，暂时就这么多，到时候电话还是微信联系啊",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-16T10:03:43.116501"
+          },
+          "occupation": {
+            "value": "外贸",
+            "source_text": "外贸",
+            "turn_id": 1,
+            "confidence": 0.9,
+            "source": "persistence_plan:ai",
+            "reason": "direct_write",
+            "updated_at": "2026-04-16T10:03:43.123636"
+          },
+          "marital_status": {
+            "value": "单身",
+            "source_text": "94年，湖南女生在深圳南山，外贸工作，深户，港硕，E人，感情经历简单，未婚单身，年薪20+，平常喜欢做饭旅游，原生家庭幸福美满，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，暂时就这么多，到时候电话还是微信联系啊",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-16T10:03:43.128933"
+          },
+          "partner_requirement": {
+            "value": "期待遇见同在深圳工作发展90后，积极阳光，三观正，90后，深圳",
+            "source_text": "深圳",
+            "turn_id": 1,
+            "confidence": 0.9,
+            "source": "persistence_plan:ai",
+            "reason": "direct_write",
+            "updated_at": "2026-04-16T10:03:43.145378"
+          },
+          "age_label": {
+            "value": "94年",
+            "source_text": "94年，湖南女生在深圳南山，外贸工作，深户，港硕，E人，感情经历简单，未婚单身，年薪20+，平常喜欢做饭旅游，原生家庭幸福美满，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，暂时就这么多，到时候电话还是微信联系啊",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-16T10:03:43.154817"
+          },
+          "partner_pref_age": {
+            "value": "90后",
+            "source_text": "94年，湖南女生在深圳南山，外贸工作，深户，港硕，E人，感情经历简单，未婚单身，年薪20+，平常喜欢做饭旅游，原生家庭幸福美满，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，暂时就这么多，到时候电话还是微信联系啊",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-16T10:03:43.160216"
+          },
+          "partner_pref_location": {
+            "value": "深圳",
+            "source_text": "94年，湖南女生在深圳南山，外贸工作，深户，港硕，E人，感情经历简单，未婚单身，年薪20+，平常喜欢做饭旅游，原生家庭幸福美满，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，暂时就这么多，到时候电话还是微信联系啊",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-16T10:03:43.165813"
+          },
+          "wechat": {
+            "value": "M2345",
+            "source_text": "可以微信M2345联系 白天上班也不方便接电话",
+            "turn_id": 2,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-16T10:03:56.788857"
+          }
+        },
+        "collection_progress": {
+          "sex": true,
+          "last_name": false,
+          "age": true,
+          "age_label": true,
+          "height": false,
+          "weight": false,
+          "location": true,
+          "education": true,
+          "marital_status": true,
+          "monthly_income": false,
+          "occupation": true,
+          "contact": true,
+          "partner_requirement": true,
+          "partner_gender_preference": false,
+          "partner_pref_location": true,
+          "partner_pref_age": true,
+          "partner_pref_industry": false,
+          "partner_pref_age_relation": false,
+          "partner_pref_locality": false,
+          "partner_pref_height": false,
+          "partner_pref_education": false,
+          "partner_pref_personality": false,
+          "partner_pref_income": false,
+          "partner_pref_other": false,
+          "wechat": true
+        },
+        "progress_percentage": 100.0,
+        "missing_fields": [],
+        "skipped_fields": {},
+        "field_ask_count": {},
+        "effective_field_ask_count": {},
+        "recent_asked_fields": [],
+        "active_ask_closed_fields": {
+          "partner_requirement": true,
+          "contact": true
+        },
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "divorce_confirmation_pending": false,
+        "pending_sex_confirmation": null,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": true,
+        "phone_ask_count": 2,
+        "wechat_ask_count": 0,
+        "last_contact_request_type": "phone",
+        "is_hongkong_user": false,
+        "resume_profile_mode": null,
+        "resume_profile_target": null,
+        "last_user_concern_type": null,
+        "field_miss_streak": {
+          "contact": 1
+        },
+        "last_effective_progress": true,
+        "last_asked_field": null,
+        "last_asked_side_field": null,
+        "last_asked_turn_index": null,
+        "last_question_state": {},
+        "last_semantic_summary": {
+          "primary_domain": "contact",
+          "acts": [
+            "provide_contact"
+          ],
+          "user_questions": [],
+          "observed_fields": [
+            "wechat"
+          ],
+          "pending_fields": [],
+          "resume_target": null,
+          "no_reask_fields": [
+            "contact"
+          ],
+          "turn_mode": "default",
+          "soft_profile_summary": "",
+          "partner_summary": ""
+        },
+        "pending_retry_field": null,
+        "needs_bridge_back": false,
+        "last_side_topic_type": null,
+        "complaint_cooldown_until": null,
+        "recent_semantic_slots": [],
+        "recent_response_openings": [
+          "我看你资料和你在",
+          "微信我看到了你要"
+        ],
+        "repair_mode": false,
+        "repair_reason": null,
+        "ask_cooldown_turns": 0,
+        "blocked_ask_intents": [],
+        "non_cooperation_turns": 0,
+        "off_topic_turns": 0,
+        "open_profile_attempts": 0,
+        "last_engagement_mode": "full",
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 46.302
+    }
+  ]
+}

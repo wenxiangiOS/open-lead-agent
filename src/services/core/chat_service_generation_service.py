@@ -121,12 +121,18 @@ class ChatServiceGenerationService:
         ) and turn_decision.response_channel == "model"
         self.host._last_opening_intent_signal = None
         self.host._last_unified_generation_record = None
-        ai_response = await self.host._call_ai(
-            main_prompt,
-            account_id,
-            user_message,
+        ai_response = self.host._maybe_build_model_free_followup_response(
+            user_profile=user_profile,
+            user_message=user_message,
             turn_decision=turn_decision,
         )
+        if not ai_response:
+            ai_response = await self.host._call_ai(
+                main_prompt,
+                account_id,
+                user_message,
+                turn_decision=turn_decision,
+            )
         infra_fail = False
         infra_fail_reason = ""
         if not ai_response:

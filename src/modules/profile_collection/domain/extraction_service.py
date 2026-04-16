@@ -334,7 +334,7 @@ class ExtractionService:
         compact = re.sub(r"\s+", "", text)
         if re.fullmatch(r"(?:\+?86)?[\d-]{7,17}", compact):
             return True
-        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{5,19}", compact):
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{4,19}", compact):
             return True
         return bool(re.search(r"(电话|手机|手机号|号码|微信|vx|wx|weixin)", text, re.IGNORECASE))
 
@@ -543,7 +543,7 @@ class ExtractionService:
             for match in re.finditer(r"(?<!\d)[5-9]\d{7}(?!\d)", compact):
                 _append_unique_text(contact_candidates, match.group(0))
             wechat_like = re.sub(r"^(?:微信号?|weixin|vx|wx)[:：]?", "", compact, flags=re.IGNORECASE)
-            if re.fullmatch(r"(?i)[a-z][a-z0-9_-]{5,19}", wechat_like):
+            if re.fullmatch(r"(?i)[a-z][a-z0-9_-]{4,19}", wechat_like):
                 _append_unique_text(contact_candidates, wechat_like)
 
         analysis["self_age_candidates"] = self_age_candidates
@@ -859,6 +859,14 @@ class ExtractionService:
             if re.search(pattern, text):
                 extracted["sex"] = value
                 break
+        if "sex" not in extracted:
+            mixed_intro_sex = re.search(
+                r"(?:^|[，,、\s])(?:[\u4e00-\u9fa5]{1,6})?(男生|女生|男的|女的)\s*(?:在|现居|坐标|来自|人在)",
+                text,
+            )
+            if mixed_intro_sex:
+                raw = mixed_intro_sex.group(1)
+                extracted["sex"] = "男" if "男" in raw else "女"
 
         linked_education = cls._extract_linked_self_partner_education_value(text)
         if cls._has_explicit_self_update_signal("education", text) or cls._looks_like_profile_led_self_intro_with_education(text):
@@ -1222,6 +1230,11 @@ class ExtractionService:
                 return True
             if re.search(r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|南京|香港|南山|福田|宝安|龙岗|龙华)", normalized_compact):
                 return True
+            if re.fullmatch(
+                r"(?:北京|上海|天津|重庆|河北|山西|辽宁|吉林|黑龙江|江苏|浙江|安徽|福建|江西|山东|河南|湖北|湖南|广东|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|香港|澳门|内蒙古|广西|西藏|宁夏|新疆|深圳|广州|杭州|成都|武汉|苏州|南京|长沙|郑州|青岛|厦门|宁波|东莞|佛山)(?:人)?",
+                normalized_compact,
+            ):
+                return True
             if any(token in normalized_compact for token in cls._LOW_QUALITY_OCCUPATION_FRAGMENTS):
                 return True
             if any(token in normalized_compact for token in ("一个人", "单着", "活不下去", "活不下去了")):
@@ -1343,6 +1356,18 @@ class ExtractionService:
         elif re.search(r"比(?:自己|我)小|年纪小点|年龄小点", compact):
             extracted["partner_pref_age_relation"] = "比自己小"
 
+        for semantic in cls._extract_structured_numeric_partner_preference_semantics(partner_scope_compact):
+            rendered_value = cls._render_structured_numeric_partner_preference(semantic)
+            if not rendered_value:
+                continue
+            field_name = str(semantic.get("field") or "").strip()
+            if field_name == "height" and not extracted.get("partner_pref_height"):
+                extracted["partner_pref_height"] = rendered_value
+            elif field_name == "income" and not extracted.get("partner_pref_income"):
+                extracted["partner_pref_income"] = rendered_value
+            elif field_name == "age" and not extracted.get("partner_pref_age"):
+                extracted["partner_pref_age"] = rendered_value
+
         return extracted
 
     @classmethod
@@ -1352,7 +1377,8 @@ class ExtractionService:
         *,
         structured_subslots: Dict[str, str] | None = None,
     ) -> str:
-        message = str(user_message or "").strip()
+        message = cls._collapse_inner_cjk_spaces(user_message)
+        message = str(message or "").strip()
         if not message:
             return ""
 
@@ -1370,12 +1396,12 @@ class ExtractionService:
             raw_part = str(token or "").strip("，,、。！？!?；; ")
             if not raw_part:
                 continue
-            compact_part = re.sub(r"\s+", "", raw_part)
-            if cls._looks_like_contact_or_question_fragment(compact_part):
-                continue
 
             cleaned_part = cls._remove_unspoken_inferred_partner_requirement_content(raw_part, message).strip("，,、。！？!?；; ")
             if not cleaned_part:
+                continue
+            compact_part = re.sub(r"\s+", "", cleaned_part)
+            if cls._looks_like_contact_or_question_fragment(compact_part):
                 continue
             if cls._is_structured_covered_partner_requirement_fragment(cleaned_part, normalized_subslots):
                 continue
@@ -1406,11 +1432,17 @@ class ExtractionService:
             return True
 
         age_value = str(subslots.get("partner_pref_age") or "").strip()
-        if age_value and text == age_value:
+        normalized_text = cls._normalize_partner_requirement_part(text)
+        if age_value and (text == age_value or normalized_text == age_value):
             return True
 
         income_value = str(subslots.get("partner_pref_income") or "").strip()
         if income_value and text == income_value:
+            return True
+
+        height_value = str(subslots.get("partner_pref_height") or "").strip()
+        normalized_height = cls._normalize_partner_requirement_part(height_value)
+        if height_value and normalized_text and normalized_text == normalized_height:
             return True
 
         education_value = str(subslots.get("partner_pref_education") or "").strip()
@@ -1523,7 +1555,23 @@ class ExtractionService:
                 ordered_parts.append(part)
                 structured_parts.append(normalized_part)
 
-        return "，".join(ordered_parts)
+        filtered_parts: list[str] = []
+        filtered_structured: list[str] = []
+        for index, part in enumerate(ordered_parts):
+            normalized_part = structured_parts[index]
+            if any(
+                index != other_index
+                and normalized_part
+                and other_normalized
+                and normalized_part in other_normalized
+                and len(other_normalized) > len(normalized_part)
+                for other_index, other_normalized in enumerate(structured_parts)
+            ):
+                continue
+            filtered_parts.append(part)
+            filtered_structured.append(normalized_part)
+
+        return "，".join(filtered_parts)
 
     @staticmethod
     def _should_apply_structured_partner_requirement_compose(value: Any) -> bool:
@@ -1696,7 +1744,7 @@ class ExtractionService:
 
         value_str = str(value).strip()
         compact_value = re.sub(r"\s+", "", value_str)
-        if re.fullmatch(r"(?i)(?:微信|微信号)?(?:vx|wx|weixin)?[a-z][a-z0-9_-]{5,19}", compact_value):
+        if re.fullmatch(r"(?i)(?:微信|微信号)?(?:vx|wx|weixin)?[a-z][a-z0-9_-]{4,19}", compact_value):
             return None
         if re.search(r"(?i)(?:微信|微信号|vx|wx|weixin)[a-z0-9_-]{4,19}", compact_value):
             return None
@@ -2252,8 +2300,57 @@ class ExtractionService:
         return None
 
     @staticmethod
+    def _collapse_inner_cjk_spaces(message: str) -> str:
+        text = str(message or "")
+        if not text:
+            return ""
+        broken_phrases = (
+            "工作",
+            "联系",
+            "微信",
+            "电话",
+            "对象",
+            "相亲",
+            "朋友",
+            "男朋友",
+            "女朋友",
+            "男生",
+            "女生",
+            "在编",
+            "深户",
+            "港硕",
+            "本科",
+            "硕士",
+            "博士",
+            "未婚",
+            "单身",
+            "外贸",
+            "教师",
+            "老师",
+            "护士",
+        )
+        normalized = text
+        for phrase in broken_phrases:
+            pattern = r"\s+".join(re.escape(char) for char in phrase)
+            normalized = re.sub(pattern, phrase, normalized)
+        return normalized
+
+    @staticmethod
+    def _looks_like_hobby_or_soft_trait_token(token: str) -> bool:
+        compact = re.sub(r"\s+", "", str(token or "").strip())
+        if not compact:
+            return False
+        return bool(
+            re.search(
+                r"^(?:喜欢|爱好)(?:做饭|旅游|旅行|运动|健身|跑步|游泳|看书|电影|美食|摄影|音乐|宠物|羽毛球|篮球|瑜伽)",
+                compact,
+            )
+        )
+
+    @staticmethod
     def _split_compact_intro_tokens(message: str) -> tuple[List[str], List[str]]:
-        compact = re.sub(r"[，。！？!?；;、/\\]+", " ", str(message or "").strip())
+        normalized_message = ExtractionService._collapse_inner_cjk_spaces(message)
+        compact = re.sub(r"[，。！？!?；;、/\\]+", " ", str(normalized_message or "").strip())
         compact = re.sub(r"\s+", " ", compact).strip()
         if not compact:
             return [], []
@@ -2293,6 +2390,8 @@ class ExtractionService:
         for idx, token in enumerate(tokens):
             compact_token = re.sub(r"\s+", "", str(token or "").strip())
             if compact_token in generic_opening_tokens:
+                continue
+            if "喜欢" in compact_token and ExtractionService._looks_like_hobby_or_soft_trait_token(compact_token):
                 continue
             if any(marker in token for marker in preference_markers):
                 preference_start = idx
@@ -2596,25 +2695,46 @@ class ExtractionService:
         text = str(value or "").strip()
         if not text:
             return ""
+        original_text = text
+        boundary_match = re.search(r"(电话|微信|联系方式|手机号|联系|加我|怎么收费|收费|价格|费用|流程)", text)
+        if boundary_match:
+            prefix = text[:boundary_match.start()].strip("，,、 ")
+            prefix = re.sub(r"(?:到时候|之后|然后)?(?:(?:可以|直接|再|方便)\s*)+$", "", prefix).strip("，,、 ")
+            if prefix:
+                text = prefix
         if not cls._user_explicitly_mentions_zodiac(user_message):
             text = re.sub(r"属(?:鼠|牛|虎|兔|龙|蛇|马|羊|猴|鸡|狗|猪)的?", "", text)
             text = re.sub(r"生肖(?:鼠|牛|虎|兔|龙|蛇|马|羊|猴|鸡|狗|猪)", "", text)
         text = re.sub(r"(?:男朋友|女朋友|男生|女生|男孩子|女孩子|男的|女的)$", "", text)
         text = re.sub(r"(?:对象)$", "", text)
-        text = re.sub(r"^(?:找个|找一个|找|想找|喜欢|偏向|偏好|想要|希望|就想找|更想找)", "", text)
+        text = re.sub(r"^(?:找个|找一个|找|想找|喜欢|偏向|偏好|想着|想要|希望|就想找|更想找)", "", text)
+        if str(original_text).startswith("喜欢") and text in {"运动", "健身", "跑步", "游泳", "旅行", "旅游", "做饭"}:
+            text = f"喜欢{text}"
+        text = re.sub(r"[，,、]?\s*其他(?:都)?(?:没(?:有|啥)要求|没有什么要求)(?:了)?(?:吧|呀|呢|哈|啦)?\s*$", "", text)
         text = re.sub(
-            r"\s*(?:暂时就|暂时先这样|先这样|就这些|就这样)(?:\s*(?:吧|哈|啦|了))?(?:\s*(?:怎么多了|怎么又多了|这怎么多了|这咋多了|为啥多了))?\s*$",
+            r"\s*(?:暂时就这么多|暂时就|暂时先这样|先这样|就这些|就这样)(?:\s*(?:吧|哈|啦|了))?(?:\s*(?:怎么多了|怎么又多了|这怎么多了|这咋多了|为啥多了))?\s*$",
             "",
             text,
         )
         text = re.sub(r"\s*(?:怎么多了|怎么又多了|这怎么多了|这咋多了|为啥多了)\s*$", "", text)
+        text = re.sub(r"\s*(?:有合适(?:的)?(?:不|吗))\s*$", "", text)
+        text = re.sub(
+            r"\s*(?:暂时就这么多|暂时就|暂时先这样|先这样|就这些|就这样)(?:\s*(?:吧|哈|啦|了))?(?:\s*(?:怎么多了|怎么又多了|这怎么多了|这咋多了|为啥多了))?\s*$",
+            "",
+            text,
+        )
+        text = re.sub(r"[，,、]?\s*(?:其他(?:都)?(?:没(?:有|啥)要求|没有什么要求)(?:了)?)\s*$", "", text)
+        text = re.sub(r"[，,、]?\s*(?:也)\s*$", "", text)
+        text = re.sub(r"[，,、]?\s*其他(?:都)?(?:没(?:有|啥)要求|没有什么要求)(?:了)?(?:吧|呀|呢|哈|啦)?\s*$", "", text)
+        text = re.sub(r"^(情绪稳定)(?:一点|点|些)?(?:就行|就好|即可|就成|就可以)?(?:了)?(?:吧|呀|呢|啊)?$", r"\1", text)
+        text = re.sub(r"^(?:对啦|对了|另外|顺便|还有)$", "", text)
         text = re.sub(r"[，,、]+", "，", text).strip("，,、 ")
         return text
 
     @staticmethod
     def _normalize_partner_requirement_part(part: str) -> str:
         value = str(part or "").strip()
-        value = re.sub(r"^(?:看中|看重|更看重|比较看重|喜欢|偏向|希望)(?:对方|另一半)?", "", value)
+        value = re.sub(r"^(?:看中|看重|更看重|比较看重|喜欢|偏向|希望|想着)(?:对方|另一半)?", "", value)
         value = re.sub(r"^(?:对方|另一半)", "", value)
         value = value.strip("，,。；; ")
         value = re.sub(r"(身高\d{2,3}cm(?:以上|左右)?)(?:的)?(?:男朋友|男盆友|男生|男性|男孩子|男的|男)$", r"\1", value)
@@ -2633,20 +2753,48 @@ class ExtractionService:
         if re.fullmatch(r"(港男|港女)", value):
             return "香港"
         wrapped_gender_preference = re.fullmatch(
-            r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好|想要|希望|就想找|更想找)(.+?)(?:的)?"
+            r"(?:找(?:个|一个)?|想找|喜欢|偏向|偏好|想着|想要|希望|就想找|更想找)(.+?)(?:的)?"
             r"(?:男朋友|男盆友|男生|男性|男孩子|男的|男|港男|女朋友|女盆友|女生|女性|女孩子|女的|女|港女)",
             value,
         )
         if wrapped_gender_preference:
             inner = str(wrapped_gender_preference.group(1) or "").strip("，,、 ")
             inner = re.sub(r"的$", "", inner).strip()
+            if re.fullmatch(r"(?:(?:8|9|0)\d后|(?:19\d{2}|20\d{2}|\d{2}年))", inner):
+                return inner
             if re.fullmatch(r"(深圳|广州|杭州|上海|北京|成都|武汉|苏州|香港|南山|福田|宝安|龙岗|龙华)", inner):
                 return inner
-            if re.search(r"(未婚|离异|已婚|本科|大专|硕士|博士|学历|身高|年龄|程序员|大厂|稳定行业|深二代|富二代|拆二代)", inner):
+            if re.search(r"(未婚|离异|已婚|本科|大专|硕士|博士|学历|身高|年龄|程序员|大厂|稳定行业|深二代|富二代|拆二代|(?:8|9|0)\d后)", inner):
                 return ""
+        structured_numeric_alias = ExtractionService._normalize_standalone_partner_height_requirement_alias(value)
+        if structured_numeric_alias:
+            return structured_numeric_alias
+        if re.fullmatch(r"情绪稳定(?:就行|就好|即可|就成|就可以)?", value):
+            return "情绪稳定"
         if "气质" in value:
             return "气质"
         return value
+
+    @staticmethod
+    def _normalize_standalone_partner_height_requirement_alias(value: str) -> Optional[str]:
+        compact = re.sub(r"\s+", "", str(value or "").strip())
+        if not compact:
+            return None
+        compact = re.sub(
+            r"(?:的)?(?:男朋友|男盆友|男生|男性|男孩子|男的|男|女朋友|女盆友|女生|女性|女孩子|女的|女)$",
+            "",
+            compact,
+        )
+        if not re.fullmatch(
+            r"(?:身高)?(?:起码|至少|最低|最少|差不多|大概|大约|卡|要|得有|得|要有)?"
+            r"1[5-9]\d(?:cm|CM)?(?:\+|以上|往上|朝上|打底|起步|左右|上下|前后|附近)(?:的)?",
+            compact,
+        ):
+            return None
+        alias = ExtractionService._normalize_structured_numeric_partner_preference_alias(compact)
+        if alias and alias.startswith("身高"):
+            return alias
+        return None
 
     @staticmethod
     def _is_gender_preference_like_partner_requirement(value: Any) -> bool:
@@ -3080,7 +3228,7 @@ class ExtractionService:
 
             # 微信脏串保护：字母开头 token 中间出现中文后仍接字母/数字，通常是误输入或拼接脏数据。
             contaminated_wechat_tokens = re.findall(
-                r'[a-zA-Z][a-zA-Z0-9_-]{5,19}[\u4e00-\u9fff]+[a-zA-Z0-9_-]+',
+                r'[a-zA-Z][a-zA-Z0-9_-]{4,19}[\u4e00-\u9fff]+[a-zA-Z0-9_-]+',
                 user_message
             )
 
@@ -3148,7 +3296,7 @@ class ExtractionService:
                             raw_contact,
                             flags=re.IGNORECASE,
                         ).strip()
-                        wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{5,19}$'
+                        wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{4,19}$'
                         mobile_like_wechat = ''.join(c for c in wechat_candidate if c.isdigit())
                         if re.match(wechat_pattern, wechat_candidate):
                             mapped_field = "wechat"
@@ -3278,7 +3426,7 @@ class ExtractionService:
                 # 微信号校验：避免把过短/非法格式误记为有效微信
                 if mapped_field == "wechat":
                     cleaned_wechat = str(value).strip()
-                    wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{5,19}$'
+                    wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{4,19}$'
                     mobile_like_wechat = ''.join(c for c in cleaned_wechat if c.isdigit())
                     lower_cleaned = cleaned_wechat.lower()
 

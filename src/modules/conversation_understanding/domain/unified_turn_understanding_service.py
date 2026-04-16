@@ -43,6 +43,39 @@ class UnifiedTurnUnderstandingService:
     only as fallback input and compatibility projections during the migration.
     """
 
+    _DENSE_INTRO_ALLOWED_TYPES = {"opening", "profile_answer", "contact_answer", "confirmation", "correction"}
+    _DENSE_INTRO_REPLY_ACTS = {"direct_answer", "contact_answer", "correction", "preference_statement", "off_target_answer"}
+    _DENSE_INTRO_SELF_FIELDS = {
+        "sex",
+        "age",
+        "age_label",
+        "location",
+        "education",
+        "occupation",
+        "marital_status",
+        "monthly_income",
+        "height",
+        "weight",
+    }
+    _DENSE_INTRO_CONTACT_FIELDS = {"contact", "phone", "wechat"}
+    _DENSE_INTRO_CONTACT_RE = re.compile(r"(?:微信|电话|手机号|联系方式|vx|wx|v[:：]?)|(?:1[3-9]\d{9})")
+    _DENSE_INTRO_PARTNER_RE = re.compile(r"(?:找对象|找男朋友|找女朋友|想找|期待|另一半|男生|女生|不要\d{2}|最好|有房有车|工作稳定|同城|本地)")
+    _DENSE_INTRO_SELF_SIGNAL_RE = re.compile(
+        r"(?:\d{2}后|(?:19|20)?\d{2}年(?:的)?|(?:未婚|单身|离异)|(?:本科|硕士|博士|大专|研究生|港硕)|"
+        r"(?:在编|教师|老师|护士|产品|运营|设计|外贸|程序员|研发)|(?:深圳|广州|上海|北京|杭州|成都|苏州)|"
+        r"(?:男生|女生|男的|女的|我男|我女)|(?:收入|年薪|月薪|年入))"
+    )
+    _DENSE_INTRO_QUESTION_RE = re.compile(r"(?:怎么收费|收费|多少钱|价格|费用|流程|怎么安排|靠谱吗|真实吗)")
+    _DENSE_INTRO_SELF_CATEGORY_PATTERNS = {
+        "age": re.compile(r"(?:\d{2}后|(?:19|20)?\d{2}年(?:的)?)"),
+        "marital_status": re.compile(r"(?:未婚|单身|离异)"),
+        "education": re.compile(r"(?:本科|硕士|博士|大专|研究生|港硕)"),
+        "occupation": re.compile(r"(?:在编|教师|老师|护士|产品|运营|设计|外贸|程序员|研发)"),
+        "location": re.compile(r"(?:深圳|广州|上海|北京|杭州|成都|苏州)"),
+        "sex": re.compile(r"(?:男生|女生|男的|女的|我男|我女|女教师|男教师)"),
+        "monthly_income": re.compile(r"(?:收入|年薪|月薪|年入)"),
+    }
+
     def __init__(self, semantic_service, ai_service) -> None:
         self.turn_input_assembly_service = TurnInputAssemblyService()
         self.lexical_layer = LexicalSignalLayer(semantic_service)
@@ -85,6 +118,11 @@ class UnifiedTurnUnderstandingService:
             semantic_result=governed_result,
             question_state=question_state,
         )
+        turn_mode = self._resolve_turn_mode(
+            turn_input=turn_input,
+            semantic_result=governed_result,
+            reply_act_result=reply_act_result,
+        )
         field_permission_result = self.field_permission_layer.decide(
             turn_input=turn_input,
             semantic_result=governed_result,
@@ -100,12 +138,17 @@ class UnifiedTurnUnderstandingService:
                 question_state=question_state,
                 semantic_result=governed_result,
                 reply_act_result=reply_act_result,
+                turn_mode=turn_mode,
             )
+        effective_ai_timeout = ai_timeout_seconds
+        if effective_ai_timeout is None and use_ai_semantic and ai_trigger_reason.startswith("sync_dense_intro"):
+            effective_ai_timeout = self._resolve_dense_intro_ai_timeout()
         semantic_frame = await self.ai_semantic_extraction_service.extract(
             snapshot=snapshot,
             fallback_result=governed_result,
             enable_ai=use_ai_semantic,
-            ai_timeout_seconds=ai_timeout_seconds,
+            ai_timeout_seconds=effective_ai_timeout,
+            enforce_mainline_blocking_cap=use_ai_semantic and not force_ai,
         )
         pre_filter_observed = len(list(getattr(semantic_frame, "field_observations", []) or []))
         pre_filter_fields = sorted(
@@ -141,6 +184,22 @@ class UnifiedTurnUnderstandingService:
             ),
             "disabled" if not use_ai_semantic else "unknown",
         )
+        fallback_merge_note = next(
+            (
+                str(note).split("=", 1)[1]
+                for note in list(getattr(semantic_frame, "notes", []) or [])
+                if str(note).startswith("fallback_projection_merge=")
+            ),
+            "-",
+        )
+        fallback_refinement_note = next(
+            (
+                str(note).split("=", 1)[1]
+                for note in list(getattr(semantic_frame, "notes", []) or [])
+                if str(note).startswith("fallback_projection_refinement=")
+            ),
+            "-",
+        )
         accepted_fields, provisional_fields, pending_fields, rejected_fields = self.field_acceptance_service.accept(
             frame=semantic_frame
         )
@@ -160,7 +219,7 @@ class UnifiedTurnUnderstandingService:
             )
         )
         logger.info(
-            "[unified_turn_understanding.ai_semantic_obs] trigger=%s status=%s source=%s pre_filter=%s post_filter=%s pre_fields=%s post_fields=%s allowed=%s blocked=%s accepted=%s provisional=%s pending=%s rejected=%s",
+            "[unified_turn_understanding.ai_semantic_obs] trigger=%s status=%s source=%s pre_filter=%s post_filter=%s pre_fields=%s post_fields=%s allowed=%s blocked=%s accepted=%s provisional=%s pending=%s rejected=%s fallback_merge=%s fallback_refinement=%s",
             ai_trigger_reason or "disabled",
             semantic_status,
             getattr(semantic_frame, "source", "") or "-",
@@ -174,6 +233,8 @@ class UnifiedTurnUnderstandingService:
             len(provisional_fields),
             len(pending_fields),
             len(rejected_fields),
+            fallback_merge_note,
+            fallback_refinement_note,
         )
         persistence_plan = self.persistence_plan_service.build_plan(
             frame=semantic_frame,
@@ -215,7 +276,10 @@ class UnifiedTurnUnderstandingService:
             field_derivations=dict(governed_result.field_derivations or {}),
             semantic_frame=semantic_frame,
             persistence_plan=persistence_plan,
-            notes=[f"ai_semantic_trigger={ai_trigger_reason or 'disabled'}"],
+            notes=[
+                f"ai_semantic_trigger={ai_trigger_reason or 'disabled'}",
+                f"turn_mode={turn_mode}",
+            ],
         )
         lexical_true = sorted(name for name, value in (lexical_signals.signals or {}).items() if value)
         inferred_occupation_candidate = str(
@@ -277,6 +341,7 @@ class UnifiedTurnUnderstandingService:
         question_state: dict,
         semantic_result: TurnUnderstandingResult,
         reply_act_result,
+        turn_mode: str = "default",
     ) -> tuple[bool, str]:
         if not cls._env_enabled("UNIFIED_TURN_SYNC_AI_HIGH_RISK_ENABLED", True):
             return False, "default_async_backfill_only"
@@ -293,12 +358,186 @@ class UnifiedTurnUnderstandingService:
         primary_turn_type = str(getattr(semantic_result, "primary_turn_type", "") or "").strip()
         reply_act = str(getattr(reply_act_result, "reply_act", "") or "").strip()
         has_semantic_payload = bool(getattr(semantic_result, "resolved_slots", {}) or getattr(semantic_result, "slot_candidates", {}))
+        if turn_mode == "dense_intro" and cls._env_enabled("UNIFIED_TURN_SYNC_AI_DENSE_INTRO_ENABLED", True):
+            if cls._dense_intro_can_use_async_backfill_only(
+                turn_input=turn_input,
+                semantic_result=semantic_result,
+            ):
+                return False, "dense_intro_async_backfill_only"
+            return True, "sync_dense_intro"
         if primary_turn_type in {"contact_answer", "confirmation", "correction"} and has_semantic_payload:
             return True, f"sync_collection_turn:{primary_turn_type}"
         if reply_act in {"direct_answer", "contact_answer", "correction"}:
             return True, f"sync_reply_act:{reply_act}"
 
         return False, "default_async_backfill_only"
+
+    @staticmethod
+    def _resolve_dense_intro_ai_timeout() -> float | None:
+        raw = str(os.getenv("UNIFIED_TURN_SYNC_AI_DENSE_INTRO_TIMEOUT_SECONDS", "") or "").strip()
+        if not raw:
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return max(1.0, value) if value > 0 else None
+
+    @classmethod
+    def _dense_intro_can_use_async_backfill_only(
+        cls,
+        *,
+        turn_input: TurnUnderstandingInput,
+        semantic_result: TurnUnderstandingResult,
+    ) -> bool:
+        message = str(getattr(turn_input, "user_message", "") or "").strip()
+        if not message:
+            return False
+
+        observed_fields = {
+            str(field_name).strip()
+            for field_name in dict(getattr(semantic_result, "resolved_slots", {}) or {}).keys()
+            if str(field_name).strip()
+        }
+        observed_fields.update(
+            str(field_name).strip()
+            for field_name in dict(getattr(semantic_result, "slot_candidates", {}) or {}).keys()
+            if str(field_name).strip()
+        )
+        if not observed_fields:
+            return False
+
+        self_fields = {field for field in observed_fields if field in cls._DENSE_INTRO_SELF_FIELDS}
+        partner_fields = {field for field in observed_fields if cls._is_partner_field(field)}
+        contact_fields = {field for field in observed_fields if field in cls._DENSE_INTRO_CONTACT_FIELDS}
+
+        partner_signal = bool(cls._DENSE_INTRO_PARTNER_RE.search(message))
+        contact_signal = bool(cls._DENSE_INTRO_CONTACT_RE.search(message))
+        question_signal = bool(cls._DENSE_INTRO_QUESTION_RE.search(message))
+        self_signal_categories = cls._extract_dense_intro_self_signal_categories(message)
+        stable_textual_self_coverage = cls._has_dense_intro_stable_textual_self_coverage(
+            self_fields=self_fields,
+            self_signal_categories=self_signal_categories,
+            partner_fields=partner_fields,
+            partner_signal=partner_signal,
+            question_signal=question_signal,
+        )
+
+        if len(self_fields) < 3 and not stable_textual_self_coverage:
+            return False
+        # Long self-intros that already expose multiple stable self fields plus contact info
+        # can rely on fallback planning even if partner subslots are not yet projected here.
+        if len(self_fields) >= 4 and contact_signal and contact_fields and partner_signal:
+            return True
+        if question_signal:
+            return stable_textual_self_coverage
+        if partner_signal and not partner_fields:
+            return bool(question_signal and stable_textual_self_coverage)
+        if contact_signal and not contact_fields and not stable_textual_self_coverage:
+            return False
+
+        return bool(partner_fields or contact_fields or len(self_fields) >= 4 or stable_textual_self_coverage)
+
+    @classmethod
+    def _extract_dense_intro_self_signal_categories(cls, message: str) -> set[str]:
+        text = str(message or "").strip()
+        if not text:
+            return set()
+        return {
+            category
+            for category, pattern in cls._DENSE_INTRO_SELF_CATEGORY_PATTERNS.items()
+            if pattern.search(text)
+        }
+
+    @staticmethod
+    def _has_dense_intro_stable_textual_self_coverage(
+        *,
+        self_fields: set[str],
+        self_signal_categories: set[str],
+        partner_fields: set[str],
+        partner_signal: bool,
+        question_signal: bool,
+    ) -> bool:
+        if len(self_fields) < 2:
+            return False
+        if len(self_signal_categories) < 3:
+            return False
+        if question_signal and not (partner_signal or partner_fields):
+            return False
+        return True
+
+    @staticmethod
+    def _is_partner_field(field_name: str) -> bool:
+        field = str(field_name or "").strip()
+        return field == "partner_requirement" or field == "partner_gender_preference" or field.startswith(
+            "partner_pref_"
+        )
+
+    @classmethod
+    def _resolve_turn_mode(
+        cls,
+        *,
+        turn_input: TurnUnderstandingInput,
+        semantic_result: TurnUnderstandingResult,
+        reply_act_result,
+    ) -> str:
+        if cls._looks_like_dense_intro_turn(
+            turn_input=turn_input,
+            semantic_result=semantic_result,
+            reply_act_result=reply_act_result,
+        ):
+            return "dense_intro"
+        return "default"
+
+    @classmethod
+    def _looks_like_dense_intro_turn(
+        cls,
+        *,
+        turn_input: TurnUnderstandingInput,
+        semantic_result: TurnUnderstandingResult,
+        reply_act_result,
+    ) -> bool:
+        message = str(getattr(turn_input, "user_message", "") or "").strip()
+        if len(message) < 20:
+            return False
+        primary_turn_type = str(getattr(semantic_result, "primary_turn_type", "") or "").strip()
+        if primary_turn_type and primary_turn_type not in cls._DENSE_INTRO_ALLOWED_TYPES:
+            return False
+        reply_act = str(getattr(reply_act_result, "reply_act", "") or "").strip()
+        if reply_act and reply_act not in cls._DENSE_INTRO_REPLY_ACTS and primary_turn_type not in {"opening", "profile_answer"}:
+            return False
+
+        observed_fields = {
+            str(field_name).strip()
+            for field_name in dict(getattr(semantic_result, "resolved_slots", {}) or {}).keys()
+            if str(field_name).strip()
+        }
+        observed_fields.update(
+            str(field_name).strip()
+            for field_name in dict(getattr(semantic_result, "slot_candidates", {}) or {}).keys()
+            if str(field_name).strip()
+        )
+        punctuation_count = len(re.findall(r"[，,、；;。.!！？]", message))
+        clause_like_count = max(punctuation_count + 1, len([part for part in re.split(r"[，,、；;。.!！？\s]+", message) if part]))
+        self_signal_count = len(cls._DENSE_INTRO_SELF_SIGNAL_RE.findall(message))
+        signal_score = 0
+        if len(observed_fields) >= 3:
+            signal_score += 2
+        elif len(observed_fields) >= 2:
+            signal_score += 1
+        if self_signal_count >= 3:
+            signal_score += 2
+        elif self_signal_count >= 2:
+            signal_score += 1
+        if cls._DENSE_INTRO_CONTACT_RE.search(message):
+            signal_score += 1
+        if cls._DENSE_INTRO_PARTNER_RE.search(message):
+            signal_score += 1
+        if cls._DENSE_INTRO_QUESTION_RE.search(message):
+            signal_score += 1
+        if clause_like_count >= 4:
+            signal_score += 1
+        return signal_score >= 4
 
     @staticmethod
     def _filter_semantic_frame(
@@ -339,10 +578,8 @@ class UnifiedTurnUnderstandingService:
 
     @staticmethod
     def _is_allowed_structured_field(*, field_name: str, allowed_fields: set[str]) -> bool:
-        if field_name in {"partner_pref_height", "partner_pref_age", "partner_pref_income"}:
-            return "partner_requirement" in allowed_fields
-        if field_name == "partner_pref_age_relation":
-            return "partner_pref_age" in allowed_fields or "partner_requirement" in allowed_fields
+        if field_name.startswith("partner_pref_"):
+            return field_name in allowed_fields or "partner_requirement" in allowed_fields
         return False
 
     @staticmethod

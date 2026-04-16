@@ -42,6 +42,18 @@ class ResponsePlanBuilder:
         self.collection_policy = collection_policy
         self.turn_understanding_service = turn_understanding_service
 
+    @staticmethod
+    def _render_semantic_summary_context(user_profile: UserProfile) -> str:
+        semantic_summary = dict(getattr(user_profile, "last_semantic_summary", {}) or {})
+        soft_profile_summary = str(semantic_summary.get("soft_profile_summary") or "").strip()
+        partner_summary = str(semantic_summary.get("partner_summary") or "").strip()
+        lines: list[str] = []
+        if soft_profile_summary:
+            lines.append(f"本轮自然画像摘要：{soft_profile_summary}。")
+        if partner_summary:
+            lines.append(f"本轮择偶摘要：{partner_summary}。")
+        return "\n".join(lines)
+
     def build(
         self,
         *,
@@ -242,6 +254,7 @@ class ResponsePlanBuilder:
                 f"当前结构化理解：turn={primary_turn_type}/{subtype}；"
                 f"secondary={','.join(sorted(secondary_signals)) or '-'}；"
                 f"slots={json.dumps(resolved_slots, ensure_ascii=False) if resolved_slots else '{}'}。"
+                f"{chr(10) + self._render_semantic_summary_context(user_profile) if self._render_semantic_summary_context(user_profile) else ''}"
             ),
             plan=plan,
         )
@@ -258,8 +271,10 @@ class ResponsePlanBuilder:
         secondary_signals: set[str],
         resolved_slots: dict[str, str],
     ) -> ResponsePlanPromptSpec:
+        semantic_summary = dict(getattr(user_profile, "last_semantic_summary", {}) or {})
+        limit_to_single_field = str(semantic_summary.get("turn_mode") or "").strip() == "dense_intro"
         side_target = ""
-        if getattr(turn_decision, "allow_medium_target", False):
+        if getattr(turn_decision, "allow_medium_target", False) and not limit_to_single_field:
             try:
                 policy_decision = self.collection_policy.decide(
                     user_profile,
@@ -349,6 +364,7 @@ class ResponsePlanBuilder:
                 f"当前结构化理解：turn={primary_turn_type or '-'} / {subtype or '-'}；"
                 f"ask_field={ask_field}；secondary={','.join(sorted(secondary_signals)) or '-'}；"
                 f"slots={json.dumps(resolved_slots, ensure_ascii=False) if resolved_slots else '{}'}。"
+                f"{chr(10) + self._render_semantic_summary_context(user_profile) if self._render_semantic_summary_context(user_profile) else ''}"
             ),
             plan=plan,
         )

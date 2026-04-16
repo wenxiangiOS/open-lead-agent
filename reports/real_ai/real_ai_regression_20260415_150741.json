@@ -1,0 +1,1758 @@
+{
+  "started_at": "2026-04-15T15:06:21",
+  "ended_at": "2026-04-15T15:07:41",
+  "scenario_file": "/tmp/long_intro_6_samples_real_ai.json",
+  "summary": {
+    "total": 6,
+    "passed": 6,
+    "failed": 0,
+    "total_duration_seconds": 80.509,
+    "avg_duration_seconds": 13.418,
+    "max_duration_seconds": 48.9,
+    "token_usage": {
+      "prompt_tokens": 22129,
+      "completion_tokens": 4319,
+      "total_tokens": 26448,
+      "call_count": 6
+    },
+    "failure_breakdown": {}
+  },
+  "results": [
+    {
+      "scenario_id": "manual_long_intro_01",
+      "source_file": "/tmp/long_intro_6_samples_real_ai.json",
+      "category": "manual_long_intro",
+      "tags": [
+        "manual",
+        "long_intro"
+      ],
+      "description": "94年湖南女生深圳南山外贸港硕长复合句",
+      "passed": true,
+      "checks_total": 0,
+      "checks_passed": 0,
+      "failures": [],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+          "assistant_response": "哇，你这条件还挺好的呀，想找同在深圳的90后阳光男生也挺合理的。对了，你现在的感情状态大概是怎样的呀？我这边也能更精准地帮你留意合适的人选。",
+          "collected_info": {
+            "sex": "女",
+            "last_name": "未留称呼",
+            "age": "94年(32岁)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "深圳南山",
+            "education": "港硕",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "外贸",
+            "occupation_inference_candidate": "无",
+            "contact": "微信: 13426689341",
+            "partner_gender_preference": "未留",
+            "partner_requirement": "期待遇见同在深圳工作发展90后，积极阳光，三观正，90后，深圳，同在深圳工作发展90后男生"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_manual_long_intro_01_a8bdee3f",
+        "created_at": "2026-04-15T15:06:21.352944",
+        "updated_at": "2026-04-15T15:07:10.125191",
+        "profile_version": 12,
+        "sex": "女",
+        "last_name": null,
+        "age": 32,
+        "age_label": "94年",
+        "pending_birth_year_bucket": null,
+        "birth_year_confirmation_closed": false,
+        "height": null,
+        "weight": null,
+        "location": "深圳南山",
+        "education": "港硕",
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": "外贸",
+        "occupation_inference_candidate": null,
+        "contact": null,
+        "phone": null,
+        "wechat": "13426689341",
+        "partner_requirement": "期待遇见同在深圳工作发展90后，积极阳光，三观正，90后，深圳，同在深圳工作发展90后男生",
+        "partner_gender_preference": null,
+        "partner_pref_location": "深圳",
+        "partner_pref_age": "90后",
+        "partner_pref_industry": null,
+        "partner_pref_age_relation": null,
+        "partner_pref_locality": null,
+        "partner_pref_height": null,
+        "partner_pref_education": null,
+        "partner_pref_personality": null,
+        "partner_pref_income": null,
+        "partner_pref_other": null,
+        "extraction_evidence": {
+          "sex": {
+            "value": "女",
+            "source_text": "女",
+            "turn_id": 1,
+            "confidence": 0.9,
+            "source": "persistence_plan:ai",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:10.021665"
+          },
+          "age_label": {
+            "value": "94年",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:10.029485"
+          },
+          "location": {
+            "value": "深圳南山",
+            "source_text": "深圳南山",
+            "turn_id": 1,
+            "confidence": 0.9,
+            "source": "persistence_plan:ai",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:10.035167"
+          },
+          "education": {
+            "value": "港硕",
+            "source_text": "港硕",
+            "turn_id": 1,
+            "confidence": 0.9,
+            "source": "persistence_plan:ai",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:10.040223"
+          },
+          "occupation": {
+            "value": "外贸",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_self_marker",
+            "updated_at": "2026-04-15T15:07:10.044894"
+          },
+          "partner_requirement": {
+            "value": "期待遇见同在深圳工作发展90后，积极阳光，三观正，90后，深圳，同在深圳工作发展90后男生",
+            "source_text": "同在深圳工作发展90后男生，积极阳光，三观正",
+            "turn_id": 1,
+            "confidence": 0.9,
+            "source": "persistence_plan:ai",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:10.067040"
+          },
+          "partner_pref_age": {
+            "value": "90后",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:10.071145"
+          },
+          "partner_pref_location": {
+            "value": "深圳",
+            "source_text": "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:10.076906"
+          }
+        },
+        "collection_progress": {
+          "sex": true,
+          "last_name": false,
+          "age": true,
+          "age_label": true,
+          "height": false,
+          "weight": false,
+          "location": true,
+          "education": true,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": true,
+          "contact": true,
+          "partner_requirement": true,
+          "partner_gender_preference": false,
+          "partner_pref_location": true,
+          "partner_pref_age": true,
+          "partner_pref_industry": false,
+          "partner_pref_age_relation": false,
+          "partner_pref_locality": false,
+          "partner_pref_height": false,
+          "partner_pref_education": false,
+          "partner_pref_personality": false,
+          "partner_pref_income": false,
+          "partner_pref_other": false
+        },
+        "progress_percentage": 85.71,
+        "missing_fields": [
+          "marital_status"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {
+          "marital_status": 1
+        },
+        "effective_field_ask_count": {
+          "marital_status": 1
+        },
+        "recent_asked_fields": [
+          "marital_status"
+        ],
+        "active_ask_closed_fields": {
+          "partner_requirement": true
+        },
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "divorce_confirmation_pending": false,
+        "pending_sex_confirmation": null,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": true,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "last_contact_request_type": null,
+        "is_hongkong_user": false,
+        "resume_profile_mode": null,
+        "resume_profile_target": null,
+        "last_user_concern_type": null,
+        "field_miss_streak": {},
+        "last_effective_progress": true,
+        "last_asked_field": "marital_status",
+        "last_asked_side_field": null,
+        "last_asked_turn_index": 1,
+        "last_question_state": {
+          "question_intent": "profile_followup",
+          "asked_fields": [
+            "marital_status"
+          ],
+          "side_fields": [],
+          "expected_scope": "self",
+          "allow_mixed_answer": true,
+          "resume_target": null,
+          "source_response": "哇，你这条件还挺好的呀，想找同在深圳的90后阳光男生也挺合理的。对了，你现在的感情状态大概是怎样的呀？我这边也能更精准地帮你留意合适的人选。"
+        },
+        "last_semantic_summary": {
+          "primary_domain": "mixed",
+          "acts": [],
+          "user_questions": [],
+          "observed_fields": [
+            "sex",
+            "age",
+            "age_label",
+            "location",
+            "education",
+            "occupation",
+            "partner_requirement",
+            "partner_requirement",
+            "partner_requirement",
+            "partner_requirement",
+            "partner_requirement",
+            "partner_pref_age",
+            "partner_pref_location",
+            "wechat"
+          ],
+          "pending_fields": [],
+          "resume_target": "age",
+          "no_reask_fields": [
+            "age",
+            "location",
+            "education",
+            "occupation",
+            "partner_requirement",
+            "contact"
+          ],
+          "turn_mode": "dense_intro",
+          "soft_profile_summary": "E人，感情经历简单，喜欢做饭旅游，原生家庭幸福美满关系简单",
+          "partner_summary": "期待遇见同在深圳工作发展90后男生，积极阳光，三观正"
+        },
+        "pending_retry_field": null,
+        "needs_bridge_back": false,
+        "last_side_topic_type": null,
+        "complaint_cooldown_until": null,
+        "recent_semantic_slots": [],
+        "recent_response_openings": [
+          "哇你这条件还挺好"
+        ],
+        "repair_mode": false,
+        "repair_reason": null,
+        "ask_cooldown_turns": 0,
+        "blocked_ask_intents": [],
+        "non_cooperation_turns": 0,
+        "off_topic_turns": 0,
+        "open_profile_attempts": 0,
+        "last_engagement_mode": "full",
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 48.9
+    },
+    {
+      "scenario_id": "manual_long_intro_02",
+      "source_file": "/tmp/long_intro_6_samples_real_ai.json",
+      "category": "manual_long_intro",
+      "tags": [
+        "manual",
+        "long_intro"
+      ],
+      "description": "深圳龙华在编女教师+电话+收费问题",
+      "passed": true,
+      "checks_total": 0,
+      "checks_passed": 0,
+      "failures": [],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+          "assistant_response": "深圳龙华这边的话，咱们基础匹配这部分不收费，后面如果真有你想进一步了解的，再看要不要选定制服务就行。",
+          "collected_info": {
+            "sex": "女",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "165cm",
+            "weight": "104kg",
+            "location": "深圳龙华",
+            "education": "本科",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "在编教师",
+            "occupation_inference_candidate": "无",
+            "contact": "电话: 13526783627",
+            "partner_gender_preference": "未留",
+            "partner_requirement": "同老家在深圳，学历本科及以上，最好深户，有房有车，不要92"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_manual_long_intro_02_8d20109f",
+        "created_at": "2026-04-15T15:07:10.244432",
+        "updated_at": "2026-04-15T15:07:20.376496",
+        "profile_version": 10,
+        "sex": "女",
+        "last_name": null,
+        "age": null,
+        "age_label": null,
+        "pending_birth_year_bucket": null,
+        "birth_year_confirmation_closed": false,
+        "height": "165cm",
+        "weight": "104kg",
+        "location": "深圳龙华",
+        "education": "本科",
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": "在编教师",
+        "occupation_inference_candidate": null,
+        "contact": "13526783627",
+        "phone": "13526783627",
+        "wechat": null,
+        "partner_requirement": "同老家在深圳，学历本科及以上，最好深户，有房有车，不要92",
+        "partner_gender_preference": null,
+        "partner_pref_location": "深圳",
+        "partner_pref_age": null,
+        "partner_pref_industry": null,
+        "partner_pref_age_relation": null,
+        "partner_pref_locality": null,
+        "partner_pref_height": null,
+        "partner_pref_education": "学历本科及以上",
+        "partner_pref_personality": null,
+        "partner_pref_income": null,
+        "partner_pref_other": null,
+        "extraction_evidence": {
+          "location": {
+            "value": "深圳龙华",
+            "source_text": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:18.366508"
+          },
+          "occupation": {
+            "value": "在编教师",
+            "source_text": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+            "turn_id": 1,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_self_marker",
+            "updated_at": "2026-04-15T15:07:18.370321"
+          },
+          "sex": {
+            "value": "女",
+            "source_text": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+            "turn_id": 1,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_self_marker",
+            "updated_at": "2026-04-15T15:07:18.373559"
+          },
+          "education": {
+            "value": "本科",
+            "source_text": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:18.380071"
+          },
+          "partner_pref_location": {
+            "value": "深圳",
+            "source_text": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:18.384452"
+          },
+          "partner_pref_education": {
+            "value": "学历本科及以上",
+            "source_text": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:18.388072"
+          },
+          "partner_requirement": {
+            "value": "同老家在深圳，学历本科及以上，最好深户，有房有车，不要92",
+            "source_text": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:18.390674"
+          },
+          "height": {
+            "value": "165cm",
+            "source_text": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+            "turn_id": 1,
+            "confidence": 0.97,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:18.396246"
+          },
+          "weight": {
+            "value": "104kg",
+            "source_text": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+            "turn_id": 1,
+            "confidence": 0.97,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:18.399685"
+          },
+          "phone": {
+            "value": "13526783627",
+            "source_text": "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+            "turn_id": 1,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:18.405177"
+          }
+        },
+        "collection_progress": {
+          "sex": true,
+          "last_name": false,
+          "age": false,
+          "age_label": false,
+          "height": true,
+          "weight": true,
+          "location": true,
+          "education": true,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": true,
+          "contact": false,
+          "partner_requirement": true,
+          "partner_gender_preference": false,
+          "partner_pref_location": true,
+          "partner_pref_age": false,
+          "partner_pref_industry": false,
+          "partner_pref_age_relation": false,
+          "partner_pref_locality": false,
+          "partner_pref_height": false,
+          "partner_pref_education": true,
+          "partner_pref_personality": false,
+          "partner_pref_income": false,
+          "partner_pref_other": false,
+          "phone": true
+        },
+        "progress_percentage": 57.14,
+        "missing_fields": [
+          "age",
+          "marital_status",
+          "contact"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {},
+        "effective_field_ask_count": {},
+        "recent_asked_fields": [],
+        "active_ask_closed_fields": {},
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "divorce_confirmation_pending": false,
+        "pending_sex_confirmation": null,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": true,
+        "wechat_collected": false,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "last_contact_request_type": null,
+        "is_hongkong_user": null,
+        "resume_profile_mode": null,
+        "resume_profile_target": null,
+        "last_user_concern_type": null,
+        "field_miss_streak": {},
+        "last_effective_progress": false,
+        "last_asked_field": null,
+        "last_asked_side_field": null,
+        "last_asked_turn_index": null,
+        "last_question_state": {
+          "question_intent": "profile",
+          "asked_fields": [],
+          "side_fields": [],
+          "expected_scope": "contact",
+          "allow_mixed_answer": true,
+          "resume_target": null
+        },
+        "last_semantic_summary": {
+          "primary_domain": "profile",
+          "acts": [
+            "provide_profile",
+            "provide_contact",
+            "state_partner_preference"
+          ],
+          "user_questions": [
+            "pricing"
+          ],
+          "observed_fields": [
+            "location",
+            "occupation",
+            "sex",
+            "education",
+            "partner_pref_location",
+            "partner_pref_education",
+            "partner_requirement",
+            "height",
+            "weight",
+            "phone"
+          ],
+          "pending_fields": [],
+          "resume_target": null,
+          "no_reask_fields": [
+            "location",
+            "occupation",
+            "sex",
+            "education",
+            "partner_requirement",
+            "height",
+            "weight",
+            "contact"
+          ],
+          "turn_mode": "dense_intro",
+          "soft_profile_summary": "",
+          "partner_summary": "找同老家在深圳 最好深户 有房有车，一样本科",
+          "async_backfill": {
+            "status": "skipped",
+            "reason": "ai_not_ready",
+            "latency_ms": 96,
+            "applied_fields": [],
+            "semantic_source": "hybrid_semantic_projection",
+            "updated_at_ms": 1776236840376
+          }
+        },
+        "pending_retry_field": null,
+        "needs_bridge_back": true,
+        "last_side_topic_type": "faq",
+        "complaint_cooldown_until": null,
+        "recent_semantic_slots": [],
+        "recent_response_openings": [
+          "深圳龙华这边的话"
+        ],
+        "repair_mode": false,
+        "repair_reason": null,
+        "ask_cooldown_turns": 0,
+        "blocked_ask_intents": [],
+        "non_cooperation_turns": 0,
+        "off_topic_turns": 0,
+        "open_profile_attempts": 0,
+        "last_engagement_mode": null,
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 10.139
+    },
+    {
+      "scenario_id": "manual_long_intro_03",
+      "source_file": "/tmp/long_intro_6_samples_real_ai.json",
+      "category": "manual_long_intro",
+      "tags": [
+        "manual",
+        "long_intro"
+      ],
+      "description": "90后护士本科择偶偏好短长句",
+      "passed": true,
+      "checks_total": 0,
+      "checks_passed": 0,
+      "failures": [],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地。",
+          "assistant_response": "我再确认一下，你现在主要在哪个城市生活呀？",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "90年(36岁)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "未留",
+            "education": "本科",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "护士",
+            "occupation_inference_candidate": "无",
+            "contact": "未留",
+            "partner_gender_preference": "未留",
+            "partner_requirement": "同医疗体系，同在深圳发展，本地优先，比自己大"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_manual_long_intro_03_4e74d65c",
+        "created_at": "2026-04-15T15:07:20.382899",
+        "updated_at": "2026-04-15T15:07:26.071614",
+        "profile_version": 8,
+        "sex": null,
+        "last_name": null,
+        "age": 36,
+        "age_label": "90年",
+        "pending_birth_year_bucket": null,
+        "birth_year_confirmation_closed": false,
+        "height": null,
+        "weight": null,
+        "location": null,
+        "education": "本科",
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": "护士",
+        "occupation_inference_candidate": null,
+        "contact": null,
+        "phone": null,
+        "wechat": null,
+        "partner_requirement": "同医疗体系，同在深圳发展，本地优先，比自己大",
+        "partner_gender_preference": null,
+        "partner_pref_location": "深圳",
+        "partner_pref_age": null,
+        "partner_pref_industry": "同医疗体系",
+        "partner_pref_age_relation": "比自己大",
+        "partner_pref_locality": "本地优先",
+        "partner_pref_height": null,
+        "partner_pref_education": null,
+        "partner_pref_personality": null,
+        "partner_pref_income": null,
+        "partner_pref_other": null,
+        "extraction_evidence": {
+          "age_label": {
+            "value": "90年",
+            "source_text": "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:25.940782"
+          },
+          "education": {
+            "value": "本科",
+            "source_text": "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:25.945181"
+          },
+          "occupation": {
+            "value": "护士",
+            "source_text": "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地。",
+            "turn_id": 1,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_self_marker",
+            "updated_at": "2026-04-15T15:07:25.948892"
+          },
+          "partner_requirement": {
+            "value": "同医疗体系，同在深圳发展，本地优先，比自己大",
+            "source_text": "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:25.953341"
+          },
+          "partner_pref_location": {
+            "value": "深圳",
+            "source_text": "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:25.958157"
+          },
+          "partner_pref_industry": {
+            "value": "同医疗体系",
+            "source_text": "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:25.961376"
+          },
+          "partner_pref_age_relation": {
+            "value": "比自己大",
+            "source_text": "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:25.965836"
+          },
+          "partner_pref_locality": {
+            "value": "本地优先",
+            "source_text": "本地优先",
+            "turn_id": 1,
+            "confidence": 0.9,
+            "source": "persistence_plan:fallback",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:25.969765"
+          }
+        },
+        "collection_progress": {
+          "sex": false,
+          "last_name": false,
+          "age": true,
+          "age_label": true,
+          "height": false,
+          "weight": false,
+          "location": false,
+          "education": true,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": true,
+          "contact": false,
+          "partner_requirement": true,
+          "partner_gender_preference": false,
+          "partner_pref_location": true,
+          "partner_pref_age": false,
+          "partner_pref_industry": true,
+          "partner_pref_age_relation": true,
+          "partner_pref_locality": true,
+          "partner_pref_height": false,
+          "partner_pref_education": false,
+          "partner_pref_personality": false,
+          "partner_pref_income": false,
+          "partner_pref_other": false
+        },
+        "progress_percentage": 42.86,
+        "missing_fields": [
+          "sex",
+          "location",
+          "marital_status",
+          "contact"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {
+          "location": 1
+        },
+        "effective_field_ask_count": {
+          "location": 1
+        },
+        "recent_asked_fields": [
+          "location"
+        ],
+        "active_ask_closed_fields": {
+          "partner_requirement": true
+        },
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "divorce_confirmation_pending": false,
+        "pending_sex_confirmation": null,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": false,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "last_contact_request_type": null,
+        "is_hongkong_user": null,
+        "resume_profile_mode": null,
+        "resume_profile_target": null,
+        "last_user_concern_type": null,
+        "field_miss_streak": {},
+        "last_effective_progress": true,
+        "last_asked_field": "location",
+        "last_asked_side_field": null,
+        "last_asked_turn_index": 1,
+        "last_question_state": {
+          "question_intent": "profile_followup",
+          "asked_fields": [
+            "location"
+          ],
+          "side_fields": [],
+          "expected_scope": "self",
+          "allow_mixed_answer": true,
+          "resume_target": null,
+          "source_response": "我再确认一下，你现在主要在哪个城市生活呀？"
+        },
+        "last_semantic_summary": {
+          "primary_domain": "profile",
+          "acts": [
+            "provide_profile",
+            "state_partner_preference"
+          ],
+          "user_questions": [],
+          "observed_fields": [
+            "age_label",
+            "age",
+            "education",
+            "occupation",
+            "partner_requirement",
+            "partner_pref_location",
+            "partner_pref_industry",
+            "partner_pref_age_relation",
+            "partner_pref_locality",
+            "partner_pref_location",
+            "partner_pref_industry",
+            "partner_pref_locality",
+            "partner_pref_age_relation"
+          ],
+          "pending_fields": [
+            "partner_pref_location",
+            "partner_pref_industry",
+            "partner_pref_locality",
+            "partner_pref_age_relation"
+          ],
+          "resume_target": "partner_pref_location",
+          "no_reask_fields": [
+            "education",
+            "occupation",
+            "partner_requirement"
+          ],
+          "turn_mode": "dense_intro",
+          "soft_profile_summary": "",
+          "partner_summary": "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地",
+          "async_backfill": {
+            "status": "skipped",
+            "reason": "ai_not_ready",
+            "latency_ms": 72,
+            "applied_fields": [],
+            "semantic_source": "hybrid_semantic_projection",
+            "updated_at_ms": 1776236846071
+          }
+        },
+        "pending_retry_field": null,
+        "needs_bridge_back": false,
+        "last_side_topic_type": null,
+        "complaint_cooldown_until": null,
+        "recent_semantic_slots": [],
+        "recent_response_openings": [
+          "我再确认一下你现"
+        ],
+        "repair_mode": false,
+        "repair_reason": null,
+        "ask_cooldown_turns": 0,
+        "blocked_ask_intents": [],
+        "non_cooperation_turns": 0,
+        "off_topic_turns": 0,
+        "open_profile_attempts": 0,
+        "last_engagement_mode": "full",
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 5.721
+    },
+    {
+      "scenario_id": "manual_long_intro_04",
+      "source_file": "/tmp/long_intro_6_samples_real_ai.json",
+      "category": "manual_long_intro",
+      "tags": [
+        "manual",
+        "long_intro"
+      ],
+      "description": "98年女生外贸未婚收入微信电话同号",
+      "passed": true,
+      "checks_total": 0,
+      "checks_passed": 0,
+      "failures": [],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系 13423674892微信和电话同号。",
+          "assistant_response": "我记下啦，你找对象的要求还挺实在的。对了，你做外贸的话，每个月收入大概在什么区间呀？",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "98年(28岁)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "深圳",
+            "education": "本科",
+            "marital_status": "单身",
+            "monthly_income": "未留",
+            "occupation": "外贸",
+            "occupation_inference_candidate": "无",
+            "contact": "电话: 13423674892",
+            "partner_gender_preference": "未留",
+            "partner_requirement": "90后，深圳本地，情绪稳定"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_manual_long_intro_04_522daff9",
+        "created_at": "2026-04-15T15:07:26.103983",
+        "updated_at": "2026-04-15T15:07:32.324686",
+        "profile_version": 10,
+        "sex": null,
+        "last_name": null,
+        "age": 28,
+        "age_label": "98年",
+        "pending_birth_year_bucket": null,
+        "birth_year_confirmation_closed": false,
+        "height": null,
+        "weight": null,
+        "location": "深圳",
+        "education": "本科",
+        "marital_status": "单身",
+        "monthly_income": null,
+        "occupation": "外贸",
+        "occupation_inference_candidate": null,
+        "contact": "13423674892",
+        "phone": "13423674892",
+        "wechat": null,
+        "partner_requirement": "90后，深圳本地，情绪稳定",
+        "partner_gender_preference": null,
+        "partner_pref_location": "深圳",
+        "partner_pref_age": "90后",
+        "partner_pref_industry": null,
+        "partner_pref_age_relation": null,
+        "partner_pref_locality": "本地优先",
+        "partner_pref_height": null,
+        "partner_pref_education": null,
+        "partner_pref_personality": null,
+        "partner_pref_income": null,
+        "partner_pref_other": null,
+        "extraction_evidence": {
+          "age_label": {
+            "value": "98年",
+            "source_text": "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系 13423674892微信和电话同号。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:32.179410"
+          },
+          "location": {
+            "value": "深圳",
+            "source_text": "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系 13423674892微信和电话同号。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:32.184312"
+          },
+          "education": {
+            "value": "本科",
+            "source_text": "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系 13423674892微信和电话同号。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:32.187112"
+          },
+          "marital_status": {
+            "value": "单身",
+            "source_text": "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系 13423674892微信和电话同号。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:32.192281"
+          },
+          "occupation": {
+            "value": "外贸",
+            "source_text": "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系 13423674892微信和电话同号。",
+            "turn_id": 1,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_self_marker",
+            "updated_at": "2026-04-15T15:07:32.195514"
+          },
+          "partner_requirement": {
+            "value": "90后，深圳本地，情绪稳定",
+            "source_text": "深圳本地，想着90后男生，情绪稳定就行",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:32.197821"
+          },
+          "partner_pref_age": {
+            "value": "90后",
+            "source_text": "深圳本地，想着90后男生，情绪稳定就行",
+            "turn_id": 1,
+            "confidence": 0.94,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:32.201823"
+          },
+          "partner_pref_location": {
+            "value": "深圳",
+            "source_text": "深圳本地，想着90后男生，情绪稳定就行",
+            "turn_id": 1,
+            "confidence": 0.94,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:32.204853"
+          },
+          "phone": {
+            "value": "13423674892",
+            "source_text": "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系 13423674892微信和电话同号。",
+            "turn_id": 1,
+            "confidence": 0.97,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:32.207963"
+          },
+          "partner_pref_locality": {
+            "value": "本地优先",
+            "source_text": "本地优先",
+            "turn_id": 1,
+            "confidence": 0.9,
+            "source": "persistence_plan:fallback",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:32.211155"
+          }
+        },
+        "collection_progress": {
+          "sex": false,
+          "last_name": false,
+          "age": true,
+          "age_label": true,
+          "height": false,
+          "weight": false,
+          "location": true,
+          "education": true,
+          "marital_status": true,
+          "monthly_income": false,
+          "occupation": true,
+          "contact": true,
+          "partner_requirement": true,
+          "partner_gender_preference": false,
+          "partner_pref_location": true,
+          "partner_pref_age": true,
+          "partner_pref_industry": false,
+          "partner_pref_age_relation": false,
+          "partner_pref_locality": true,
+          "partner_pref_height": false,
+          "partner_pref_education": false,
+          "partner_pref_personality": false,
+          "partner_pref_income": false,
+          "partner_pref_other": false,
+          "phone": true
+        },
+        "progress_percentage": 85.71,
+        "missing_fields": [
+          "sex"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {
+          "monthly_income": 1
+        },
+        "effective_field_ask_count": {
+          "monthly_income": 1
+        },
+        "recent_asked_fields": [],
+        "active_ask_closed_fields": {
+          "partner_requirement": true
+        },
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "divorce_confirmation_pending": false,
+        "pending_sex_confirmation": null,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": true,
+        "wechat_collected": false,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "last_contact_request_type": null,
+        "is_hongkong_user": false,
+        "resume_profile_mode": null,
+        "resume_profile_target": null,
+        "last_user_concern_type": null,
+        "field_miss_streak": {},
+        "last_effective_progress": true,
+        "last_asked_field": "monthly_income",
+        "last_asked_side_field": null,
+        "last_asked_turn_index": 1,
+        "last_question_state": {
+          "question_intent": "profile_followup",
+          "asked_fields": [
+            "monthly_income"
+          ],
+          "side_fields": [],
+          "expected_scope": "self",
+          "allow_mixed_answer": true,
+          "resume_target": null,
+          "source_response": "我记下啦，你找对象的要求还挺实在的。对了，你做外贸的话，每个月收入大概在什么区间呀？"
+        },
+        "last_semantic_summary": {
+          "primary_domain": "profile",
+          "acts": [
+            "provide_profile",
+            "provide_contact",
+            "state_partner_preference"
+          ],
+          "user_questions": [],
+          "observed_fields": [
+            "age_label",
+            "age",
+            "location",
+            "education",
+            "marital_status",
+            "occupation",
+            "partner_requirement",
+            "sex",
+            "partner_pref_age",
+            "partner_pref_location",
+            "wechat",
+            "phone",
+            "partner_pref_locality",
+            "partner_pref_locality"
+          ],
+          "pending_fields": [
+            "partner_pref_locality"
+          ],
+          "resume_target": "partner_pref_locality",
+          "no_reask_fields": [
+            "age",
+            "location",
+            "education",
+            "marital_status",
+            "occupation",
+            "partner_requirement",
+            "sex",
+            "contact"
+          ],
+          "turn_mode": "dense_intro",
+          "soft_profile_summary": "喜欢运动",
+          "partner_summary": "深圳本地，想着90后男生，情绪稳定就行",
+          "async_backfill": {
+            "status": "skipped",
+            "reason": "ai_not_ready",
+            "latency_ms": 79,
+            "applied_fields": [],
+            "semantic_source": "hybrid_semantic_projection",
+            "updated_at_ms": 1776236852324
+          }
+        },
+        "pending_retry_field": null,
+        "needs_bridge_back": false,
+        "last_side_topic_type": null,
+        "complaint_cooldown_until": null,
+        "recent_semantic_slots": [],
+        "recent_response_openings": [
+          "我记下啦你找对象"
+        ],
+        "repair_mode": false,
+        "repair_reason": null,
+        "ask_cooldown_turns": 0,
+        "blocked_ask_intents": [],
+        "non_cooperation_turns": 0,
+        "off_topic_turns": 0,
+        "open_profile_attempts": 0,
+        "last_engagement_mode": "full",
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 6.246
+    },
+    {
+      "scenario_id": "manual_long_intro_05",
+      "source_file": "/tmp/long_intro_6_samples_real_ai.json",
+      "category": "manual_long_intro",
+      "tags": [
+        "manual",
+        "long_intro"
+      ],
+      "description": "女生找男朋友+收入+身高要求",
+      "passed": true,
+      "checks_total": 0,
+      "checks_passed": 0,
+      "failures": [],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。",
+          "assistant_response": "了解啦，你说的这些要求我都记下来了。 那你现在在深圳主要做哪方面工作呀？",
+          "collected_info": {
+            "sex": "女",
+            "last_name": "未留称呼",
+            "age": "未留",
+            "height": "未留",
+            "weight": "未留",
+            "location": "深圳",
+            "education": "本科",
+            "marital_status": "单身",
+            "monthly_income": "一年18左右",
+            "occupation": "未留",
+            "occupation_inference_candidate": "无",
+            "contact": "未留",
+            "partner_gender_preference": "男",
+            "partner_requirement": "90后工作稳定就行，身高180cm以上"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_manual_long_intro_05_55fd77bf",
+        "created_at": "2026-04-15T15:07:32.349498",
+        "updated_at": "2026-04-15T15:07:36.363217",
+        "profile_version": 9,
+        "sex": "女",
+        "last_name": null,
+        "age": null,
+        "age_label": null,
+        "pending_birth_year_bucket": null,
+        "birth_year_confirmation_closed": false,
+        "height": null,
+        "weight": null,
+        "location": "深圳",
+        "education": "本科",
+        "marital_status": "单身",
+        "monthly_income": "一年18左右",
+        "occupation": null,
+        "occupation_inference_candidate": null,
+        "contact": null,
+        "phone": null,
+        "wechat": null,
+        "partner_requirement": "90后工作稳定就行，身高180cm以上",
+        "partner_gender_preference": "男",
+        "partner_pref_location": null,
+        "partner_pref_age": "90后",
+        "partner_pref_industry": null,
+        "partner_pref_age_relation": null,
+        "partner_pref_locality": null,
+        "partner_pref_height": "身高180cm以上",
+        "partner_pref_education": null,
+        "partner_pref_personality": null,
+        "partner_pref_income": null,
+        "partner_pref_other": null,
+        "extraction_evidence": {
+          "location": {
+            "value": "深圳",
+            "source_text": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:36.264274"
+          },
+          "education": {
+            "value": "本科",
+            "source_text": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:36.268000"
+          },
+          "marital_status": {
+            "value": "单身",
+            "source_text": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:36.270827"
+          },
+          "partner_requirement": {
+            "value": "90后工作稳定就行，身高180cm以上",
+            "source_text": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:36.274769"
+          },
+          "partner_gender_preference": {
+            "value": "男",
+            "source_text": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:36.278924"
+          },
+          "monthly_income": {
+            "value": "一年18左右",
+            "source_text": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_self_marker",
+            "updated_at": "2026-04-15T15:07:36.282664"
+          },
+          "sex": {
+            "value": "女",
+            "source_text": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。",
+            "turn_id": 1,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_self_marker",
+            "updated_at": "2026-04-15T15:07:36.287074"
+          },
+          "partner_pref_age": {
+            "value": "90后",
+            "source_text": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:36.291466"
+          },
+          "partner_pref_height": {
+            "value": "身高180cm以上",
+            "source_text": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就怎么多了。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:36.295541"
+          }
+        },
+        "collection_progress": {
+          "sex": true,
+          "last_name": false,
+          "age": false,
+          "age_label": false,
+          "height": false,
+          "weight": false,
+          "location": true,
+          "education": true,
+          "marital_status": true,
+          "monthly_income": true,
+          "occupation": false,
+          "contact": false,
+          "partner_requirement": true,
+          "partner_gender_preference": true,
+          "partner_pref_location": false,
+          "partner_pref_age": true,
+          "partner_pref_industry": false,
+          "partner_pref_age_relation": false,
+          "partner_pref_locality": false,
+          "partner_pref_height": true,
+          "partner_pref_education": false,
+          "partner_pref_personality": false,
+          "partner_pref_income": false,
+          "partner_pref_other": false
+        },
+        "progress_percentage": 57.14,
+        "missing_fields": [
+          "age",
+          "occupation",
+          "contact"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {
+          "occupation": 1
+        },
+        "effective_field_ask_count": {
+          "occupation": 1
+        },
+        "recent_asked_fields": [
+          "occupation"
+        ],
+        "active_ask_closed_fields": {
+          "partner_requirement": true
+        },
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "divorce_confirmation_pending": false,
+        "pending_sex_confirmation": null,
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": false,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "last_contact_request_type": null,
+        "is_hongkong_user": null,
+        "resume_profile_mode": null,
+        "resume_profile_target": null,
+        "last_user_concern_type": null,
+        "field_miss_streak": {},
+        "last_effective_progress": true,
+        "last_asked_field": "occupation",
+        "last_asked_side_field": null,
+        "last_asked_turn_index": 1,
+        "last_question_state": {
+          "question_intent": "profile_followup",
+          "asked_fields": [
+            "occupation"
+          ],
+          "side_fields": [],
+          "expected_scope": "self",
+          "allow_mixed_answer": true,
+          "resume_target": null,
+          "source_response": "了解啦，你说的这些要求我都记下来了。 那你现在在深圳主要做哪方面工作呀？"
+        },
+        "last_semantic_summary": {
+          "primary_domain": "profile",
+          "acts": [
+            "provide_profile",
+            "state_partner_preference"
+          ],
+          "user_questions": [],
+          "observed_fields": [
+            "location",
+            "education",
+            "marital_status",
+            "partner_requirement",
+            "partner_gender_preference",
+            "monthly_income",
+            "sex",
+            "partner_pref_age",
+            "partner_pref_height"
+          ],
+          "pending_fields": [],
+          "resume_target": null,
+          "no_reask_fields": [
+            "location",
+            "education",
+            "marital_status",
+            "partner_requirement",
+            "monthly_income",
+            "sex"
+          ],
+          "turn_mode": "dense_intro",
+          "soft_profile_summary": "",
+          "partner_summary": "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，找起码180+，90后工作稳定就行 暂时就怎么多了"
+        },
+        "pending_retry_field": null,
+        "needs_bridge_back": false,
+        "last_side_topic_type": null,
+        "complaint_cooldown_until": null,
+        "recent_semantic_slots": [],
+        "recent_response_openings": [
+          "了解啦你说的这些"
+        ],
+        "repair_mode": false,
+        "repair_reason": null,
+        "ask_cooldown_turns": 0,
+        "blocked_ask_intents": [],
+        "non_cooperation_turns": 0,
+        "off_topic_turns": 0,
+        "open_profile_attempts": 0,
+        "last_engagement_mode": "full",
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 4.25
+    },
+    {
+      "scenario_id": "manual_long_intro_06",
+      "source_file": "/tmp/long_intro_6_samples_real_ai.json",
+      "category": "manual_long_intro",
+      "tags": [
+        "manual",
+        "long_intro"
+      ],
+      "description": "96深圳坪山在编教师+身高体重+择偶要求",
+      "passed": true,
+      "checks_total": 0,
+      "checks_passed": 0,
+      "failures": [],
+      "turns": [
+        {
+          "index": 1,
+          "user_message": "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不。",
+          "assistant_response": "你提的这些。 现在主要在深圳坪山。 我再确认一下，你这边是男生还是女生呀？ 我再确认一下，你现在的感情状态方便说个大概吗？",
+          "collected_info": {
+            "sex": "未留",
+            "last_name": "未留称呼",
+            "age": "96年(30岁)",
+            "height": "未留",
+            "weight": "未留",
+            "location": "深圳坪山",
+            "education": "本科",
+            "marital_status": "未留",
+            "monthly_income": "未留",
+            "occupation": "在编教师",
+            "occupation_inference_candidate": "无",
+            "contact": "未留",
+            "partner_gender_preference": "未留",
+            "partner_requirement": "最好深圳有房有车，学历本科及以上，能接受身高差，不要92"
+          }
+        }
+      ],
+      "final_profile": {
+        "account_id": "real_ai_manual_long_intro_06_97a765e8",
+        "created_at": "2026-04-15T15:07:36.599959",
+        "updated_at": "2026-04-15T15:07:41.695100",
+        "profile_version": 7,
+        "sex": null,
+        "last_name": null,
+        "age": 30,
+        "age_label": "96年",
+        "pending_birth_year_bucket": null,
+        "birth_year_confirmation_closed": false,
+        "height": null,
+        "weight": null,
+        "location": "深圳坪山",
+        "education": "本科",
+        "marital_status": null,
+        "monthly_income": null,
+        "occupation": "在编教师",
+        "occupation_inference_candidate": null,
+        "contact": null,
+        "phone": null,
+        "wechat": null,
+        "partner_requirement": "最好深圳有房有车，学历本科及以上，能接受身高差，不要92",
+        "partner_gender_preference": null,
+        "partner_pref_location": "深圳",
+        "partner_pref_age": null,
+        "partner_pref_industry": null,
+        "partner_pref_age_relation": null,
+        "partner_pref_locality": null,
+        "partner_pref_height": null,
+        "partner_pref_education": "学历本科及以上",
+        "partner_pref_personality": null,
+        "partner_pref_income": null,
+        "partner_pref_other": null,
+        "extraction_evidence": {
+          "age_label": {
+            "value": "96年",
+            "source_text": "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:41.567639"
+          },
+          "location": {
+            "value": "深圳坪山",
+            "source_text": "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:41.570931"
+          },
+          "occupation": {
+            "value": "在编教师",
+            "source_text": "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不。",
+            "turn_id": 1,
+            "confidence": 0.98,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_self_marker",
+            "updated_at": "2026-04-15T15:07:41.573794"
+          },
+          "partner_requirement": {
+            "value": "最好深圳有房有车，学历本科及以上，能接受身高差，不要92",
+            "source_text": "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:41.577124"
+          },
+          "education": {
+            "value": "本科",
+            "source_text": "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不。",
+            "turn_id": 1,
+            "confidence": 0.96,
+            "source": "persistence_plan:hybrid",
+            "reason": "direct_write",
+            "updated_at": "2026-04-15T15:07:41.581302"
+          },
+          "partner_pref_location": {
+            "value": "深圳",
+            "source_text": "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:41.585842"
+          },
+          "partner_pref_education": {
+            "value": "学历本科及以上",
+            "source_text": "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不。",
+            "turn_id": 1,
+            "confidence": 0.93,
+            "source": "persistence_plan:hybrid",
+            "reason": "explicit_partner_marker",
+            "updated_at": "2026-04-15T15:07:41.590829"
+          }
+        },
+        "collection_progress": {
+          "sex": false,
+          "last_name": false,
+          "age": true,
+          "age_label": true,
+          "height": false,
+          "weight": false,
+          "location": true,
+          "education": true,
+          "marital_status": false,
+          "monthly_income": false,
+          "occupation": true,
+          "contact": false,
+          "partner_requirement": true,
+          "partner_gender_preference": false,
+          "partner_pref_location": true,
+          "partner_pref_age": false,
+          "partner_pref_industry": false,
+          "partner_pref_age_relation": false,
+          "partner_pref_locality": false,
+          "partner_pref_height": false,
+          "partner_pref_education": true,
+          "partner_pref_personality": false,
+          "partner_pref_income": false,
+          "partner_pref_other": false
+        },
+        "progress_percentage": 57.14,
+        "missing_fields": [
+          "sex",
+          "marital_status",
+          "contact"
+        ],
+        "skipped_fields": {},
+        "field_ask_count": {
+          "sex": 1,
+          "marital_status": 1
+        },
+        "effective_field_ask_count": {
+          "sex": 1,
+          "marital_status": 1
+        },
+        "recent_asked_fields": [
+          "sex"
+        ],
+        "active_ask_closed_fields": {
+          "partner_requirement": true
+        },
+        "error_count": {},
+        "conversation_ended": false,
+        "divorce_confirmed": false,
+        "divorce_confirmation_pending": false,
+        "pending_sex_confirmation": "男",
+        "age_under_limit": false,
+        "lgbt_user": false,
+        "already_married": false,
+        "proxy_user": false,
+        "spam_user": false,
+        "phone_collected": false,
+        "wechat_collected": false,
+        "phone_ask_count": 0,
+        "wechat_ask_count": 0,
+        "last_contact_request_type": null,
+        "is_hongkong_user": null,
+        "resume_profile_mode": null,
+        "resume_profile_target": null,
+        "last_user_concern_type": null,
+        "field_miss_streak": {},
+        "last_effective_progress": true,
+        "last_asked_field": "sex",
+        "last_asked_side_field": "marital_status",
+        "last_asked_turn_index": 1,
+        "last_question_state": {
+          "question_intent": "profile_followup",
+          "asked_fields": [
+            "sex"
+          ],
+          "side_fields": [
+            "marital_status"
+          ],
+          "expected_scope": "self",
+          "allow_mixed_answer": true,
+          "resume_target": null,
+          "source_response": "你提的这些。 现在主要在深圳坪山。 我再确认一下，你这边是男生还是女生呀？ 我再确认一下，你现在的感情状态方便说个大概吗？"
+        },
+        "last_semantic_summary": {
+          "primary_domain": "profile",
+          "acts": [
+            "provide_profile",
+            "state_partner_preference"
+          ],
+          "user_questions": [],
+          "observed_fields": [
+            "age_label",
+            "age",
+            "location",
+            "occupation",
+            "partner_requirement",
+            "education",
+            "partner_pref_location",
+            "partner_pref_education",
+            "partner_pref_education"
+          ],
+          "pending_fields": [
+            "partner_pref_education"
+          ],
+          "resume_target": "partner_pref_education",
+          "no_reask_fields": [
+            "location",
+            "occupation",
+            "partner_requirement",
+            "education"
+          ],
+          "turn_mode": "dense_intro",
+          "soft_profile_summary": "",
+          "partner_summary": "想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不"
+        },
+        "pending_retry_field": null,
+        "needs_bridge_back": false,
+        "last_side_topic_type": null,
+        "complaint_cooldown_until": null,
+        "recent_semantic_slots": [],
+        "recent_response_openings": [
+          "你提的这些现在主"
+        ],
+        "repair_mode": false,
+        "repair_reason": null,
+        "ask_cooldown_turns": 0,
+        "blocked_ask_intents": [],
+        "non_cooperation_turns": 0,
+        "off_topic_turns": 0,
+        "open_profile_attempts": 0,
+        "last_engagement_mode": "full",
+        "rejected_wechat": false,
+        "rejected_phone": false
+      },
+      "duration_seconds": 5.254
+    }
+  ]
+}

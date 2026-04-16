@@ -203,6 +203,9 @@ class ChatServiceGenerationPromptService:
         user_profile,
         understanding_result,
     ) -> bool:
+        semantic_summary = dict(getattr(user_profile, "last_semantic_summary", {}) or {})
+        if str(semantic_summary.get("turn_mode") or "").strip() == "dense_intro":
+            return True
         if str(getattr(understanding_result, "primary_turn_type", "") or "").strip() != "opening":
             return False
         if str(getattr(user_profile, "sex", "") or "").strip():

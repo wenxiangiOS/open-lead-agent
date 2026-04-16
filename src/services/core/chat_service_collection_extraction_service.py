@@ -6,6 +6,13 @@ from src.utils.validators import PhoneValidator, WechatValidator
 
 class ChatServiceCollectionExtractionService:
     _HIGH_RISK_FIELDS = {"occupation", "age", "monthly_income", "contact", "partner_requirement", "sex"}
+    _SAME_NUMBER_CONTACT_PATTERNS = (
+        r"(?:微信|wx|vx).*(?:同号|一个号|一样|同一个)",
+        r"(?:跟|和)?(?:电话|手机号|号码).*(?:一样|同号|同一个号)",
+        r"(?:电话|手机号|号码).*(?:也可以加|也能加|也可以搜到|也能搜到|可以搜到|能搜到)",
+        r"(?:电话|号码)也可以(?:当|做)?微信",
+        r"(?:号码|电话)(?:也)?可以搜微信",
+    )
 
     def __init__(self, host: Any) -> None:
         self.host = host
@@ -94,7 +101,10 @@ class ChatServiceCollectionExtractionService:
                 continue
             if routed_field == "wechat":
                 is_valid_wechat, _ = WechatValidator.is_valid(str(routed_value or "").strip())
-                if not is_valid_wechat:
+                if not is_valid_wechat and not self._allows_same_number_wechat_from_plan(
+                    field=field,
+                    routed_value=routed_value,
+                ):
                     invalid_contact_attempt = str(routed_value or "").strip()
                     continue
 
@@ -220,6 +230,25 @@ class ChatServiceCollectionExtractionService:
         if not current_text and not new_text:
             return True
         return bool(current_text and new_text and current_text == new_text)
+
+    @classmethod
+    def _allows_same_number_wechat_from_plan(
+        cls,
+        *,
+        field: Any,
+        routed_value: Any,
+    ) -> bool:
+        candidate = str(routed_value or "").strip()
+        if not candidate or not candidate.isdigit():
+            return False
+
+        is_valid_phone, _ = PhoneValidator.is_valid(candidate)
+        if not is_valid_phone:
+            return False
+
+        evidence_text = str(getattr(field, "evidence_text", "") or "").strip()
+        compact_evidence = re.sub(r"\s+", "", evidence_text)
+        return any(re.search(pattern, compact_evidence) for pattern in cls._SAME_NUMBER_CONTACT_PATTERNS)
 
     @staticmethod
     def _merge_persistence_plan_accepted_fields(

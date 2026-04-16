@@ -91,10 +91,15 @@ class ChatServicePreparationService:
             understanding=understanding,
             decision_profile=decision_profile,
         )
+        self._apply_dense_intro_single_followup_override(
+            turn_decision=turn_decision,
+            understanding=understanding,
+        )
         await self._sync_decision_profile_state(
             user_profile=user_profile,
             decision_profile=decision_profile,
             understanding=understanding,
+            user_message=user_message,
         )
         response_channel = turn_decision.response_channel
         if self.host._should_force_model_expression(
@@ -261,6 +266,34 @@ class ChatServicePreparationService:
         )
 
     @staticmethod
+    def _resolve_turn_mode(understanding: TurnUnderstandingResult) -> str:
+        for note in list(getattr(understanding, "notes", []) or []):
+            clean_note = str(note or "").strip()
+            if clean_note.startswith("turn_mode="):
+                return clean_note.split("=", 1)[1].strip() or "default"
+        return "default"
+
+    def _apply_dense_intro_single_followup_override(
+        self,
+        *,
+        turn_decision: TurnDecision,
+        understanding: TurnUnderstandingResult,
+    ) -> None:
+        ask_field = str(getattr(turn_decision, "ask_field", "") or "").strip()
+        if not ask_field or ask_field == "contact":
+            return
+        if not bool(getattr(turn_decision, "allow_medium_target", False)):
+            return
+        if self._resolve_turn_mode(understanding) != "dense_intro":
+            return
+
+        turn_decision.allow_medium_target = False
+        logger.info(
+            "[prepare_dense_intro_single_followup_override] ask_field=%s allow_medium_target=0",
+            ask_field,
+        )
+
+    @staticmethod
     def _effective_resolved_slots(understanding: TurnUnderstandingResult) -> Dict[str, str]:
         resolved_slots: Dict[str, str] = dict(getattr(understanding, "resolved_slots", {}) or {})
         persistence_plan = getattr(understanding, "persistence_plan", None)
@@ -281,6 +314,7 @@ class ChatServicePreparationService:
         user_profile: UserProfile,
         decision_profile: UserProfile,
         understanding: TurnUnderstandingResult,
+        user_message: str,
     ) -> None:
         """把只在决策阶段产生、但后续轮次需要依赖的状态同步回真实 profile。"""
         changed = False
@@ -308,26 +342,10 @@ class ChatServicePreparationService:
         semantic_frame = getattr(understanding, "semantic_frame", None)
         persistence_plan = getattr(understanding, "persistence_plan", None)
         if semantic_frame is not None:
-            semantic_summary_payload = {
-                "primary_domain": getattr(semantic_frame, "primary_domain", None),
-                "acts": list(getattr(semantic_frame, "acts", []) or []),
-                "user_questions": [
-                    str(getattr(item, "topic", "") or "").strip()
-                    for item in list(getattr(semantic_frame, "user_questions", []) or [])
-                    if str(getattr(item, "topic", "") or "").strip()
-                ],
-                "observed_fields": [
-                    str(getattr(item, "field", "") or "").strip()
-                    for item in list(getattr(semantic_frame, "field_observations", []) or [])
-                    if str(getattr(item, "field", "") or "").strip()
-                ],
-                "pending_fields": [
-                    str(getattr(item, "field", "") or "").strip()
-                    for item in list(getattr(persistence_plan, "pending_fields", []) or [])
-                    if str(getattr(item, "field", "") or "").strip()
-                ],
-                "resume_target": getattr(persistence_plan, "next_resume_target", None) if persistence_plan is not None else None,
-            }
+            semantic_summary_payload = self.host._build_last_semantic_summary_payload(  # noqa: SLF001
+                user_message=user_message,
+                understanding_result=understanding,
+            )
             if dict(getattr(user_profile, "last_semantic_summary", {}) or {}) != semantic_summary_payload:
                 user_profile.set_last_semantic_summary(semantic_summary_payload)
                 changed = True

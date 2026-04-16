@@ -25,6 +25,9 @@ However, the codebase is still in a mixed state:
 - many `src/modules/...` files are only thin wrappers over old `src/services/...`
 - some old `src/services/...` files are still the real business source of truth
 - some old files are now only compatibility shims
+- `conversation_understanding` is a special mixed runtime path:
+  - `UnifiedTurnUnderstandingService` is already the official entrypoint
+  - but it still depends on `TurnUnderstandingService` helper capabilities and compat projections
 
 Because of that:
 - not all old paths can be deleted
@@ -111,6 +114,14 @@ They should become the real implementation location before old files are removed
 - `/Users/eric/Desktop/doubao_mcp_server/src/modules/contact_collection/domain/contact_collection_service.py`
 - `/Users/eric/Desktop/doubao_mcp_server/src/modules/contact_collection/domain/refusal_service.py`
 
+#### Conversation understanding special case
+
+- `/Users/eric/Desktop/doubao_mcp_server/src/modules/conversation_understanding/domain/unified_turn_understanding_service.py`
+- `/Users/eric/Desktop/doubao_mcp_server/src/modules/conversation_understanding/domain/semantic_understanding_layer.py`
+- `/Users/eric/Desktop/doubao_mcp_server/src/modules/conversation_understanding/domain/lexical_signal_layer.py`
+- `/Users/eric/Desktop/doubao_mcp_server/src/modules/conversation_understanding/domain/compat/turn_semantic_frame_to_turn_understanding_result_adapter.py`
+- `/Users/eric/Desktop/doubao_mcp_server/src/modules/conversation/domain/turn_understanding_service.py`
+
 #### Message queue
 
 - `/Users/eric/Desktop/doubao_mcp_server/src/modules/message_queue/application/message_orchestrator.py`
@@ -129,6 +140,35 @@ They should become the real implementation location before old files are removed
 Why:
 - these files currently re-export old-path implementations
 - deleting the old implementation now would break runtime or tests
+
+### 4.4 `KEEP`: mixed runtime pair for conversation understanding
+
+These files must currently be treated as a bound pair and must not be “single-stack cleaned” in one step.
+
+- `/Users/eric/Desktop/doubao_mcp_server/src/modules/conversation_understanding/domain/unified_turn_understanding_service.py`
+- `/Users/eric/Desktop/doubao_mcp_server/src/modules/conversation_understanding/domain/ai_semantic_extraction_service.py`
+- `/Users/eric/Desktop/doubao_mcp_server/src/modules/conversation_understanding/domain/semantic_understanding_layer.py`
+- `/Users/eric/Desktop/doubao_mcp_server/src/modules/conversation_understanding/domain/lexical_signal_layer.py`
+- `/Users/eric/Desktop/doubao_mcp_server/src/modules/conversation/domain/turn_understanding_service.py`
+- `/Users/eric/Desktop/doubao_mcp_server/src/services/core/chat_service.py`
+
+Current boundary:
+
+1. `UnifiedTurnUnderstandingService` is the only official runtime entrypoint and should own final turn understanding decisions
+2. `TurnUnderstandingService` still acts as helper/fallback library for:
+   - lexical and FAQ signals
+   - contact extraction
+   - deterministic profile extraction
+   - lightweight ack helpers
+   - asked-field detection
+3. `TurnUnderstandingService` must not be treated as a second independent runtime brain
+4. cleanup priority is not “delete the old file first”; it is “move helper responsibilities behind unified, then delete compat pieces”
+
+Do not do:
+
+- delete `turn_understanding_service.py` before helper responsibilities are migrated
+- let `ChatService` or other downstream code make a second turn-level decision outside unified
+- remove compat projection before downstream consumers stop depending on `TurnUnderstandingResult`
 
 ## 5. Safe Cleanup Order
 
@@ -172,6 +212,19 @@ For each migrated file:
 Do not:
 - delete old file in the same step
 - rewrite business logic while moving it
+
+Special rule for conversation understanding:
+
+1. do not try to collapse to a single file in one batch
+2. first enforce runtime boundary:
+   - unified = sole entrypoint / sole decision owner
+   - legacy turn understanding = helper library only
+3. then migrate helper families one by one:
+   - FAQ and lexical probes
+   - contact helpers
+   - deterministic extraction guards
+   - lightweight ack helpers
+4. only after downstream no longer depends on `TurnUnderstandingResult` compat behavior, remove projection adapters and legacy result coupling
 
 ### Phase 3: remove internal backward dependencies
 
@@ -268,6 +321,20 @@ Updated next recommended batch:
 - either migrate `dialogue_manager` true source with extra caution
 - or pause structural cleanup and focus on runtime import cleanup and broader regression
 - still avoid `message_queue` true-source migration as the immediate next step
+
+- 2026-04-15: conversation understanding remains intentionally mixed
+- current decision:
+  - keep `UnifiedTurnUnderstandingService` as sole official understanding entrypoint
+  - keep `TurnUnderstandingService` as helper/fallback library during this phase
+  - do not attempt immediate single-stack removal
+- current optimization focus is runtime behavior, not wrapper deletion:
+  - long-sentence chunking
+  - sync AI timeout degradation
+  - hard-field vs summary split
+  - no-reask stability
+- removal precondition for legacy turn understanding is upgraded:
+  - FAQ/contact/ack/deterministic helper responsibilities must first be absorbed behind unified
+  - downstream code must stop treating legacy result shapes as the default truth
 
 ## 8. Stop Conditions
 

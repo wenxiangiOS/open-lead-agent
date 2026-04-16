@@ -903,8 +903,14 @@ class UserProfile(BaseModel):
             for item in normalized.get("pending_fields", [])
             if str(item).strip()
         ]
+        normalized["no_reask_fields"] = [
+            str(item).strip()
+            for item in normalized.get("no_reask_fields", [])
+            if str(item).strip()
+        ]
         normalized["primary_domain"] = str(normalized.get("primary_domain") or "").strip() or "unknown"
         normalized["resume_target"] = str(normalized.get("resume_target") or "").strip() or None
+        normalized["turn_mode"] = str(normalized.get("turn_mode") or "").strip() or "default"
         self.last_semantic_summary = normalized
         self.updated_at = datetime.now()
 

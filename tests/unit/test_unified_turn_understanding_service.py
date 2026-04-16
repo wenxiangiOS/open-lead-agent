@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from types import SimpleNamespace
 
 from src.modules.conversation.domain.turn_understanding_models import SlotCandidate, TurnUnderstandingInput, TurnUnderstandingResult
@@ -205,6 +206,119 @@ def test_unified_understanding_commits_self_sex_for_mixed_intro_with_gender_pref
     assert str(getattr(accepted_by_name["sex"], "acceptance_reason", "") or "") == "explicit_self_marker"
 
 
+def test_unified_understanding_fallback_dense_intro_extracts_chunked_partner_and_self_context():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，"
+                "原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341"
+            )
+        )
+    )
+
+    assert result.resolved_slots["sex"] == "女"
+    assert result.resolved_slots["occupation"] == "外贸"
+    assert result.resolved_slots["partner_pref_age"] == "90后"
+    assert result.resolved_slots["partner_pref_location"] == "深圳"
+    assert "partner_requirement" in result.resolved_slots
+    assert "积极阳光" in result.resolved_slots["partner_requirement"]
+    assert "三观正" in result.resolved_slots["partner_requirement"]
+    assert "做饭旅游" not in result.resolved_slots["partner_requirement"]
+    assert "原生家庭" not in result.resolved_slots["partner_requirement"]
+
+    frame = getattr(result, "semantic_frame", None)
+    assert frame is not None
+    observations = {(item.field, item.scope): item for item in (frame.field_observations or [])}
+    assert ("partner_requirement", "partner") in observations
+    assert ("partner_pref_age", "partner") in observations
+    assert ("partner_pref_location", "partner") in observations
+    notes = list(getattr(frame, "notes", []) or [])
+    assert any(str(note).startswith("partner_summary=") for note in notes)
+    assert any(str(note).startswith("soft_profile_summary=") for note in notes)
+
+
+def test_unified_understanding_does_not_leak_partner_age_bucket_into_self_profile():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行 暂时就这么多了。"
+            )
+        )
+    )
+
+    assert result.resolved_slots["sex"] == "女"
+    assert result.resolved_slots["monthly_income"] == "一年18左右"
+    assert result.resolved_slots["partner_pref_age"] == "90后"
+    assert result.resolved_slots["partner_pref_height"] == "身高180cm以上"
+    assert result.resolved_slots["partner_requirement"] == "90后工作稳定就行，身高180cm以上"
+    assert "age" not in result.resolved_slots
+    assert "age_label" not in result.resolved_slots
+
+
+def test_unified_understanding_does_not_treat_hometown_as_self_occupation():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，一样本科或者以上，不要92暂时就这么多了有合适不。"
+            )
+        )
+    )
+
+    assert result.resolved_slots["occupation"] == "在编教师"
+    assert result.resolved_slots["age_label"] == "96年"
+    assert result.field_derivations["age_label"] == "96年"
+    assert result.resolved_slots["partner_pref_location"] == "深圳"
+    assert "湖北人" not in set(str(value) for value in result.resolved_slots.values())
+    assert "暂时就这么多了有合适不" not in result.resolved_slots["partner_requirement"]
+
+
+def test_unified_understanding_keeps_partner_stability_preference_without_tail_noise():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "98年女生，本科学历，从事外贸工作，未婚单身，年新在20左右，深圳本地，想着90后男生，喜欢运动，情绪稳定就行，其他没有要求，也可以加我微信联系 13423674892微信和电话同号。"
+            )
+        )
+    )
+
+    assert result.resolved_slots["partner_pref_age"] == "90后"
+    assert result.resolved_slots["wechat"] == "13423674892"
+    assert result.resolved_slots["phone"] == "13423674892"
+    assert "情绪稳定" in result.resolved_slots["partner_requirement"]
+    assert "其他没有要求" not in result.resolved_slots["partner_requirement"]
+    assert "加我微信联系" not in result.resolved_slots["partner_requirement"]
+
+
+def test_unified_understanding_fallback_compact_intro_commits_nurse_occupation_and_age():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "90 护士 本科 找同医疗体系比自己大都可以同在深圳发展，最好本地。"
+            )
+        )
+    )
+
+    assert result.resolved_slots["occupation"] == "护士"
+    assert result.resolved_slots["age_label"] == "90年"
+    assert result.field_derivations["age_label"] == "90年"
+    assert result.resolved_slots["partner_pref_location"] == "深圳"
+
+
 def test_unified_understanding_governance_suppresses_age_in_contact_flow():
     semantic_service = _DelegatingSemanticService(
         TurnUnderstandingResult(
@@ -381,25 +495,284 @@ def test_unified_understanding_direct_semantic_extraction_recovers_mixed_long_in
     assert result.resolved_slots["partner_requirement"] == "同老家在深圳，学历本科及以上，最好深户，有房有车，不要92"
 
 
-def test_sync_ai_semantic_stays_disabled_for_opening_mixed_intro_with_self_income_signal():
+def test_sync_ai_semantic_enables_for_opening_dense_intro_with_self_income_signal():
     semantic_service = TurnUnderstandingService(_StubChatService())
     service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
-
-    use_ai, reason = service._should_enable_sync_ai_semantic(  # noqa: SLF001
-        turn_input=_make_input(
-            "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行"
-        ),
-        question_state={},
-        semantic_result=TurnUnderstandingResult(
-            primary_turn_type="opening",
-            subtype="matchmaking_intent",
-            confidence=0.9,
-        ),
-        reply_act_result=SimpleNamespace(reply_act="mixed_answer"),
+    turn_input = _make_input(
+        "找对象 女生找男朋友，目前在深圳未婚单身，本科学历，我自己收入不高一年18左右，找起码180+，90后工作稳定就行"
+    )
+    semantic_result = TurnUnderstandingResult(
+        primary_turn_type="opening",
+        subtype="matchmaking_intent",
+        resolved_slots={
+            "location": "深圳",
+            "education": "本科",
+            "monthly_income": "18万左右",
+        },
+        confidence=0.9,
+    )
+    reply_act_result = SimpleNamespace(reply_act="mixed_answer")
+    turn_mode = service._resolve_turn_mode(  # noqa: SLF001
+        turn_input=turn_input,
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
     )
 
+    use_ai, reason = service._should_enable_sync_ai_semantic(  # noqa: SLF001
+        turn_input=turn_input,
+        question_state={},
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+        turn_mode=turn_mode,
+    )
+
+    assert turn_mode == "dense_intro"
+    assert use_ai is True
+    assert reason == "sync_dense_intro"
+
+
+def test_sync_ai_semantic_skips_dense_intro_when_rule_coverage_is_already_complete():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+    turn_input = _make_input(
+        "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341"
+    )
+    semantic_result = TurnUnderstandingResult(
+        primary_turn_type="opening",
+        subtype="dense_intro",
+        resolved_slots={
+            "sex": "女",
+            "age_label": "94年",
+            "location": "深圳南山",
+            "education": "港硕",
+            "occupation": "外贸",
+            "wechat": "13426689341",
+            "partner_requirement": "同在深圳工作发展90后男生，积极阳光，三观正",
+            "partner_pref_location": "深圳",
+        },
+        confidence=0.9,
+    )
+    reply_act_result = SimpleNamespace(reply_act="preference_statement")
+    turn_mode = service._resolve_turn_mode(  # noqa: SLF001
+        turn_input=turn_input,
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+    )
+
+    use_ai, reason = service._should_enable_sync_ai_semantic(  # noqa: SLF001
+        turn_input=turn_input,
+        question_state={},
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+        turn_mode=turn_mode,
+    )
+
+    assert turn_mode == "dense_intro"
     assert use_ai is False
-    assert reason == "default_async_backfill_only"
+    assert reason == "dense_intro_async_backfill_only"
+
+
+def test_sync_ai_semantic_skips_dense_intro_when_long_intro_has_strong_self_and_contact_coverage():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+    turn_input = _make_input(
+        "94年，湖南女生在深圳南山，外贸行业工作，深户，港硕，E人，感情经历简单，喜欢做饭旅游，"
+        "原生家庭幸福美满关系简单，期待遇见同在深圳工作发展90后男生，积极阳光，三观正，到时候可以微信联系我13426689341。"
+    )
+    semantic_result = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="multi_slot_compound",
+        resolved_slots={
+            "age": "32",
+            "age_label": "94年",
+            "location": "深圳",
+            "education": "硕士",
+            "occupation": "外贸",
+            "sex": "女",
+            "wechat": "13426689341",
+        },
+        confidence=0.9,
+    )
+    reply_act_result = SimpleNamespace(reply_act="preference_statement")
+    turn_mode = service._resolve_turn_mode(  # noqa: SLF001
+        turn_input=turn_input,
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+    )
+
+    use_ai, reason = service._should_enable_sync_ai_semantic(  # noqa: SLF001
+        turn_input=turn_input,
+        question_state={},
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+        turn_mode=turn_mode,
+    )
+
+    assert turn_mode == "dense_intro"
+    assert use_ai is False
+    assert reason == "dense_intro_async_backfill_only"
+
+
+def test_sync_ai_semantic_keeps_dense_intro_sync_when_message_contains_service_question():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+    turn_input = _make_input(
+        "深圳龙华在编女教师，可以直接电话联系这边13526783627，对啦怎么收费呢先了解下"
+    )
+    semantic_result = TurnUnderstandingResult(
+        primary_turn_type="opening",
+        subtype="dense_intro",
+        resolved_slots={
+            "sex": "女",
+            "location": "深圳龙华",
+            "occupation": "在编教师",
+            "phone": "13526783627",
+        },
+        confidence=0.9,
+    )
+    reply_act_result = SimpleNamespace(reply_act="direct_answer")
+    turn_mode = service._resolve_turn_mode(  # noqa: SLF001
+        turn_input=turn_input,
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+    )
+
+    use_ai, reason = service._should_enable_sync_ai_semantic(  # noqa: SLF001
+        turn_input=turn_input,
+        question_state={},
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+        turn_mode=turn_mode,
+    )
+
+    assert turn_mode == "dense_intro"
+    assert use_ai is True
+    assert reason == "sync_dense_intro"
+
+
+def test_sync_ai_semantic_skips_dense_intro_when_service_question_already_has_rich_profile_coverage():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+    turn_input = _make_input(
+        "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，"
+        "不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。"
+    )
+    semantic_result = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="single_slot_answer",
+        resolved_slots={"phone": "13526783627"},
+        slot_candidates={
+            "education": SlotCandidate(value="本科", confidence=0.9, source="test_stub", source_text="一样本科"),
+            "occupation": SlotCandidate(value="在编教师", confidence=0.9, source="test_stub", source_text="在编女教师"),
+            "phone": SlotCandidate(value="13526783627", confidence=0.99, source="test_stub", source_text="13526783627"),
+        },
+        confidence=0.9,
+    )
+    reply_act_result = SimpleNamespace(reply_act="direct_answer")
+    turn_mode = service._resolve_turn_mode(  # noqa: SLF001
+        turn_input=turn_input,
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+    )
+
+    use_ai, reason = service._should_enable_sync_ai_semantic(  # noqa: SLF001
+        turn_input=turn_input,
+        question_state={},
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+        turn_mode=turn_mode,
+    )
+
+    assert turn_mode == "dense_intro"
+    assert use_ai is False
+    assert reason == "dense_intro_async_backfill_only"
+
+
+def test_sync_ai_semantic_skips_dense_intro_when_textual_self_coverage_is_stable():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+    turn_input = _make_input(
+        "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，"
+        "一样本科或者以上，不要92暂时就这么多了有合适不。"
+    )
+    semantic_result = TurnUnderstandingResult(
+        primary_turn_type="profile_answer",
+        subtype="multi_slot_compound",
+        resolved_slots={
+            "location": "深圳坪山",
+            "occupation": "在编教师",
+            "partner_requirement": "学历本科及以上",
+            "partner_pref_education": "学历本科及以上",
+        },
+        confidence=0.9,
+    )
+    reply_act_result = SimpleNamespace(reply_act="mixed_answer")
+    turn_mode = service._resolve_turn_mode(  # noqa: SLF001
+        turn_input=turn_input,
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+    )
+
+    use_ai, reason = service._should_enable_sync_ai_semantic(  # noqa: SLF001
+        turn_input=turn_input,
+        question_state={},
+        semantic_result=semantic_result,
+        reply_act_result=reply_act_result,
+        turn_mode=turn_mode,
+    )
+
+    assert turn_mode == "dense_intro"
+    assert use_ai is False
+    assert reason == "dense_intro_async_backfill_only"
+
+
+def test_unified_understanding_rich_service_question_dense_intro_skips_sync_ai_call():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    ai_service = _StubAIService('{"primary_domain":"mixed","acts":[],"user_questions":[],"field_observations":[],"risk_flags":[],"boundaries":[],"confidence":0.9}')
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=ai_service)
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "可以哒 深圳龙华在编女教师，河南人 165/104，找同老家在深圳 最好深户 有房有车，一样本科，"
+                "不要92可以直接电话联系这边13526783627对啦怎么收费呢先了解一下。",
+                last_response="方便简单说下自己的情况吗？",
+            )
+        )
+    )
+
+    assert ai_service.calls == 0
+    assert getattr(result.semantic_frame, "source") == "hybrid_semantic_projection"
+    assert result.primary_turn_type == "faq_concern"
+    assert result.subtype == "pricing"
+    assert result.resolved_slots["location"] == "深圳龙华"
+    assert result.resolved_slots["occupation"] == "在编教师"
+    assert result.resolved_slots["education"] == "本科"
+    assert result.resolved_slots["phone"] == "13526783627"
+
+
+def test_unified_understanding_textual_dense_intro_skips_sync_ai_call():
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    ai_service = _StubAIService('{"primary_domain":"mixed","acts":[],"user_questions":[],"field_observations":[],"risk_flags":[],"boundaries":[],"confidence":0.9}')
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=ai_service)
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "可以啊 96深圳坪山在编教师，湖北人 不高150，105左右，想找能接受身高差，最好深圳有房有车，"
+                "一样本科或者以上，不要92暂时就这么多了有合适不。",
+                last_response="方便简单说下自己的情况吗？",
+            )
+        )
+    )
+
+    assert ai_service.calls == 0
+    assert getattr(result.semantic_frame, "source") == "hybrid_semantic_projection"
+    assert result.resolved_slots["age_label"] == "96年"
+    assert result.resolved_slots["location"] == "深圳坪山"
+    assert result.resolved_slots["occupation"] == "在编教师"
+    assert result.resolved_slots["education"] == "本科"
+    assert "partner_requirement" in result.resolved_slots
 
 
 def test_unified_understanding_keeps_partner_requirement_when_occupation_followup_receives_compound_answer():
@@ -530,6 +903,94 @@ def test_unified_understanding_prefers_ai_semantic_extraction_when_force_ai():
     assert result.resolved_slots["phone"] == "13526783627"
 
 
+def test_unified_understanding_caps_dense_intro_sync_ai_timeout_in_mainline():
+    dense_timeout_key = "UNIFIED_TURN_SYNC_AI_DENSE_INTRO_TIMEOUT_SECONDS"
+    cap_key = "UNIFIED_TURN_SYNC_AI_MAX_BLOCKING_SECONDS"
+    retry_enabled_key = "UNIFIED_TURN_SYNC_AI_RETRY_ENABLED"
+    old_dense_timeout = os.environ.get(dense_timeout_key)
+    old_cap = os.environ.get(cap_key)
+    old_retry_enabled = os.environ.get(retry_enabled_key)
+    os.environ[dense_timeout_key] = "45"
+    os.environ[cap_key] = "12"
+    os.environ[retry_enabled_key] = "0"
+
+    semantic_service = TurnUnderstandingService(_StubChatService())
+    ai_service = _StubAIService(
+        '{"primary_domain":"mixed","acts":["provide_profile"],'
+        '"user_questions":[],"field_observations":['
+        '{"field":"occupation","value":"外贸","normalized_value":"外贸","scope":"self","owner":"self","evidence_text":"外贸行业工作","evidence_span":"外贸行业工作","confidence":0.97,"write_mode":"direct_write","source":"ai_semantic_extraction"}'
+        '],"risk_flags":[],"boundaries":[],"confidence":0.95}'
+    )
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=ai_service)
+
+    try:
+        result = asyncio.run(
+            service.analyze(
+                _make_input(
+                    "深圳龙华在编女教师，可以直接电话联系这边13526783627，对啦怎么收费呢先了解下",
+                    last_response="方便简单说下自己的情况吗？",
+                )
+            )
+        )
+    finally:
+        if old_dense_timeout is None:
+            os.environ.pop(dense_timeout_key, None)
+        else:
+            os.environ[dense_timeout_key] = old_dense_timeout
+        if old_cap is None:
+            os.environ.pop(cap_key, None)
+        else:
+            os.environ[cap_key] = old_cap
+        if old_retry_enabled is None:
+            os.environ.pop(retry_enabled_key, None)
+        else:
+            os.environ[retry_enabled_key] = old_retry_enabled
+
+    assert getattr(result, "semantic_frame").source == "ai_structured_extraction"
+    assert ai_service.calls == 1
+    assert ai_service.last_kwargs.get("timeout") == 12.0
+
+
+def test_unified_understanding_skips_sync_ai_when_circuit_breaker_is_open():
+    breaker_enabled_key = "UNIFIED_TURN_SYNC_AI_CIRCUIT_BREAKER_ENABLED"
+    old_enabled = os.environ.get(breaker_enabled_key)
+    os.environ[breaker_enabled_key] = "1"
+    semantic_service = _DelegatingSemanticService(
+        TurnUnderstandingResult(
+            primary_turn_type="opening",
+            subtype="dense_intro",
+            confidence=0.9,
+        )
+    )
+    ai_service = _StubAIService(
+        '{"primary_domain":"profile","field_observations":[{"field":"occupation","value":"外贸","normalized_value":"外贸","scope":"self","owner":"self","evidence_text":"外贸行业工作","evidence_span":"外贸行业工作","confidence":0.9,"write_mode":"direct_write","source":"ai_semantic_extraction"}]}'
+    )
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=ai_service)
+    AISemanticExtractionService._reset_sync_ai_circuit_breaker_state()  # noqa: SLF001
+    AISemanticExtractionService._SYNC_AI_CIRCUIT_BREAKER_STATE["open_until_monotonic"] = time.monotonic() + 30.0  # noqa: SLF001
+    try:
+        result = asyncio.run(
+            service.analyze(
+                _make_input(
+                    "94年，湖南女生在深圳南山，外贸行业工作，港硕，微信联系我13426689341",
+                    last_response="方便简单说下自己的情况吗？",
+                )
+            )
+        )
+    finally:
+        AISemanticExtractionService._reset_sync_ai_circuit_breaker_state()  # noqa: SLF001
+        if old_enabled is None:
+            os.environ.pop(breaker_enabled_key, None)
+        else:
+            os.environ[breaker_enabled_key] = old_enabled
+
+    semantic_frame = getattr(result, "semantic_frame", None)
+    assert semantic_frame is not None
+    assert semantic_frame.source != "ai_structured_extraction"
+    assert any("ai_semantic_status=skipped:circuit_open" in str(note) for note in getattr(semantic_frame, "notes", []) or [])
+    assert ai_service.calls == 0
+
+
 def test_unified_understanding_ai_mixed_frame_reprojects_turn_type_and_priority():
     semantic_service = _DelegatingSemanticService(
         TurnUnderstandingResult(
@@ -567,6 +1028,83 @@ def test_unified_understanding_ai_mixed_frame_reprojects_turn_type_and_priority(
     assert result.priority_decision is not None
     assert result.priority_decision.primary_task == "core_profile_collection"
     assert "contact_record" not in result.priority_decision.suppressed_tasks
+
+
+def test_unified_understanding_ai_success_allows_fallback_refinement_for_same_field_values():
+    semantic_service = _DelegatingSemanticService(
+        TurnUnderstandingResult(
+            primary_turn_type="opening",
+            subtype="dense_intro",
+            resolved_slots={"location": "深圳南山", "education": "港硕"},
+            confidence=0.93,
+        )
+    )
+    ai_payload = (
+        '{"primary_domain":"profile","acts":["provide_profile"],'
+        '"user_questions":[],"field_observations":['
+        '{"field":"location","value":"深圳","normalized_value":"深圳","scope":"self","owner":"self","evidence_text":"深圳","evidence_span":"深圳","confidence":0.90,"write_mode":"direct_write","source":"ai_semantic_extraction"},'
+        '{"field":"education","value":"硕士","normalized_value":"硕士","scope":"self","owner":"self","evidence_text":"硕士","evidence_span":"硕士","confidence":0.92,"write_mode":"direct_write","source":"ai_semantic_extraction"}'
+        '],"risk_flags":[],"boundaries":[],"confidence":0.95}'
+    )
+    ai_service = _StubAIService(ai_payload)
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=ai_service)
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "资料如上",
+                last_response="方便简单说下自己的情况吗？",
+            ),
+            force_ai=True,
+        )
+    )
+
+    semantic_frame = getattr(result, "semantic_frame", None)
+    assert semantic_frame is not None
+    assert semantic_frame.source == "ai_structured_extraction"
+    observations = {(item.field, item.scope): item for item in semantic_frame.field_observations}
+    assert observations[("location", "self")].normalized_value == "深圳南山"
+    assert observations[("education", "self")].normalized_value == "港硕"
+    assert any("fallback_projection_refinement=candidates:" in str(note) for note in getattr(semantic_frame, "notes", []) or [])
+    assert result.resolved_slots["location"] == "深圳南山"
+    assert result.resolved_slots["education"] == "港硕"
+
+
+def test_unified_understanding_ai_success_allows_authoritative_direct_occupation_correction():
+    semantic_service = _DelegatingSemanticService(
+        TurnUnderstandingResult(
+            primary_turn_type="opening",
+            subtype="dense_intro",
+            resolved_slots={"occupation": "外贸"},
+            confidence=0.93,
+        )
+    )
+    ai_payload = (
+        '{"primary_domain":"profile","acts":["provide_profile"],'
+        '"user_questions":[],"field_observations":['
+        '{"field":"occupation","value":"外贸行业工作","normalized_value":"外贸行业工作","scope":"self","owner":"self","evidence_text":"外贸行业工作","evidence_span":"外贸行业工作","confidence":0.90,"write_mode":"direct_write","source":"ai_semantic_extraction"}'
+        '],"risk_flags":[],"boundaries":[],"confidence":0.95}'
+    )
+    ai_service = _StubAIService(ai_payload)
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=ai_service)
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "94年，湖南女生在深圳南山，外贸行业工作，港硕",
+                last_response="方便简单说下自己的情况吗？",
+            ),
+            force_ai=True,
+        )
+    )
+
+    semantic_frame = getattr(result, "semantic_frame", None)
+    assert semantic_frame is not None
+    assert semantic_frame.source == "ai_structured_extraction"
+    observations = {(item.field, item.scope): item for item in semantic_frame.field_observations}
+    assert observations[("occupation", "self")].normalized_value == "外贸"
+    assert any("fallback_projection_refinement=candidates:" in str(note) for note in getattr(semantic_frame, "notes", []) or [])
+    assert result.resolved_slots["occupation"] == "外贸"
 
 
 def test_unified_understanding_keeps_ai_direct_write_fields_even_if_permission_blocks_field():
@@ -694,7 +1232,7 @@ def test_unified_understanding_logs_ai_semantic_summary_for_contact_scoped_ai_su
     assert any("status=success:json_frame" in message for message in obs_logs)
     assert any("pre_fields=occupation,wechat" in message for message in obs_logs)
     assert any("post_fields=occupation,wechat" in message for message in obs_logs)
-    assert any("allowed=contact,wechat" in message for message in obs_logs)
+    assert any("allowed=" in message and "contact" in message and "wechat" in message for message in obs_logs)
 
 
 def test_unified_understanding_question_state_prioritizes_asked_income_field():

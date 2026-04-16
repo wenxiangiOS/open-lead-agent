@@ -153,11 +153,11 @@ class InputFallbackService:
             logger.info(f"[无意义检测] 字母数字检查: has_letter={has_letter}, has_digit={has_digit}")
 
             if has_letter and has_digit:
-                wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{5,19}$'
+                wechat_pattern = r'^[a-zA-Z][a-zA-Z0-9_-]{4,19}$'
                 if re.match(wechat_pattern, text_stripped):
                     logger.info(f"[无意义检测] 判定为有意义（微信号格式）: {text_stripped}")
                     return False
-                potential_wechat = re.search(r'[a-zA-Z][a-zA-Z0-9_-]{5,19}', text_stripped)
+                potential_wechat = re.search(r'[a-zA-Z][a-zA-Z0-9_-]{4,19}', text_stripped)
                 if potential_wechat:
                     logger.info(f"[无意义检测] 包含可能的微信号格式: {potential_wechat.group()}")
                     return False
