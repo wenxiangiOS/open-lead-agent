@@ -2436,13 +2436,10 @@ class TurnUnderstandingService:
                 extracted["sex"] = "男" if "男" in raw else "女"
 
         if re.search(r"^\s*90后\s*$", message):
-            extracted["age"] = str(current_year - 1990)
             extracted["age_label"] = "90后"
         elif re.search(r"^\s*95后\s*$", message):
-            extracted["age"] = str(current_year - 1995)
             extracted["age_label"] = "95后"
         elif re.search(r"^\s*85后\s*$", message):
-            extracted["age"] = str(current_year - 1985)
             extracted["age_label"] = "85后"
 
         compact_message = re.sub(r"[，,、。！？!?~～\s]+", "", message)
@@ -2820,10 +2817,7 @@ class TurnUnderstandingService:
         if not label_match:
             return normalized
 
-        year_suffix = int(label_match.group(1))
-        current_year = datetime.now().year
-        birth_year = 2000 + year_suffix if year_suffix <= current_year % 100 else 1900 + year_suffix
-        normalized["age"] = str(current_year - birth_year)
+        normalized.pop("age", None)
         return normalized
 
     def _extract_basic_fields_from_message(self, user_message: str) -> Dict[str, str]:
@@ -3825,6 +3819,7 @@ class TurnUnderstandingService:
         sanitized_message = re.sub(r"\d+(?:\.\d+)?\s*kg\b", " ", message, flags=re.IGNORECASE)
         sanitized_message = re.sub(r"\d+(?:\.\d+)?\s*(?:公斤|斤)\b", " ", sanitized_message, flags=re.IGNORECASE)
         patterns = [
+            r"((?:年薪|年收入|年包|一年|每年)(?:税前|税后)?(?:大概|差不多|有|在)?\d+(?:\.\d+)?(?:\+|左右|上下|出头))",
             r"((?:年薪|年收入|年包|月[收搜]入|月薪|[收搜]入|工资|大概[收搜]入|[收搜]入区间)"
             r"[^，。；,\s]{0,8}\d+(?:\.\d+)?\s*(?:k|w|万|千|元)\s*(?:-|~|到|至|—|–)\s*"
             r"\d+(?:\.\d+)?\s*(?:k|w|万|千|元)(?:\+|左右|上下|出头)?)",

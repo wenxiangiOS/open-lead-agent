@@ -1,15 +1,14 @@
 from src.models.user_profile import UserProfile
 
 
-def test_normalize_age_converts_post_90_bucket_to_reasonable_age():
+def test_normalize_age_keeps_post_90_bucket_as_non_precise_age():
     normalized = UserProfile.normalize_age("90后")
-    assert isinstance(normalized, int)
-    assert 18 <= normalized <= 60
+    assert normalized is None
 
 
 def test_normalize_age_does_not_treat_post_90_bucket_as_90_years_old():
     normalized = UserProfile.normalize_age("90后")
-    assert normalized != 90
+    assert normalized is None
 
 
 def test_normalize_age_supports_birth_year_with_suffix():

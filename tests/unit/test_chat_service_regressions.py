@@ -142,6 +142,58 @@ async def test_collection_extraction_directly_applies_authoritative_persistence_
 
 
 @pytest.mark.asyncio
+async def test_collection_extraction_authoritative_age_clears_pending_birth_year_bucket_from_birth_year_suffix():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_collection_authoritative_age_suffix")
+    profile.age_label = "90后"
+    profile.pending_birth_year_bucket = "90后"
+    profile.birth_year_confirmation_closed = False
+    chat_service.user_service = _StatefulProfileUserService(profile)
+    service = ChatServiceCollectionExtractionService(chat_service)
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="你具体是哪一年出生的呀？")
+    chat_service.extraction_service.process_extracted_data = AsyncMock(return_value={"all_fields": []})
+
+    understanding_result = TurnUnderstandingResult(primary_turn_type="profile_answer")
+    setattr(
+        understanding_result,
+        "persistence_plan",
+        TurnPersistencePlan(
+            accepted_fields=[
+                AcceptedField(
+                    field="age",
+                    value="28",
+                    normalized_value="28",
+                    scope="self",
+                    evidence_text="98的，单身",
+                    confidence=0.98,
+                    acceptance_reason="explicit_self_marker",
+                    update_action="accept_as_new",
+                    persistence_state="committed",
+                    source_channel="hybrid",
+                )
+            ]
+        ),
+    )
+
+    _, collection_result, refreshed_profile = await service.run_extraction(
+        account_id="u_collection_authoritative_age_suffix",
+        user_profile=profile,
+        extracted_data={},
+        user_message="98的，单身",
+        extraction_meta={},
+        understanding_result=understanding_result,
+    )
+
+    chat_service.extraction_service.process_extracted_data.assert_not_awaited()
+    assert refreshed_profile.age == 28
+    assert refreshed_profile.age_label == "98年"
+    assert refreshed_profile.pending_birth_year_bucket is None
+    assert refreshed_profile.birth_year_confirmation_closed is False
+    assert {"field": "age", "value": 28} in collection_result["all_fields"]
+    assert {"field": "age_label", "value": "98年"} in collection_result["all_fields"]
+
+
+@pytest.mark.asyncio
 async def test_collection_extraction_keeps_wechat_when_same_number_as_phone_is_committed():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_collection_same_number_contact")
@@ -6220,7 +6272,7 @@ async def test_update_conversation_state_prefers_planned_ask_field_over_ack_ment
 
 
 @pytest.mark.anyio
-async def test_update_conversation_state_prefers_planned_contact_field_over_drifted_question():
+async def test_update_conversation_state_prefers_actual_drifted_question_and_preserves_resume_target():
     chat_service = _build_chat_service()
     profile = UserProfile(account_id="u_last_asked_contact")
     chat_service.dialogue_manager.add_to_history = AsyncMock()
@@ -6235,14 +6287,19 @@ async def test_update_conversation_state_prefers_planned_contact_field_over_drif
     await chat_service._update_conversation_state(
         "u_last_asked_contact",
         "98年呢",
-        "你刚才说想找90后、身高180以上、工作稳定的男生对吧？那除了这些，你有没有什么特别在意的小细节呀？",
+        "你刚才说想找身高180以上的男生对吧？你更看重对方哪一点呀？",
         "",
         turn_decision=TurnDecision(ask_field="contact"),
         track_asked_fields=True,
     )
 
-    assert profile.last_asked_field == "contact"
-    assert profile.last_asked_side_field is None
+    assert profile.last_asked_field == "partner_requirement"
+    assert profile.last_asked_side_field == "sex"
+    assert profile.resume_profile_target == "contact"
+    assert profile.last_question_state.get("asked_fields") == ["partner_requirement"]
+    assert profile.last_question_state.get("side_fields") == ["sex"]
+    assert profile.last_question_state.get("planned_ask_field") == "contact"
+    assert profile.last_question_state.get("question_source") == "actual_drifted"
     chat_service.user_service.save_user_profile.assert_awaited()
 
 
@@ -6272,6 +6329,39 @@ async def test_update_conversation_state_keeps_secondary_marital_status_question
     assert profile.last_asked_side_field == "marital_status"
     assert profile.last_question_state.get("asked_fields") == ["occupation"]
     assert profile.last_question_state.get("side_fields") == ["marital_status"]
+    assert profile.last_question_state.get("allow_mixed_answer") is True
+    chat_service.user_service.save_user_profile.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_update_conversation_state_uses_actual_multi_question_fields_when_plan_drifts():
+    chat_service = _build_chat_service()
+    profile = UserProfile(account_id="u_last_asked_actual_drift_chain")
+    chat_service.dialogue_manager.add_to_history = AsyncMock()
+    chat_service.dialogue_manager.get_last_response = AsyncMock(return_value="")
+    chat_service.dialogue_manager.update_recent_responses = AsyncMock()
+    chat_service.dialogue_manager.increment_message_count = AsyncMock()
+    chat_service.dialogue_manager.get_message_count = AsyncMock(return_value=3)
+    chat_service.ask_tracking_service.track_ai_asked_fields = AsyncMock()
+    chat_service.user_service.get_user_profile = AsyncMock(return_value=profile)
+    chat_service.user_service.save_user_profile = AsyncMock(return_value=True)
+
+    await chat_service._update_conversation_state(
+        "u_last_asked_actual_drift_chain",
+        "我来自深圳，今年90后",
+        "是90后在深圳对吧，你具体是9几年的呀？另外方便说下你现在的感情状态吗？我心里也好有个底。",
+        "",
+        turn_decision=TurnDecision(ask_field="occupation"),
+        track_asked_fields=True,
+    )
+
+    assert profile.last_asked_field == "age"
+    assert profile.last_asked_side_field == "marital_status"
+    assert profile.resume_profile_target == "occupation"
+    assert profile.last_question_state.get("asked_fields") == ["age"]
+    assert profile.last_question_state.get("side_fields") == ["marital_status"]
+    assert profile.last_question_state.get("planned_ask_field") == "occupation"
+    assert profile.last_question_state.get("question_source") == "actual_drifted"
     assert profile.last_question_state.get("allow_mixed_answer") is True
     chat_service.user_service.save_user_profile.assert_awaited()
 
@@ -8947,6 +9037,39 @@ def test_response_plan_builder_adds_soft_constraints_for_marital_and_sex():
 
     assert any("高概率可推断用户是女生" in item for item in sex_spec.plan.constraints)
     assert any("不要直接生硬二选一" in item for item in sex_spec.plan.constraints)
+
+
+def test_response_plan_builder_blocks_off_target_followup_fields_for_occupation():
+    builder = ResponsePlanBuilder(
+        collection_policy=ProfileCollectionPolicy(),
+        turn_understanding_service=SimpleNamespace(_extract_partner_gender_preference=lambda _message: None),
+    )
+    profile = UserProfile(account_id="u_plan_builder_occupation_followup")
+
+    occupation_spec = builder._build_field_followup_spec(
+        ask_field="occupation",
+        turn_decision=TurnDecision(
+            intent="general",
+            risk="none",
+            stage="opening",
+            next_action="continue",
+            primary_move="ack_and_ask",
+            ask_field="occupation",
+            allow_medium_target=False,
+            allow_contact_target=False,
+            response_channel="model",
+        ),
+        user_profile=profile,
+        user_message="我来自深圳，今年90后",
+        primary_turn_type="profile_answer",
+        subtype="multi_slot_compound",
+        secondary_signals=set(),
+        resolved_slots={"location": "深圳", "age_label": "90后"},
+    )
+
+    assert any("不要擅自改问" in item for item in occupation_spec.plan.constraints)
+    assert any("年龄/出生年份" in item for item in occupation_spec.plan.constraints)
+    assert any("感情状态/婚况" in item for item in occupation_spec.plan.constraints)
 
 
 def test_response_plan_builder_marital_status_prefers_open_status_question_not_singlehood_confirmation():

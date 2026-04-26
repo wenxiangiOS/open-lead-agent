@@ -37,6 +37,13 @@ class ResponsePlanBuilder:
         "partner_requirement": "择偶要求/更看重哪一点",
         "contact": "联系方式",
     }
+    _ASK_FIELD_FOLLOWUP_BLOCK_MAP = {
+        "occupation": ["年龄/出生年份", "感情状态/婚况", "联系方式", "择偶要求/更看重哪一点"],
+        "education": ["年龄/出生年份", "感情状态/婚况", "联系方式"],
+        "monthly_income": ["年龄/出生年份", "感情状态/婚况", "联系方式"],
+        "sex": ["年龄/出生年份", "感情状态/婚况", "联系方式"],
+        "contact": ["年龄/出生年份", "感情状态/婚况"],
+    }
 
     def __init__(self, *, collection_policy: Any, turn_understanding_service: Any) -> None:
         self.collection_policy = collection_policy
@@ -336,6 +343,18 @@ class ResponsePlanBuilder:
         if ask_field == "contact":
             plan_items.append("保持轻量自然，不要承诺具体结果，不要过度施压")
             plan_items.append("如果上一句刚收下偏好或资料，先顺手接住半句，再自然转到联系方式，不要直接硬切")
+        blocked_labels = [
+            label
+            for label in self._ASK_FIELD_FOLLOWUP_BLOCK_MAP.get(ask_field, [])
+            if label and label != main_label and label != side_label
+        ]
+        if blocked_labels:
+            plan_items.append(
+                "除主字段"
+                + (f"和顺带字段“{side_label}”" if side_label else "")
+                + "外，本轮不要擅自改问"
+                + "、".join(f"“{label}”" for label in blocked_labels)
+            )
 
         plan = ResponsePlan(
             mode="field_followup",

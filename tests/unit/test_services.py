@@ -358,6 +358,24 @@ class TestUserProfile:
         assert profile.sex == "男"
         assert profile.collection_progress["sex"] is True
 
+    def test_update_field_normalizes_noisy_occupation_value(self):
+        profile = UserProfile(account_id="test_occupation_normalize")
+
+        result = profile.update_field("occupation", "在在编教师")
+
+        assert result is True
+        assert profile.occupation == "在编教师"
+
+    def test_update_field_dedupes_overlapping_partner_requirement_parts(self):
+        profile = UserProfile(account_id="test_partner_requirement_dedupe")
+        profile.partner_requirement = "成熟稳重，身高至少190"
+        profile.collection_progress["partner_requirement"] = True
+
+        result = profile.update_field("partner_requirement", "成熟稳重，至少190")
+
+        assert result is True
+        assert profile.partner_requirement == "成熟稳重，身高至少190"
+
 
 # ============================================================================
 # TestStructuredLogging

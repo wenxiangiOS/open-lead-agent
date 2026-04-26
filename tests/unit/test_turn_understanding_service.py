@@ -1056,7 +1056,7 @@ def test_turn_understanding_extracts_short_profile_answers():
 
     extracted = service._extract_deterministic_profile_fields("90后")  # noqa: SLF001
     assert extracted["age_label"] == "90后"
-    assert int(extracted["age"]) >= 30
+    assert "age" not in extracted
 
     extracted = service._extract_deterministic_profile_fields("我深圳的")  # noqa: SLF001
     assert extracted["location"] == "深圳"
@@ -1254,8 +1254,7 @@ def test_turn_understanding_does_not_parse_post_90_bucket_as_ninety_years_old():
     extracted = service._extract_deterministic_profile_fields("我90后，")  # noqa: SLF001
 
     assert extracted["age_label"] == "90后"
-    assert int(extracted["age"]) < 60
-    assert int(extracted["age"]) != 90
+    assert "age" not in extracted
 
 
 def test_turn_understanding_treats_bare_two_digit_age_token_as_specific_birth_year():
@@ -1272,6 +1271,12 @@ def test_turn_understanding_extracts_monthly_income():
     service = TurnUnderstandingService(_StubChatService())
     extracted = service._extract_deterministic_profile_fields("收入大概1w左右")  # noqa: SLF001
     assert extracted["monthly_income"] == "1w左右"
+
+
+def test_turn_understanding_extracts_annual_income_without_unit_when_prefixed():
+    service = TurnUnderstandingService(_StubChatService())
+    extracted = service._extract_deterministic_profile_fields("年收入大概18+")  # noqa: SLF001
+    assert extracted["monthly_income"] == "年收入大概18+"
 
 
 def test_turn_understanding_preserves_wx_prefixed_wechat_id_candidate():

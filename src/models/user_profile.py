@@ -244,13 +244,10 @@ class UserProfile(BaseModel):
         if v is not None:
             if isinstance(v, str):
                 value_str = str(v).strip()
-                # 优先识别“90后/95后”一类表达，避免被通用数字提取误解析成 90/95 岁。
+                # “90后/95后” 只保留年龄桶，不自动换算成精确年龄。
                 suffix_match = re.search(r'(\d{2})后', value_str)
                 if suffix_match:
-                    year_suffix = int(suffix_match.group(1))
-                    current_year_suffix = datetime.now().year % 100
-                    birth_year = 2000 + year_suffix if year_suffix <= current_year_suffix else 1900 + year_suffix
-                    v = datetime.now().year - birth_year
+                    return None
                 else:
                     birth_year_match = re.search(r'(19\d{2}|20\d{2})年?(?:出生)?', value_str)
                     if birth_year_match:
@@ -377,11 +374,28 @@ class UserProfile(BaseModel):
                         merged_items = list(existing_items)
                         for item in new_items:
                             item_norm = item.replace(" ", "")
-                            if item_norm and item_norm not in {existing_item.replace(" ", "") for existing_item in merged_items}:
+                            if not item_norm:
+                                continue
+                            duplicate_like = False
+                            for existing_item in list(merged_items):
+                                existing_item_norm = existing_item.replace(" ", "")
+                                if (
+                                    item_norm == existing_item_norm
+                                    or item_norm in existing_item_norm
+                                    or existing_item_norm in item_norm
+                                ):
+                                    duplicate_like = True
+                                    if len(item_norm) > len(existing_item_norm):
+                                        merged_items[merged_items.index(existing_item)] = item
+                                    break
+                            if not duplicate_like:
                                 merged_items.append(item)
                         validated = "，".join(merged_items) if merged_items else normalized_value
                 else:
                     validated = normalized_value
+            elif field_name == 'occupation':
+                normalized_value = self._normalize_occupation_value(value)
+                validated = normalized_value or str(value or "").strip()
             elif field_name == 'partner_gender_preference':
                 normalized = str(value or '').strip()
                 if normalized in {'男生', '男', 'male'}:
@@ -418,6 +432,8 @@ class UserProfile(BaseModel):
                     derived_age = self.normalize_age(age_label)
                     if isinstance(derived_age, int):
                         self.age = derived_age
+                    elif re.search(r'^\d{2}后$', age_label):
+                        self.age = None
                     if re.search(r'^\d{2}后$', age_label):
                         self.pending_birth_year_bucket = age_label
                         self.birth_year_confirmation_closed = False
@@ -873,6 +889,8 @@ class UserProfile(BaseModel):
         normalized["expected_scope"] = expected_scope or "self"
         normalized["question_intent"] = str(normalized.get("question_intent") or "").strip() or "unknown"
         normalized["resume_target"] = str(normalized.get("resume_target") or "").strip() or None
+        normalized["planned_ask_field"] = str(normalized.get("planned_ask_field") or "").strip() or None
+        normalized["question_source"] = str(normalized.get("question_source") or "").strip() or "actual"
         normalized["allow_mixed_answer"] = bool(normalized.get("allow_mixed_answer", False))
         self.last_question_state = normalized
         self.updated_at = datetime.now()
@@ -1252,4 +1270,13 @@ class UserProfile(BaseModel):
             return None
         text = re.sub(r"[，,、。！？!?~～\s]+", "", text)
         text = re.sub(r"(行业|相关|类工作|工作方向|方向)$", "", text)
+        return text or None
+
+    @staticmethod
+    def _normalize_occupation_value(value: Any) -> Optional[str]:
+        text = UserProfile._normalize_occupation_value_for_candidate(value)
+        if not text:
+            return None
+        text = re.sub(r"^在(?=在编(?:教师|老师))", "", text)
+        text = re.sub(r"^(?:目前|现在)(?=在编(?:教师|老师))", "", text)
         return text or None

@@ -8,16 +8,25 @@ from pydantic import Field, BaseModel
 class NetworkConfig(BaseModel):
     """
     网络配置
-
     统一管理代理等网络相关配置
     """
-
+    """ Field 就是给属性设置默认值、加注释用的工具"""
+    """
+    // / 是否禁用代理（推荐在服务器环境中禁用以避免网络问题）
+    var disableProxy: Bool = true
+    """
     # 是否禁用代理
     disable_proxy: bool = Field(
         default=True,
         description="是否禁用代理（推荐在服务器环境中禁用以避免网络问题）"
     )
 
+    """
+    Optional[str] str = 字符串（String）
+    Optional = 可选 → 对应 iOS 的 ?
+    合起来：Optional[str] = String?
+    意思：可以有值，也可以是 nil（空）
+    """
     # HTTP 代理地址（如果启用代理）
     http_proxy: Optional[str] = Field(
         default=None,
@@ -36,6 +45,7 @@ class NetworkConfig(BaseModel):
         description="不使用代理的地址列表"
     )
 
+    """from_env() → 从系统读取配置（读）"""
     @classmethod
     def from_env(cls) -> "NetworkConfig":
         """从环境变量加载网络配置"""

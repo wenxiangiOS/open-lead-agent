@@ -218,9 +218,13 @@ class ChatServiceCollectionExtractionService:
         suffix_match = re.search(r"(\d{2})后", text)
         if suffix_match:
             return f"{suffix_match.group(1)}后"
-        year_match = re.search(r"((?:19\d{2}|20\d{2})年|(?:\d{2})年(?:的)?)", text)
+        year_match = re.search(r"((?:19\d{2}|20\d{2})年(?:的)?|(?:\d{2})年(?:的)?)", text)
         if year_match:
-            return year_match.group(1)
+            canonical = str(year_match.group(1) or "").strip()
+            return canonical[:-1] if canonical.endswith("的") else canonical
+        year_suffix_match = re.search(r"(?<!\d)(\d{2})的(?!\d)", text)
+        if year_suffix_match:
+            return f"{year_suffix_match.group(1)}年"
         return ""
 
     @staticmethod

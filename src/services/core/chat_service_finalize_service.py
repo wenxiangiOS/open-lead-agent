@@ -127,9 +127,6 @@ class ChatServiceFinalizeService:
             display_text, removed_blocks = self.host.first_generation_delivery_service.extract_display_text(
                 draft.raw_ai_response
             )
-            rewritten_text, rewritten_removed_blocks = self.host.first_generation_delivery_service.extract_display_text(
-                response_to_clean
-            )
             cleaned_response, safe_cleaned = self.host.unified_response_safe_cleanup_service.cleanup(display_text)
             safe_cleaned = bool(safe_cleaned or removed_blocks)
             fallback_response = self._build_unified_fallback_response(
@@ -145,37 +142,9 @@ class ChatServiceFinalizeService:
                 safe_cleaned=safe_cleaned,
                 fallback_response=fallback_response,
             )
-            frozen_response = str(delivery.display_response or "").strip()
-            frozen_response = self._maybe_prefer_contact_rewrite_in_raw_mode(
-                frozen_response=frozen_response,
-                rewritten_response=rewritten_text,
-                user_profile=user_profile,
-                user_message=user_message,
-                turn_decision=turn_decision,
-                turn_understanding=turn_understanding,
-                collection_result=collection_result,
-            )
-            if frozen_response == rewritten_text and rewritten_removed_blocks:
-                removed_blocks = list(dict.fromkeys([*removed_blocks, *rewritten_removed_blocks]))
-            final_response = self._apply_alignment_guard_chain(
-                response=frozen_response,
-                user_profile=user_profile,
-                user_message=user_message,
-                turn_decision=turn_decision,
-                collection_result=collection_result,
-            )
-            final_response = self._maybe_enforce_dense_intro_single_question_response(
-                final_response=final_response,
-                user_profile=user_profile,
-                user_message=user_message,
-                turn_decision=turn_decision,
-            )
-            final_response = self._maybe_enforce_contact_followup_response(
-                user_profile=user_profile,
-                final_response=final_response,
-                user_message=user_message,
-                turn_decision=turn_decision,
-            )
+            # Raw mode means the user-visible response should stay as the model first generated it.
+            # Only minimal technical-block stripping / safe cleanup is allowed here.
+            final_response = str(delivery.display_response or "").strip()
             delivery_ok = bool(final_response)
             if delivery_ok:
                 user_profile = await self.host._record_delivered_contact_ask_if_needed(
@@ -192,9 +161,9 @@ class ChatServiceFinalizeService:
                 cleaned_response=cleaned_response,
                 extracted_fields_count=len((collection_result or {}).get("all_fields", []) or []),
                 decision_after_collection=turn_decision,
-                display_mutation_count=int(final_response != frozen_response),
-                display_mutation_source="raw_mode_alignment_guard" if final_response != frozen_response else "",
-                post_freeze_write_attempt=bool(final_response != frozen_response),
+                display_mutation_count=0,
+                display_mutation_source="",
+                post_freeze_write_attempt=False,
             )
             record["technical_blocks_removed"] = removed_blocks
             record["first_generation_only"] = True

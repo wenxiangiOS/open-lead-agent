@@ -266,14 +266,19 @@ class FieldAcceptanceService:
             age = int(normalized)
             if age < 18 or age > 100:
                 return False
-            return bool(re.search(r"(\d{1,2}岁|(?:19|20)\d{2}年|\d{2}后)", evidence))
+            return bool(re.search(r"(\d{1,2}岁|(?:19|20)\d{2}年(?:的)?|\d{2}(?:年(?:的)?|后|的))", evidence))
         if field_name == "occupation":
             if source != "semantic_explicit_self_marker":
                 return False
             return bool(str(getattr(observation, "normalized_value", "") or "").strip())
-        if source != "semantic_deterministic":
+        if source not in {"semantic_deterministic", "semantic_explicit_self_marker"}:
+            return False
+        normalized_value = str(getattr(observation, "normalized_value", "") or "").strip()
+        if not normalized_value:
             return False
         evidence = str(getattr(observation, "evidence_text", "") or "").strip()
+        if source == "semantic_explicit_self_marker":
+            return True
         if not evidence:
             return False
         if not re.search(r"(?:我|自己|本人)", evidence):

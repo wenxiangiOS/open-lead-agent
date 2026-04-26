@@ -579,6 +579,18 @@ class AISemanticExtractionService:
             message=snapshot.user_message,
             result=result,
         )
+        prompt_state = getattr(snapshot, "prompt_state", {}) or {}
+        deterministic_fields = self._extract_deterministic_fields(snapshot.user_message, prompt_state=prompt_state)
+        explicit_marker_fields = dict(deterministic_fields or {})
+        for field_name in ("age", "age_label"):
+            field_value = str((result.resolved_slots or {}).get(field_name) or "").strip()
+            if field_value and field_name not in explicit_marker_fields:
+                explicit_marker_fields[field_name] = field_value
+        explicit_self_age_evidence = self._resolve_explicit_self_age_evidence(
+            snapshot.user_message,
+            prompt_state=prompt_state,
+            deterministic_fields=explicit_marker_fields,
+        )
 
         for obs in self._extract_direct_observations(snapshot):
             self._append_observation(observations, seen, obs)
@@ -593,6 +605,15 @@ class AISemanticExtractionService:
             scope = self._infer_scope(field)
             if not allow_self_from_legacy and scope == "self":
                 continue
+            source = "legacy_resolved_slot"
+            evidence_text = str(value)
+            evidence_span = str(value)
+            confidence = 0.9
+            if field == "age" and explicit_self_age_evidence and scope == "self":
+                source = "semantic_explicit_self_marker"
+                evidence_text = str(snapshot.user_message or "")
+                evidence_span = explicit_self_age_evidence
+                confidence = 0.98
             self._append_observation(
                 observations,
                 seen,
@@ -602,11 +623,11 @@ class AISemanticExtractionService:
                     normalized_value=value,
                     scope=scope,
                     owner="self" if scope in {"self", "contact"} else scope,
-                    evidence_text=str(value),
-                    evidence_span=str(value),
-                    confidence=0.9,
+                    evidence_text=evidence_text,
+                    evidence_span=evidence_span,
+                    confidence=confidence,
                     write_mode="direct_write",
-                    source="legacy_resolved_slot",
+                    source=source,
                 )
             )
 
@@ -1029,6 +1050,11 @@ class AISemanticExtractionService:
             prompt_state=prompt_state,
             deterministic_fields=deterministic_fields,
         )
+        explicit_self_income_evidence = self._resolve_explicit_self_income_evidence(
+            text,
+            prompt_state=prompt_state,
+            deterministic_fields=deterministic_fields,
+        )
         explicit_self_occupation_evidence = self._resolve_explicit_self_occupation_evidence(
             text,
             prompt_state=prompt_state,
@@ -1047,6 +1073,10 @@ class AISemanticExtractionService:
             elif field_name == "age" and explicit_self_age_evidence:
                 confidence = 0.98
                 evidence_span = explicit_self_age_evidence
+                source = "semantic_explicit_self_marker"
+            elif field_name == "monthly_income" and explicit_self_income_evidence:
+                confidence = 0.98
+                evidence_span = explicit_self_income_evidence
                 source = "semantic_explicit_self_marker"
             elif field_name == "age_label" and explicit_self_age_evidence and "age" in asked_fields:
                 confidence = 0.98
@@ -2274,8 +2304,8 @@ class AISemanticExtractionService:
         if not text:
             return None
         explicit_patterns = (
-            r"(?:我|本人|自己).{0,8}(?:\d{1,2}岁|(?:19|20)\d{2}年|\d{2}后)",
-            r"^\s*(?:\d{1,2}岁|(?:19|20)\d{2}年|\d{2}后)\s*(?:呀|呢|哈|哦|啊)?\s*$",
+            r"(?:我|本人|自己).{0,8}(?:\d{1,2}岁|(?:19|20)\d{2}年(?:的)?|\d{2}(?:年(?:的)?|后|的))",
+            r"^\s*(?:\d{1,2}岁|(?:19|20)\d{2}年(?:的)?|\d{2}(?:年(?:的)?|后|的))\s*(?:呀|呢|哈|哦|啊)?\s*$",
         )
         for pattern in explicit_patterns:
             match = re.search(pattern, text)
@@ -2291,6 +2321,10 @@ class AISemanticExtractionService:
         )
         if has_age_candidate and self._looks_like_age_followup_answer(text):
             return text
+        if has_age_candidate and not re.search(r"(找|想找|另一半|对象|希望对方|看重|要求|偏好|偏向|最好)", text):
+            mixed_match = re.search(r"((?:19|20)\d{2}年(?:的)?|\d{2}(?:年(?:的)?|后|的)|\d{1,2}岁)", text)
+            if mixed_match:
+                return str(mixed_match.group(1) or "").strip()
         leading_compact_age = self._extract_compact_intro_age_label(text)
         if leading_compact_age:
             raw_match = re.match(
@@ -2299,6 +2333,34 @@ class AISemanticExtractionService:
             )
             if raw_match:
                 return str(raw_match.group(1) or "").strip()
+        return None
+
+    def _resolve_explicit_self_income_evidence(
+        self,
+        message: str,
+        *,
+        prompt_state: dict[str, Any] | None = None,
+        deterministic_fields: dict[str, Any] | None = None,
+    ) -> str | None:
+        text = str(message or "").strip()
+        if not text:
+            return None
+        explicit_patterns = (
+            r"(?:我|本人|自己).{0,10}(?:收入|工资|月薪|月收入|月入|年薪|年收入|年包|一年|每年).{0,12}",
+            r"^\s*(?:(?:税前|税后)\s*)?(?:\d+(?:\.\d+)?\s*(?:k|w|万|千|元)\+?|\d+(?:\.\d+)?\+?)\s*$",
+            r"^\s*(?:年薪|年收入|年包|一年|每年|月薪|月收入|月入|收入|工资).{0,12}\s*$",
+        )
+        for pattern in explicit_patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                return match.group(0)
+
+        asked_fields = self._extract_prompt_asked_fields(prompt_state)
+        if "monthly_income" not in asked_fields:
+            return None
+        normalized_income = str((deterministic_fields or {}).get("monthly_income") or "").strip()
+        if normalized_income:
+            return text
         return None
 
     def _extract_explicit_correction_overrides(self, message: str) -> dict[str, Any]:
@@ -2383,7 +2445,7 @@ class AISemanticExtractionService:
         return bool(
             re.fullmatch(
                 r"(?:(?:是的|对|对的|嗯|嗯嗯|好的|好|没错|就是|肯定)[呀呢啊哦哈啦嘛]*)?"
-                r"(?:\d{1,2}岁|(?:19|20)\d{2}年|\d{2}后)"
+                r"(?:\d{1,2}岁|(?:19|20)\d{2}年(?:的)?|\d{2}(?:年(?:的)?|后|的))"
                 r"(?:[呀呢啊哦哈啦嘛]*)?",
                 normalized,
             )
@@ -2642,6 +2704,10 @@ class AISemanticExtractionService:
                     confidence = 0.98
                     source = "semantic_explicit_self_marker"
                     evidence_span = explicit_self_age_evidence
+                elif field_name == "monthly_income" and explicit_self_income_evidence:
+                    confidence = 0.98
+                    source = "semantic_explicit_self_marker"
+                    evidence_span = explicit_self_income_evidence
                 elif field_name == "occupation" and explicit_self_occupation_evidence:
                     confidence = 0.98
                     source = "semantic_explicit_self_marker"

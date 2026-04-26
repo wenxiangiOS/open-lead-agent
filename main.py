@@ -21,6 +21,7 @@ if src_path not in sys.path:
 # ============================================================================
 """2.网络配置 (第 23-25 行)"""
 # Apply network configuration (proxy settings)
+"""这是从环境变量里读取网络配置"""
 network_config = NetworkConfig.from_env()
 network_config.apply_to_environment()
 """3.日志设置(第27 - 32行)"""

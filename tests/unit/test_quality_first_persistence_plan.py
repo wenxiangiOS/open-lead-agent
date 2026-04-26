@@ -187,6 +187,35 @@ def test_explicit_self_marker_age_can_be_committed_without_ai():
     assert not rejected
 
 
+def test_explicit_self_marker_age_with_birth_year_suffix_can_be_committed_without_ai():
+    service = FieldAcceptanceService()
+    frame = TurnSemanticFrame(
+        version="v1",
+        source="hybrid_semantic_projection",
+        primary_domain="profile",
+        field_observations=[
+            _obs(
+                field="age",
+                value=28,
+                confidence=0.98,
+                source="semantic_explicit_self_marker",
+                evidence_text="98的，单身",
+            )
+        ],
+    )
+
+    accepted, provisional, pending, rejected = service.accept(frame=frame)
+
+    assert len(accepted) == 1
+    assert accepted[0].field == "age"
+    assert accepted[0].persistence_state == "committed"
+    assert accepted[0].acceptance_reason == "explicit_self_marker"
+    assert accepted[0].source_channel == "hybrid"
+    assert not provisional
+    assert not pending
+    assert not rejected
+
+
 def test_explicit_self_income_can_be_committed_without_ai():
     service = FieldAcceptanceService()
     frame = TurnSemanticFrame(
@@ -200,6 +229,35 @@ def test_explicit_self_income_can_be_committed_without_ai():
                 confidence=0.98,
                 source="semantic_deterministic",
                 evidence_text="我自己收入不高一年18左右",
+            )
+        ],
+    )
+
+    accepted, provisional, pending, rejected = service.accept(frame=frame)
+
+    assert len(accepted) == 1
+    assert accepted[0].field == "monthly_income"
+    assert accepted[0].persistence_state == "committed"
+    assert accepted[0].acceptance_reason == "explicit_self_marker"
+    assert accepted[0].source_channel == "hybrid"
+    assert not provisional
+    assert not pending
+    assert not rejected
+
+
+def test_explicit_self_marker_income_short_answer_can_be_committed_without_ai():
+    service = FieldAcceptanceService()
+    frame = TurnSemanticFrame(
+        version="v1",
+        source="hybrid_semantic_projection",
+        primary_domain="profile",
+        field_observations=[
+            _obs(
+                field="monthly_income",
+                value="20k+",
+                confidence=0.98,
+                source="semantic_explicit_self_marker",
+                evidence_text="20K+",
             )
         ],
     )

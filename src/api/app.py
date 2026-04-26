@@ -67,7 +67,21 @@ if not cors_config.get_origins_list():
 # ============================================================================
 # Application Initialization
 # ============================================================================
+"""
+这个页面就是 后端的 AppDelegate.swift
+对应 iOS：
+AppDelegate.swift
+Info.plist
+Build Phases
+组件初始化
 
+它干 5 件大事：
+创建 FastAPI 应用
+添加中间件（跨域、异常、限流）
+初始化所有服务（AI、聊天、用户、消息队列）
+注册所有接口路由
+启动 / 关闭时的生命周期（启动任务、关闭清理）
+"""
 app = FastAPI(
     title=settings.app_name,
     description="AI红娘小缘 - 帮助单身男女脱单的智能服务",
@@ -80,17 +94,17 @@ app = FastAPI(
 # Middleware Configuration
 # ============================================================================
 
-# CORS middleware (使用统一配置)
+# CORS middleware (使用统一配置) # 中间件可以理解成“请求正式进入业务之前，先经过的一层处理”。
 app.add_middleware(CORSMiddleware, **cors_config.to_middleware_kwargs())
 
-# Error handling middleware (统一错误处理)
+# Error handling middleware (统一错误处理) # 异常处理 全局崩溃捕获
 app.add_middleware(
     ErrorHandlingMiddleware,
     enable_logging=True,
     enable_tracing=True,
     debug_mode=settings.debug_mode if hasattr(settings, 'debug_mode') else False
 )
-
+# 并发限流 防止被刷爆
 # Concurrency middleware (rate limiting)
 app.add_middleware(ConcurrencyMiddleware, enabled=settings.rate_limit_enabled)
 
@@ -98,9 +112,9 @@ app.add_middleware(ConcurrencyMiddleware, enabled=settings.rate_limit_enabled)
 # Service Initialization
 # ============================================================================
 
-ai_service = AIService()
-user_service = UserService()
-chat_service = ChatService(ai_service, user_service)
+ai_service = AIService() # AI服务
+user_service = UserService() # 用户服务
+chat_service = ChatService(ai_service, user_service) # 聊天服务
 queue_store = QueueStore()
 turn_commit_service = TurnCommitService(user_service=user_service, queue_store=queue_store)
 message_orchestrator = MessageOrchestrator(
@@ -109,14 +123,14 @@ message_orchestrator = MessageOrchestrator(
     commit_service=turn_commit_service,
 )
 reply_delivery_service = ReplyDeliveryService()
-message_queue_worker = MessageQueueWorker(
+message_queue_worker = MessageQueueWorker(# 消息队列
     orchestrator=message_orchestrator,
     queue_store=queue_store,
     batch_size=_int_setting("mq_ready_batch_size", 100),
     poll_ms=_int_setting("mq_worker_poll_ms", 20),
     user_concurrency=_int_setting("mq_worker_user_concurrency", 4),
 )
-reply_sender_worker = ReplySenderWorker(
+reply_sender_worker = ReplySenderWorker(# 回复发送器
     queue_store=queue_store,
     delivery_service=reply_delivery_service,
     commit_service=turn_commit_service,
@@ -131,7 +145,7 @@ shutdown_completed = False
 # ============================================================================
 # Route Registration
 # ============================================================================
-
+ # 注册所有接口（路由） 对应 iOS：navigationController.setViewControllers([HomeVC, ChatVC, UserVC], animated: true)
 # Include all route modules
 app.include_router(health_router)
 app.include_router(chat_router)
@@ -147,6 +161,7 @@ app.include_router(chat_v1.router)
 # Error Handlers
 # ============================================================================
 
+# 全局异常捕获
 # Global exception handlers
 app.add_exception_handler(Exception, global_exception_handler)
 
@@ -204,7 +219,7 @@ def cleanup_resources():
 # Register cleanup function
 atexit.register(cleanup_resources)
 
-
+#生命周期：启动时执行
 @app.on_event("startup")
 async def startup_event():
     """Startup event handler"""
@@ -255,7 +270,7 @@ async def startup_event():
         logger.error(f"Startup failed: {e}")
         raise
 
-
+#生命周期：关闭时执行
 @app.on_event("shutdown")
 async def shutdown_event():
     """Shutdown event handler"""
@@ -276,7 +291,7 @@ async def shutdown_event():
 # ============================================================================
 # Root Endpoint
 # ============================================================================
-
+#根接口
 @app.get("/", tags=["根路径"])
 async def root():
     """Root endpoint"""

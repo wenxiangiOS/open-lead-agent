@@ -1303,6 +1303,45 @@ def test_unified_understanding_question_state_allows_side_field_in_mixed_answer(
     assert "age" not in result.resolved_slots
 
 
+def test_unified_understanding_accepts_answers_to_actual_drifted_questions_not_planned_field():
+    semantic_service = _DelegatingSemanticService(
+        TurnUnderstandingResult(
+            primary_turn_type="profile_answer",
+            subtype="multi_slot_compound",
+            resolved_slots={"age": "25", "marital_status": "单身"},
+            confidence=0.91,
+        )
+    )
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+    profile = SimpleNamespace(
+        last_question_state={
+            "question_intent": "profile_followup",
+            "asked_fields": ["age"],
+            "side_fields": ["marital_status"],
+            "expected_scope": "self",
+            "allow_mixed_answer": True,
+            "planned_ask_field": "occupation",
+            "question_source": "actual_drifted",
+        }
+    )
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "98的，单身",
+                last_response="是90后在深圳对吧，你具体是9几年的呀？另外方便说下你现在的感情状态吗？",
+                user_profile=profile,
+            )
+        )
+    )
+
+    assert result.resolved_slots["age"] == "25"
+    assert result.resolved_slots["marital_status"] == "单身"
+    assert "occupation" not in result.resolved_slots
+    assert "reply_act=off_target_answer" not in result.notes
+    assert any(str(note) == "allowed_fields=age,marital_status" for note in result.notes)
+
+
 def test_unified_understanding_question_state_keeps_correction_even_when_field_not_asked():
     semantic_service = _DelegatingSemanticService(
         TurnUnderstandingResult(
@@ -1409,6 +1448,93 @@ def test_unified_understanding_marks_occupation_short_answer_as_explicit_self_ma
         for field in accepted
     )
     assert result.resolved_slots == {"occupation": "在编教师"}
+
+
+def test_unified_understanding_marks_monthly_income_short_answer_as_explicit_self_marker_in_followup_context():
+    semantic_service = _DelegatingSemanticService(
+        TurnUnderstandingResult(
+            primary_turn_type="profile_answer",
+            subtype="single_slot_answer",
+            resolved_slots={"monthly_income": "20k+"},
+            confidence=0.91,
+        )
+    )
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+    profile = SimpleNamespace(
+        last_question_state={
+            "question_intent": "profile_followup",
+            "asked_fields": ["monthly_income"],
+            "side_fields": [],
+            "expected_scope": "self",
+            "allow_mixed_answer": False,
+        }
+    )
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "20K+",
+                last_response="你现在每个月收入大概在什么区间呀？",
+                user_profile=profile,
+            )
+        )
+    )
+
+    persistence_plan = getattr(result, "persistence_plan", None)
+    accepted = list(getattr(persistence_plan, "accepted_fields", []) or [])
+
+    assert any(
+        str(getattr(field, "field", "") or "").strip() == "monthly_income"
+        and str(getattr(field, "acceptance_reason", "") or "").strip() == "explicit_self_marker"
+        for field in accepted
+    )
+    assert result.resolved_slots == {"monthly_income": "20k+"}
+
+
+def test_unified_understanding_marks_birth_year_suffix_answer_as_explicit_self_marker_in_followup_context():
+    semantic_service = _DelegatingSemanticService(
+        TurnUnderstandingResult(
+            primary_turn_type="profile_answer",
+            subtype="multi_slot_compound",
+            resolved_slots={"age": "25", "marital_status": "单身"},
+            confidence=0.91,
+        )
+    )
+    service = UnifiedTurnUnderstandingService(semantic_service, ai_service=None)
+    profile = SimpleNamespace(
+        last_question_state={
+            "question_intent": "profile_followup",
+            "asked_fields": ["age"],
+            "side_fields": ["marital_status"],
+            "expected_scope": "self",
+            "allow_mixed_answer": True,
+        }
+    )
+
+    result = asyncio.run(
+        service.analyze(
+            _make_input(
+                "98的，单身",
+                last_response="你具体是9几年的呀？另外方便说下你现在的感情状态吗？",
+                user_profile=profile,
+            )
+        )
+    )
+
+    persistence_plan = getattr(result, "persistence_plan", None)
+    accepted = list(getattr(persistence_plan, "accepted_fields", []) or [])
+
+    assert any(
+        str(getattr(field, "field", "") or "").strip() == "age"
+        and str(getattr(field, "acceptance_reason", "") or "").strip() == "explicit_self_marker"
+        for field in accepted
+    )
+    assert any(
+        str(getattr(field, "field", "") or "").strip() == "marital_status"
+        for field in accepted
+    )
+    assert result.resolved_slots["age"] == "25"
+    assert result.resolved_slots["marital_status"] == "单身"
 
 
 def test_unified_understanding_marks_emphatic_sex_followup_as_explicit_self_marker():

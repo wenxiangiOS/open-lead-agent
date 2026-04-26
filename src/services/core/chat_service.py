@@ -399,6 +399,7 @@ PARTNER_REQUIREMENT_ASK_MARKERS = (
     "更看重哪一点",
     "更在意哪方面",
     "更看重什么",
+    "特别在意",
 )
 LOW_PRIORITY_ASK_PATTERNS = (
     r"(身高|多高|体重|多重).*(\?|？|吗|呢|嘛)",
@@ -7113,36 +7114,46 @@ class ChatService:
         asked_fields: set[str] = set()
         if self._contains_contact_push_markers(text):
             asked_fields.add("contact")
-        question_text = self._extract_primary_question_segment(text)
-        if any(marker in question_text for marker in PARTNER_REQUIREMENT_ASK_MARKERS):
-            asked_fields.add("partner_requirement")
-        if any(marker in question_text for marker in ("月收入", "月薪", "收入", "工资")) and any(cue in question_text for cue in ASK_GUARD_QUESTION_CUES):
-            asked_fields.add("monthly_income")
+        segments = [segment.strip() for segment in re.split(r"[。!！\n]+", text) if segment.strip()]
+        question_segments = [
+            segment for segment in segments
+            if "？" in segment or "?" in segment or any(cue in segment for cue in ASK_GUARD_QUESTION_CUES)
+        ]
+        if not question_segments:
+            question_segments = [self._extract_primary_question_segment(text)]
 
         field_keywords = get_field_keywords()
-        if any(cue in question_text for cue in ASK_GUARD_QUESTION_CUES):
+        pattern_map = {
+            "sex": (
+                r"男生还是女生",
+                r"男生吗还是女生",
+                r"性别",
+                r"你这边是男生",
+                r"你这边是女生",
+                r"男生对吧",
+                r"女生对吧",
+            ),
+            "age": (r"多大", r"几岁", r"年龄", r"年纪", r"几几年的", r"哪一年的", r"哪年出生", r"哪一年出生", r"9几年的"),
+            "location": (r"哪个城市", r"什么城市", r"在哪个城市", r"在哪边", r"哪里生活"),
+            "education": (r"学历",),
+            "occupation": (r"做什么工作", r"做哪方面", r"什么工作", r"职业", r"工作"),
+            "marital_status": (r"单身状态", r"感情状态", r"婚况", r"离异"),
+        }
+        for question_text in question_segments:
+            if any(marker in question_text for marker in PARTNER_REQUIREMENT_ASK_MARKERS):
+                asked_fields.add("partner_requirement")
+            if any(marker in question_text for marker in ("月收入", "月薪", "收入", "工资")) and any(cue in question_text for cue in ASK_GUARD_QUESTION_CUES):
+                asked_fields.add("monthly_income")
+
+            if not any(cue in question_text for cue in ASK_GUARD_QUESTION_CUES):
+                continue
+
             for field in ASK_GUARD_MANAGED_FIELDS:
                 for keyword in field_keywords.get(field, []):
                     if keyword and keyword in question_text:
                         asked_fields.add(field)
                         break
 
-            pattern_map = {
-                "sex": (
-                    r"男生还是女生",
-                    r"男生吗还是女生",
-                    r"性别",
-                    r"你这边是男生",
-                    r"你这边是女生",
-                    r"男生对吧",
-                    r"女生对吧",
-                ),
-                "age": (r"多大", r"几岁", r"年龄", r"年纪", r"几几年的", r"哪一年的", r"哪年出生", r"哪一年出生"),
-                "location": (r"哪个城市", r"什么城市", r"在哪个城市", r"在哪边", r"哪里生活"),
-                "education": (r"学历",),
-                "occupation": (r"做什么工作", r"做哪方面", r"什么工作", r"职业", r"工作"),
-                "marital_status": (r"单身状态", r"感情状态", r"婚况", r"离异"),
-            }
             for field, patterns in pattern_map.items():
                 if any(re.search(pattern, question_text) for pattern in patterns):
                     asked_fields.add(field)
@@ -7156,6 +7167,8 @@ class ChatService:
         asked_field: str,
         side_asked_field: str | None,
         turn_decision: Optional[TurnDecision],
+        planned_ask_field: str | None = None,
+        question_source: str = "actual",
     ) -> Dict[str, Any]:
         asked_fields = [field for field in [asked_field] if field]
         side_fields = [field for field in [side_asked_field] if field]
@@ -7190,6 +7203,8 @@ class ChatService:
             "expected_scope": expected_scope,
             "allow_mixed_answer": allow_mixed_answer,
             "resume_target": str(getattr(turn_decision, "resume_target", "") or "").strip() or None,
+            "planned_ask_field": str(planned_ask_field or "").strip() or None,
+            "question_source": str(question_source or "").strip() or "actual",
             "source_response": canonical_response[:120],
         }
 
@@ -7993,18 +8008,51 @@ class ChatService:
             or all_questioned_fields
             or ("？" in canonical_response or "?" in canonical_response)
         )
+        actual_question_field_order = (
+            "contact",
+            "phone",
+            "wechat",
+            "occupation",
+            "location",
+            "education",
+            "age",
+            "marital_status",
+            "monthly_income",
+            "partner_requirement",
+            "partner_gender_preference",
+            "sex",
+        )
+        actual_asked_field_pool = detected_asked_fields or all_questioned_fields
+        actual_asked_fields = [
+            field
+            for field in actual_question_field_order
+            if field in actual_asked_field_pool
+        ]
+        question_source = "actual"
         if faq_resume_context:
             asked_field = ""
-        elif planned_ask_field and planned_ask_field in effective_questioned_fields:
-            asked_field = planned_ask_field
-        elif planned_ask_field and has_question_intent:
-            asked_field = planned_ask_field
+        elif actual_asked_fields:
+            asked_field = actual_asked_fields[0]
         else:
             asked_field = self.turn_understanding_service._detect_which_field_is_asked(canonical_response)  # noqa: SLF001
-        if faq_resume_context or (planned_ask_field and planned_ask_field != asked_field):
+        if (
+            asked_field
+            and planned_ask_field
+            and asked_field != planned_ask_field
+            and planned_ask_field not in effective_questioned_fields
+        ):
+            question_source = "actual_drifted"
+        elif asked_field and planned_ask_field and asked_field == planned_ask_field:
+            question_source = "planned_aligned"
+        elif asked_field:
+            question_source = "actual"
+        elif planned_ask_field and has_question_intent:
+            asked_field = planned_ask_field
+            question_source = "planned_fallback"
+        if faq_resume_context:
             side_asked_field = None
-        elif planned_ask_field and has_question_intent and planned_ask_field not in effective_questioned_fields:
-            side_asked_field = None
+        elif actual_asked_fields:
+            side_asked_field = next((field for field in actual_asked_fields[1:] if field != asked_field), None)
         else:
             side_asked_field = next(
                 (
@@ -8028,6 +8076,19 @@ class ChatService:
         elif asked_field and asked_field != "sex" and user_profile.pending_sex_confirmation:
             user_profile.pending_sex_confirmation = None
             profile_changed = True
+        if (
+            planned_ask_field
+            and asked_field
+            and planned_ask_field != asked_field
+            and planned_ask_field not in effective_questioned_fields
+            and not str(getattr(user_profile, "resume_profile_target", "") or "").strip()
+        ):
+            user_profile.set_resume_profile_target(
+                getattr(user_profile, "resume_profile_mode", None) or "collect_profile",
+                planned_ask_field,
+                getattr(user_profile, "last_user_concern_type", None),
+            )
+            profile_changed = True
         if asked_field:
             user_profile.set_last_asked_field(asked_field, message_count, side_field=side_asked_field)
             user_profile.set_last_question_state(
@@ -8036,6 +8097,8 @@ class ChatService:
                     asked_field=asked_field,
                     side_asked_field=side_asked_field,
                     turn_decision=turn_decision,
+                    planned_ask_field=planned_ask_field,
+                    question_source=question_source,
                 )
             )
             if side_asked_field:
@@ -8076,6 +8139,7 @@ class ChatService:
                             asked_field=str(getattr(user_profile, "last_asked_field", "") or "").strip(),
                             side_asked_field=str(getattr(user_profile, "last_asked_side_field", "") or "").strip() or None,
                             turn_decision=turn_decision,
+                            planned_ask_field=planned_ask_field,
                         )
                     )
                     profile_changed = True
