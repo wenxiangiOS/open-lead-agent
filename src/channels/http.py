@@ -8,7 +8,6 @@ from src.llm import OpenAICompatibleLLM
 from src.storage import MemoryStore
 from src.templates import get_active_template
 
-
 router = APIRouter()
 store = MemoryStore()
 

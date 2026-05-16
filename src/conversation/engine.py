@@ -8,6 +8,7 @@ from src.llm import OpenAICompatibleLLM
 from src.rag import RAGEngine
 from src.storage import MemoryStore
 from src.templates import TemplateConfig
+from src.templates.config import FAQConfig
 
 
 class ChatRequest(BaseModel):
@@ -42,21 +43,25 @@ class ConversationEngine:
         collected = self.collection.extract_configured_fields(request.profile)
         self.store.append_message(request.account_id, "user", request.question)
 
-        next_field = self.collection.next_field(profile)
-        if next_field is None and self.template.contact.ask_after_required_fields:
-            next_contact = self.contact.next_contact_method(profile)
-            if next_contact is not None:
-                next_field = next_contact
+        ask_counts = self.store.get_ask_counts(request.account_id)
+        next_field = self._next_field_to_collect(profile, ask_counts)
 
         rag_results = self.rag.search(request.question)
-        system_prompt = self._build_system_prompt(next_field, rag_results)
-        response = await self.llm.generate(system_prompt, request.question)
+        faq_match = self._match_faq(request.question)
+        if faq_match is not None:
+            response = self._faq_response(faq_match, next_field)
+        else:
+            system_prompt = self._build_system_prompt(next_field, rag_results)
+            response = await self.llm.generate(system_prompt, request.question)
 
         if next_field and not response.strip():
             response = next_field.ask or f"Could you share your {next_field.label}?"
-        elif next_field and not self.llm.configured:
+        elif next_field and not self.llm.configured and faq_match is None:
             response = next_field.ask or f"Could you share your {next_field.label}?"
 
+        response = self._enforce_response_limit(response)
+        if next_field:
+            self.store.increment_ask_count(request.account_id, next_field.key)
         self.store.append_message(request.account_id, "assistant", response)
         return ChatResponse(
             response=response,
@@ -67,6 +72,22 @@ class ConversationEngine:
             template_id=self.template.template.id,
             rag_sources=[result.source for result in rag_results],
         )
+
+    def _next_field_to_collect(self, profile: dict[str, Any], ask_counts: dict[str, int]) -> Any:
+        required_field = self.collection.next_required_field(profile, ask_counts)
+        if required_field is not None:
+            return required_field
+
+        if self.template.contact.ask_after_required_fields:
+            contact_method = self.contact.next_contact_method(profile, ask_counts)
+            if contact_method is not None:
+                return contact_method
+            return self.collection.next_optional_field(profile, ask_counts)
+
+        optional_field = self.collection.next_optional_field(profile, ask_counts)
+        if optional_field is not None:
+            return optional_field
+        return self.contact.next_contact_method(profile, ask_counts)
 
     def _build_system_prompt(self, next_field: Any, rag_results: list[Any]) -> str:
         lines = [
@@ -82,3 +103,24 @@ class ConversationEngine:
             for result in rag_results:
                 lines.append(f"- Source: {result.source}\n{result.content}")
         return "\n".join(lines)
+
+    def _match_faq(self, question: str) -> FAQConfig | None:
+        normalized = question.lower()
+        for item in self.template.faq:
+            if any(keyword.lower() in normalized for keyword in item.keywords):
+                return item
+        return None
+
+    def _faq_response(self, faq: FAQConfig, next_field: Any) -> str:
+        if not faq.continue_collection or next_field is None:
+            return faq.answer
+        ask = next_field.ask or f"Could you share your {next_field.label}?"
+        return f"{faq.answer}\n\n{ask}"
+
+    def _enforce_response_limit(self, response: str) -> str:
+        max_chars = self.template.conversation.response_max_chars
+        if max_chars <= 0 or len(response) <= max_chars:
+            return response
+        if max_chars <= 3:
+            return response[:max_chars]
+        return response[: max_chars - 3].rstrip() + "..."

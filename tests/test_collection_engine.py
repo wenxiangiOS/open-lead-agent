@@ -22,3 +22,14 @@ def test_next_field_moves_to_optional_after_required(monkeypatch):
 
     assert field is not None
     assert field.key == "learning_problem"
+
+
+def test_next_field_respects_ask_limit(monkeypatch):
+    monkeypatch.setenv("ACTIVE_TEMPLATE", "education")
+    reset_template_cache()
+    engine = CollectionEngine(get_active_template())
+
+    field = engine.next_field({"student_grade": "Grade 8"}, {"subject": 2})
+
+    assert field is not None
+    assert field.key == "learning_problem"

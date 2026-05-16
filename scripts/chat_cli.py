@@ -61,7 +61,10 @@ async def run_chat(account_id: str) -> None:
     print("  /profile              show collected profile")
     print("  /template             show active template summary")
     print("  /set key=value        manually set a profile field")
-    print("\nStart chatting. If the agent asks for a field, your next plain reply is recorded as that field.")
+    print(
+        "\nStart chatting. If the agent asks for a field, "
+        "your next plain reply is recorded as that field."
+    )
 
     while True:
         user_text = input("\nYou> ").strip()
@@ -125,7 +128,9 @@ async def run_chat(account_id: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Interactive open-lead-agent chat")
-    parser.add_argument("--account-id", default="terminal-user", help="Account id for this chat session")
+    parser.add_argument(
+        "--account-id", default="terminal-user", help="Account id for this chat session"
+    )
     args = parser.parse_args()
     asyncio.run(run_chat(args.account_id))
 

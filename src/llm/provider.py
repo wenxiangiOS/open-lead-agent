@@ -1,9 +1,8 @@
 import os
 from dataclasses import dataclass
 
-from openai import AsyncOpenAI
 from dotenv import load_dotenv
-
+from openai import AsyncOpenAI
 
 load_dotenv()
 

@@ -80,6 +80,23 @@ curl -X POST http://127.0.0.1:8000/api/collection/next-field \
   -d '{"profile":{"age":28}}'
 ```
 
+## 本地开发 / Local Development
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -e ".[dev]"
+pytest
+ruff check .
+```
+
+Docker:
+
+```bash
+docker compose up --build
+```
+
 ## 配置 / Configuration
 
 选择行业模板 / Select an industry template:
@@ -145,3 +162,10 @@ Planned work:
 - add webhook, WeChat Work, Xiaohongshu, and web widget adapters
 - add an admin UI for editing templates
 - add plugin hooks for custom field validators and business rules
+
+## 开源协作 / Open Source
+
+This project is released under the MIT License. See `LICENSE`.
+
+Contributions are welcome. See `CONTRIBUTING.md` for setup and pull request
+guidelines, and `SECURITY.md` for vulnerability reporting.

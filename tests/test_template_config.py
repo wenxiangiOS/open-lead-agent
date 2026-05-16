@@ -19,5 +19,8 @@ def test_education_template_loads(monkeypatch):
     template = get_active_template()
 
     assert template.template.id == "education"
-    assert [field.key for field in template.fields if field.required] == ["student_grade", "subject"]
+    assert [field.key for field in template.fields if field.required] == [
+        "student_grade",
+        "subject",
+    ]
     assert template.contact.methods[0].key == "phone"

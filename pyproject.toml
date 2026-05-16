@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-lead-agent"
+version = "0.1.0"
+description = "Configurable AI customer agent for lead collection, RAG, and multi-LLM chat."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "open-lead-agent contributors" }]
+dependencies = [
+  "fastapi==0.128.0",
+  "uvicorn==0.40.0",
+  "pydantic==2.12.5",
+  "pydantic-settings==2.12.0",
+  "python-dotenv==1.2.1",
+  "PyYAML==6.0.3",
+  "openai==2.15.0",
+  "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.0.2",
+  "ruff==0.14.9",
+]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/chat_cli.py" = ["E402"]

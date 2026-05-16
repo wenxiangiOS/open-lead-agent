@@ -42,3 +42,41 @@ def test_chat_uses_template_fallback(monkeypatch):
     assert payload["template_id"] == "education"
     assert payload["next_field"]["key"] == "subject"
     assert "subject" in payload["response"].lower()
+
+
+def test_chat_asks_contact_after_required_fields(monkeypatch):
+    monkeypatch.setenv("ACTIVE_TEMPLATE", "education")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    reset_template_cache()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "question": "I want a trial class",
+            "accountId": "contact-after-required-user",
+            "profile": {"student_grade": "Grade 8", "subject": "Math"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["next_field"]["key"] == "phone"
+    assert "phone" in payload["response"].lower()
+
+
+def test_chat_uses_template_faq(monkeypatch):
+    monkeypatch.setenv("ACTIVE_TEMPLATE", "education")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    reset_template_cache()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/chat",
+        json={"question": "How much is the tuition?", "accountId": "faq-user"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Course pricing depends" in payload["response"]
+    assert payload["next_field"]["key"] == "student_grade"
