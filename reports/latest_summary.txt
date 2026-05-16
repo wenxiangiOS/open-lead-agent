@@ -1,6 +1,0 @@
-global_gate=PASS
-humanlike_pass_rate=0.9287
-extraction_pass_rate=0.9456
-latency_p95=20.134
-json=/Users/eric/Desktop/doubao_mcp_server/reports/real_ai_realism/realism_regression_20260326_045428.json
-md=/Users/eric/Desktop/doubao_mcp_server/reports/real_ai_realism/realism_regression_20260326_045428.md

@@ -1,0 +1,65 @@
+template:
+  id: education
+  name: Education Lead Agent
+  description: Answers course questions and collects trial-class leads.
+
+agent:
+  name: Course Advisor
+  tone: Friendly, professional, concise, not pushy.
+  welcome_message: "Hi, which grade or subject would you like to learn about?"
+
+conversation:
+  max_questions_per_turn: 1
+  answer_question_before_collection: true
+  response_max_chars: 220
+  allow_handoff: true
+
+fields:
+  - key: student_grade
+    label: Student Grade
+    type: text
+    required: true
+    priority: 10
+    ask_limit: 2
+    ask: "What grade is the student in?"
+
+  - key: subject
+    label: Subject
+    type: text
+    required: true
+    priority: 20
+    ask_limit: 2
+    ask: "Which subject are you mainly interested in?"
+
+  - key: learning_problem
+    label: Learning Problem
+    type: text
+    required: false
+    priority: 30
+    ask_limit: 1
+    ask: "What is the main learning problem you want to solve?"
+
+contact:
+  enabled: true
+  ask_after_required_fields: true
+  privacy_message: "Contact information is only used for follow-up consultation."
+  methods:
+    - key: phone
+      label: Phone
+      type: phone
+      required: true
+      ask_limit: 2
+      ask: "Could you leave a phone number so a course advisor can follow up?"
+
+faq:
+  - intent: pricing
+    keywords: ["price", "cost", "fee", "tuition"]
+    answer: "Course pricing depends on grade, subject, and class format. I can first understand your needs, then help arrange a more accurate consultation."
+    continue_collection: true
+
+rag:
+  enabled: false
+  knowledge_base_path: ./knowledge/education
+  top_k: 5
+  score_threshold: 0.65
+  require_citation: true

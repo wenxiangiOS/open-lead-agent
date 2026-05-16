@@ -1,0 +1,80 @@
+template:
+  id: matchmaking
+  name: Matchmaking Lead Agent
+  description: Collects matchmaking profile and contact information.
+
+agent:
+  name: Xiaoyuan
+  tone: Warm, natural, conversational, low pressure.
+  welcome_message: "Hi, are you seriously looking for a relationship, or just learning about the service first?"
+
+conversation:
+  max_questions_per_turn: 1
+  answer_question_before_collection: true
+  response_max_chars: 220
+  allow_handoff: true
+
+fields:
+  - key: sex
+    label: Gender
+    type: enum
+    options: ["male", "female", "other", "unknown"]
+    required: true
+    priority: 10
+    ask_limit: 2
+    ask: "Are you male or female?"
+
+  - key: age
+    label: Age
+    type: number
+    required: true
+    priority: 20
+    ask_limit: 2
+    ask: "How old are you?"
+
+  - key: location
+    label: City
+    type: text
+    required: true
+    priority: 30
+    ask_limit: 2
+    ask: "Which city are you based in?"
+
+  - key: occupation
+    label: Occupation
+    type: text
+    required: false
+    priority: 40
+    ask_limit: 1
+    ask: "What kind of work do you do?"
+
+contact:
+  enabled: true
+  ask_after_required_fields: true
+  privacy_message: "Contact information is only used for follow-up communication."
+  methods:
+    - key: phone
+      label: Phone
+      type: phone
+      required: false
+      ask_limit: 2
+      ask: "Could you share a phone number for follow-up?"
+    - key: wechat
+      label: WeChat
+      type: wechat
+      required: false
+      ask_limit: 2
+      ask: "Would WeChat be convenient for follow-up?"
+
+faq:
+  - intent: pricing
+    keywords: ["price", "cost", "fee", "pricing"]
+    answer: "Basic consultation can be free. Custom services can be optional depending on the business setup."
+    continue_collection: true
+
+rag:
+  enabled: false
+  knowledge_base_path: ./knowledge/matchmaking
+  top_k: 5
+  score_threshold: 0.65
+  require_citation: true

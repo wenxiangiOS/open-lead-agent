@@ -1,1 +1,0 @@
-"""Profile collection application services."""

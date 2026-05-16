@@ -1,1 +1,0 @@
-"""Module-oriented application layout."""
