@@ -41,7 +41,7 @@ def test_chat_uses_template_fallback(monkeypatch):
     payload = response.json()
     assert payload["template_id"] == "education"
     assert payload["next_field"]["key"] == "subject"
-    assert "subject" in payload["response"].lower()
+    assert "科目" in payload["response"]
 
 
 def test_chat_asks_contact_after_required_fields(monkeypatch):
@@ -62,7 +62,7 @@ def test_chat_asks_contact_after_required_fields(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["next_field"]["key"] == "phone"
-    assert "phone" in payload["response"].lower()
+    assert "手机号" in payload["response"]
 
 
 def test_chat_uses_template_faq(monkeypatch):
@@ -78,5 +78,22 @@ def test_chat_uses_template_faq(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    assert "Course pricing depends" in payload["response"]
+    assert "课程价格" in payload["response"]
     assert payload["next_field"]["key"] == "student_grade"
+
+
+def test_matchmaking_template_replies_in_chinese_without_llm(monkeypatch):
+    monkeypatch.setenv("ACTIVE_TEMPLATE", "matchmaking")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    reset_template_cache()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/chat",
+        json={"question": "你好", "accountId": "zh-user"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["next_field"]["key"] == "sex"
+    assert "性别" in payload["response"]

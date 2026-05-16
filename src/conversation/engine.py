@@ -55,9 +55,9 @@ class ConversationEngine:
             response = await self.llm.generate(system_prompt, request.question)
 
         if next_field and not response.strip():
-            response = next_field.ask or f"Could you share your {next_field.label}?"
+            response = next_field.ask or f"请补充一下{next_field.label}可以吗？"
         elif next_field and not self.llm.configured and faq_match is None:
-            response = next_field.ask or f"Could you share your {next_field.label}?"
+            response = next_field.ask or f"请补充一下{next_field.label}可以吗？"
 
         response = self._enforce_response_limit(response)
         if next_field:
@@ -92,8 +92,11 @@ class ConversationEngine:
     def _build_system_prompt(self, next_field: Any, rag_results: list[Any]) -> str:
         lines = [
             f"You are {self.template.agent.name}.",
+            f"Reply language: {self.template.agent.language}.",
             f"Tone: {self.template.agent.tone}",
             f"Business: {self.template.template.name}",
+            "Always respond in the configured reply language unless the user explicitly "
+            "requests another language.",
             "Answer the user naturally. If a next field is provided, ask for it conversationally.",
         ]
         if next_field is not None:
@@ -114,7 +117,7 @@ class ConversationEngine:
     def _faq_response(self, faq: FAQConfig, next_field: Any) -> str:
         if not faq.continue_collection or next_field is None:
             return faq.answer
-        ask = next_field.ask or f"Could you share your {next_field.label}?"
+        ask = next_field.ask or f"请补充一下{next_field.label}可以吗？"
         return f"{faq.answer}\n\n{ask}"
 
     def _enforce_response_limit(self, response: str) -> str:

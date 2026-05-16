@@ -1,12 +1,13 @@
 template:
   id: education
-  name: Education Lead Agent
-  description: Answers course questions and collects trial-class leads.
+  name: 教培课程顾问
+  description: 用于回答课程问题并收集试听课线索。
 
 agent:
-  name: Course Advisor
-  tone: Friendly, professional, concise, not pushy.
-  welcome_message: "Hi, which grade or subject would you like to learn about?"
+  name: 课程顾问
+  language: zh-CN
+  tone: 友好、专业、简洁，不强行推销。
+  welcome_message: "你好，想了解哪个年级或科目的课程？"
 
 conversation:
   max_questions_per_turn: 1
@@ -21,7 +22,7 @@ fields:
     required: true
     priority: 10
     ask_limit: 2
-    ask: "What grade is the student in?"
+    ask: "学生现在读几年级？"
 
   - key: subject
     label: Subject
@@ -29,7 +30,7 @@ fields:
     required: true
     priority: 20
     ask_limit: 2
-    ask: "Which subject are you mainly interested in?"
+    ask: "主要想了解哪个科目？"
 
   - key: learning_problem
     label: Learning Problem
@@ -37,24 +38,24 @@ fields:
     required: false
     priority: 30
     ask_limit: 1
-    ask: "What is the main learning problem you want to solve?"
+    ask: "目前最想解决的学习问题是什么？"
 
 contact:
   enabled: true
   ask_after_required_fields: true
-  privacy_message: "Contact information is only used for follow-up consultation."
+  privacy_message: "联系方式只会用于后续课程咨询。"
   methods:
     - key: phone
       label: Phone
       type: phone
       required: true
       ask_limit: 2
-      ask: "Could you leave a phone number so a course advisor can follow up?"
+      ask: "方便留个手机号，课程顾问后续给你更具体的建议吗？"
 
 faq:
   - intent: pricing
     keywords: ["price", "cost", "fee", "tuition"]
-    answer: "Course pricing depends on grade, subject, and class format. I can first understand your needs, then help arrange a more accurate consultation."
+    answer: "课程价格会根据年级、科目和班型不同而变化。我可以先了解你的需求，再帮你安排更准确的咨询。"
     continue_collection: true
 
 rag:

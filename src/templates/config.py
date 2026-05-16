@@ -19,8 +19,9 @@ class AgentConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     name: str = "AI Agent"
-    tone: str = "Helpful, concise, professional."
-    welcome_message: str = "Hi, how can I help?"
+    language: str = "zh-CN"
+    tone: str = "友好、简洁、专业。"
+    welcome_message: str = "你好，请问有什么可以帮你？"
 
 
 class ConversationConfig(BaseModel):

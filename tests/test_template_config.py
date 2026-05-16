@@ -8,6 +8,7 @@ def test_default_template_loads(monkeypatch):
     template = get_active_template()
 
     assert template.template.id == "matchmaking"
+    assert template.agent.language == "zh-CN"
     assert template.public_dict()["summary"]["field_count"] == 4
     assert template.fields[0].key == "sex"
 
@@ -19,6 +20,7 @@ def test_education_template_loads(monkeypatch):
     template = get_active_template()
 
     assert template.template.id == "education"
+    assert template.agent.language == "zh-CN"
     assert [field.key for field in template.fields if field.required] == [
         "student_grade",
         "subject",

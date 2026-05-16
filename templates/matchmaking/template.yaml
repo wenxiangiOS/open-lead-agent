@@ -1,12 +1,13 @@
 template:
   id: matchmaking
-  name: Matchmaking Lead Agent
-  description: Collects matchmaking profile and contact information.
+  name: 婚恋线索助手
+  description: 用于收集婚恋匹配资料和联系方式。
 
 agent:
-  name: Xiaoyuan
-  tone: Warm, natural, conversational, low pressure.
-  welcome_message: "Hi, are you seriously looking for a relationship, or just learning about the service first?"
+  name: 小缘
+  language: zh-CN
+  tone: 温暖、自然、有分寸，不给用户压力。
+  welcome_message: "你好呀，我是小缘。你是认真想找对象，还是想先了解一下服务？"
 
 conversation:
   max_questions_per_turn: 1
@@ -22,7 +23,7 @@ fields:
     required: true
     priority: 10
     ask_limit: 2
-    ask: "Are you male or female?"
+    ask: "方便问一下你的性别吗？"
 
   - key: age
     label: Age
@@ -30,7 +31,7 @@ fields:
     required: true
     priority: 20
     ask_limit: 2
-    ask: "How old are you?"
+    ask: "你今年多大了？"
 
   - key: location
     label: City
@@ -38,7 +39,7 @@ fields:
     required: true
     priority: 30
     ask_limit: 2
-    ask: "Which city are you based in?"
+    ask: "你目前在哪个城市？"
 
   - key: occupation
     label: Occupation
@@ -46,30 +47,30 @@ fields:
     required: false
     priority: 40
     ask_limit: 1
-    ask: "What kind of work do you do?"
+    ask: "你现在主要做什么工作？"
 
 contact:
   enabled: true
   ask_after_required_fields: true
-  privacy_message: "Contact information is only used for follow-up communication."
+  privacy_message: "联系方式只会用于后续沟通，不会公开展示。"
   methods:
     - key: phone
       label: Phone
       type: phone
       required: false
       ask_limit: 2
-      ask: "Could you share a phone number for follow-up?"
+      ask: "方便留个手机号，后续顾问好跟你沟通吗？"
     - key: wechat
       label: WeChat
       type: wechat
       required: false
       ask_limit: 2
-      ask: "Would WeChat be convenient for follow-up?"
+      ask: "如果你更方便微信，也可以留一下微信号。"
 
 faq:
   - intent: pricing
     keywords: ["price", "cost", "fee", "pricing"]
-    answer: "Basic consultation can be free. Custom services can be optional depending on the business setup."
+    answer: "基础咨询通常可以免费，定制服务是否收费取决于具体业务设置。"
     continue_collection: true
 
 rag:
