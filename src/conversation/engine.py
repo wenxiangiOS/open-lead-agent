@@ -8,7 +8,7 @@ from src.llm import OpenAICompatibleLLM
 from src.rag import RAGEngine
 from src.storage import MemoryStore
 from src.templates import TemplateConfig
-from src.templates.config import FAQConfig
+from src.templates.config import DialogueExampleConfig, DialoguePolicySectionConfig, FAQConfig
 
 
 class ChatRequest(BaseModel):
@@ -92,6 +92,7 @@ class ConversationEngine:
     def _build_system_prompt(self, next_field: Any, rag_results: list[Any]) -> str:
         lines = [
             f"You are {self.template.agent.name}.",
+            f"Role: {self.template.agent.role}.",
             f"Reply language: {self.template.agent.language}.",
             f"Tone: {self.template.agent.tone}",
             f"Business: {self.template.template.name}",
@@ -99,6 +100,18 @@ class ConversationEngine:
             "requests another language.",
             "Answer the user naturally. If a next field is provided, ask for it conversationally.",
         ]
+        if self.template.agent.persona:
+            lines.append(f"Persona:\n{self.template.agent.persona}")
+        if self.template.agent.goals:
+            lines.append("Goals:")
+            lines.extend(f"- {goal}" for goal in self.template.agent.goals)
+        if self.template.agent.behavior_rules:
+            lines.append("Behavior rules:")
+            lines.extend(f"- {rule}" for rule in self.template.agent.behavior_rules)
+        if self.template.agent.boundaries:
+            lines.append("Boundaries:")
+            lines.extend(f"- {boundary}" for boundary in self.template.agent.boundaries)
+        lines.extend(self._format_dialogue_policy())
         if next_field is not None:
             lines.append(f"Next field to collect: {next_field.key} ({next_field.label}).")
         if rag_results:
@@ -106,6 +119,32 @@ class ConversationEngine:
             for result in rag_results:
                 lines.append(f"- Source: {result.source}\n{result.content}")
         return "\n".join(lines)
+
+    def _format_dialogue_policy(self) -> list[str]:
+        policy = self.template.dialogue_policy
+        lines: list[str] = []
+        if policy.turn_goal:
+            lines.append(f"Turn goal:\n{policy.turn_goal}")
+        for section in policy.sections:
+            self._append_policy_section(lines, section)
+        if policy.examples:
+            lines.append("Dialogue examples:")
+            lines.extend(self._format_dialogue_example(example) for example in policy.examples)
+        return lines
+
+    def _append_policy_section(
+        self, lines: list[str], section: DialoguePolicySectionConfig
+    ) -> None:
+        if not section.rules:
+            return
+        lines.append(f"{section.title}:")
+        lines.extend(f"- {rule}" for rule in section.rules)
+
+    def _format_dialogue_example(self, example: DialogueExampleConfig) -> str:
+        parts = [f"- User: {example.user}", f"  Better: {example.better}"]
+        if example.worse:
+            parts.append(f"  Worse: {example.worse}")
+        return "\n".join(parts)
 
     def _match_faq(self, question: str) -> FAQConfig | None:
         normalized = question.lower()

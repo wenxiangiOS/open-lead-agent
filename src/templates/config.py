@@ -20,7 +20,12 @@ class AgentConfig(BaseModel):
 
     name: str = "AI Agent"
     language: str = "zh-CN"
+    role: str = "AI 客服"
     tone: str = "友好、简洁、专业。"
+    persona: str = ""
+    goals: list[str] = Field(default_factory=list)
+    behavior_rules: list[str] = Field(default_factory=list)
+    boundaries: list[str] = Field(default_factory=list)
     welcome_message: str = "你好，请问有什么可以帮你？"
 
 
@@ -31,6 +36,29 @@ class ConversationConfig(BaseModel):
     answer_question_before_collection: bool = True
     response_max_chars: int = 240
     allow_handoff: bool = True
+
+
+class DialogueExampleConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    user: str
+    better: str
+    worse: str = ""
+
+
+class DialoguePolicySectionConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    title: str
+    rules: list[str] = Field(default_factory=list)
+
+
+class DialoguePolicyConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    turn_goal: str = ""
+    sections: list[DialoguePolicySectionConfig] = Field(default_factory=list)
+    examples: list[DialogueExampleConfig] = Field(default_factory=list)
 
 
 class FieldConfig(BaseModel):
@@ -132,6 +160,7 @@ class TemplateConfig(BaseModel):
     template: TemplateMeta
     agent: AgentConfig = Field(default_factory=AgentConfig)
     conversation: ConversationConfig = Field(default_factory=ConversationConfig)
+    dialogue_policy: DialoguePolicyConfig = Field(default_factory=DialoguePolicyConfig)
     field_groups: FieldGroupsConfig = Field(default_factory=FieldGroupsConfig)
     fields: list[FieldConfig] = Field(default_factory=list)
     contact: ContactConfig = Field(default_factory=ContactConfig)
