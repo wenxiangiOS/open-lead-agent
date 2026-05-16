@@ -10,44 +10,74 @@ agent:
   welcome_message: "你好呀，我是小缘。你是认真想找对象，还是想先了解一下服务？"
 
 conversation:
+  # 单轮回复里最多主动追问几个字段。建议保持 1，避免一次问太多让用户有压力。
   max_questions_per_turn: 1
+  # 用户先问问题时，是否先回答用户问题，再继续收集字段。
   answer_question_before_collection: true
+  # AI 回复的最大字数。设置短一点可以让客服回复更像聊天，而不是长篇说明。
   response_max_chars: 220
+  # 是否允许在对话中提示转人工、预约顾问或后续人工跟进。
   allow_handoff: true
 
-fields:
-  - key: sex
-    label: Gender
-    type: enum
-    options: ["male", "female", "other", "unknown"]
-    required: true
-    priority: 10
-    ask_limit: 2
-    ask: "方便问一下你的性别吗？"
+field_groups:
+  core:
+    - key: sex
+      label: 性别
+      type: enum
+      options: ["男", "女", "其他", "暂不透露"]
+      ask: "方便问一下你的性别吗？"
 
-  - key: age
-    label: Age
-    type: number
-    required: true
-    priority: 20
-    ask_limit: 2
-    ask: "你今年多大了？"
+    - key: age
+      label: 年龄
+      type: number
+      ask: "你今年多大了？"
 
-  - key: location
-    label: City
-    type: text
-    required: true
-    priority: 30
-    ask_limit: 2
-    ask: "你目前在哪个城市？"
+    - key: education
+      label: 学历
+      type: enum
+      options: ["高中及以下", "大专", "本科", "硕士", "博士", "其他"]
+      ask: "你的最高学历是？"
 
-  - key: occupation
-    label: Occupation
-    type: text
-    required: false
-    priority: 40
-    ask_limit: 1
-    ask: "你现在主要做什么工作？"
+    - key: occupation
+      label: 职业
+      type: text
+      ask: "你现在主要做什么工作？"
+
+    - key: location
+      label: 所在城市
+      type: text
+      ask: "你目前在哪个城市？"
+
+  medium:
+    - key: marital_status
+      label: 婚姻状态
+      type: enum
+      options: ["未婚", "离异", "丧偶", "其他"]
+      ask: "方便了解一下你的婚姻状态吗？"
+
+    - key: partner_requirement
+      label: 择偶要求
+      type: text
+      ask: "你对另一半有什么比较看重的要求？"
+
+    - key: monthly_income
+      label: 月收入
+      type: enum
+      options: ["5千以下", "5千-1万", "1万-2万", "2万-5万", "5万以上", "暂不透露"]
+      ask: "如果方便的话，也可以了解一下你的月收入区间。"
+
+  low:
+    - key: last_name
+      label: 姓氏
+      type: text
+
+    - key: height
+      label: 身高
+      type: number
+
+    - key: weight
+      label: 体重
+      type: number
 
 contact:
   enabled: true

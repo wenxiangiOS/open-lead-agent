@@ -1,0 +1,12 @@
+services:
+  open-lead-agent:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    working_dir: /app
+    volumes:
+      - ../..:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../../.env

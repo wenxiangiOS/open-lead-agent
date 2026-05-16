@@ -1,7 +1,9 @@
+# Python 打包构建配置。pip install 时会先读这里，知道用 setuptools 构建项目。
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
+# 项目元信息：包名、版本、简介、Python 版本和运行时依赖。
 [project]
 name = "open-lead-agent"
 version = "0.1.0"
@@ -21,25 +23,32 @@ dependencies = [
   "httpx==0.28.1",
 ]
 
+# 命令行入口。项目安装后，可以直接运行 `t` 打开终端聊天。
+[project.scripts]
+t = "src.cli:main"
+
+# 开发依赖。开发者运行 `pip install -e ".[dev]"` 时会额外安装这些工具。
 [project.optional-dependencies]
 dev = [
   "pytest==9.0.2",
   "ruff==0.14.9",
 ]
 
+# 告诉 setuptools 哪些 Python 包需要被安装。
 [tool.setuptools.packages.find]
 include = ["src*"]
 
+# pytest 测试配置。这里替代单独的 pytest.ini。
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
 
+# ruff 代码检查配置。
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 
+# ruff 启用的规则集合：
+# E/F 是基础 Python 风格和错误检查，I 是 import 排序，UP 是语法升级建议，B 是常见 bug 检查。
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-
-[tool.ruff.lint.per-file-ignores]
-"scripts/chat_cli.py" = ["E402"]

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TemplateMeta(BaseModel):
@@ -38,12 +38,53 @@ class FieldConfig(BaseModel):
 
     key: str
     label: str
+    tier: str = "custom"
     type: str = "text"
     required: bool = False
     priority: int = 100
     ask_limit: int = 1
     options: list[str] = Field(default_factory=list)
     ask: str = ""
+
+
+class FieldGroupsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    core: list[FieldConfig] = Field(default_factory=list)
+    medium: list[FieldConfig] = Field(default_factory=list)
+    low: list[FieldConfig] = Field(default_factory=list)
+
+    def flattened_fields(self) -> list[FieldConfig]:
+        fields: list[FieldConfig] = []
+        fields.extend(self._normalize_group("core", self.core, required=True, ask_limit=2, base=10))
+        fields.extend(
+            self._normalize_group("medium", self.medium, required=False, ask_limit=1, base=110)
+        )
+        fields.extend(self._normalize_group("low", self.low, required=False, ask_limit=0, base=210))
+        return fields
+
+    def _normalize_group(
+        self,
+        tier: str,
+        fields: list[FieldConfig],
+        *,
+        required: bool,
+        ask_limit: int,
+        base: int,
+    ) -> list[FieldConfig]:
+        normalized = []
+        for index, field in enumerate(fields):
+            data = field.model_dump()
+            if field.tier == "custom":
+                data["tier"] = tier
+            if "required" not in field.model_fields_set:
+                data["required"] = required
+            if "ask_limit" not in field.model_fields_set:
+                data["ask_limit"] = ask_limit
+            if "priority" not in field.model_fields_set:
+                data["priority"] = base + index * 10
+            normalized.append(FieldConfig(**data))
+        return normalized
 
 
 class ContactMethodConfig(BaseModel):
@@ -91,17 +132,27 @@ class TemplateConfig(BaseModel):
     template: TemplateMeta
     agent: AgentConfig = Field(default_factory=AgentConfig)
     conversation: ConversationConfig = Field(default_factory=ConversationConfig)
+    field_groups: FieldGroupsConfig = Field(default_factory=FieldGroupsConfig)
     fields: list[FieldConfig] = Field(default_factory=list)
     contact: ContactConfig = Field(default_factory=ContactConfig)
     faq: list[FAQConfig] = Field(default_factory=list)
     rag: RAGConfig = Field(default_factory=RAGConfig)
     source_path: str = ""
 
+    @model_validator(mode="after")
+    def hydrate_grouped_fields(self) -> "TemplateConfig":
+        if not self.fields:
+            self.fields = self.field_groups.flattened_fields()
+        return self
+
     def public_dict(self) -> dict[str, Any]:
         data = self.model_dump()
         data["summary"] = {
             "field_count": len(self.fields),
             "required_field_count": len([field for field in self.fields if field.required]),
+            "core_field_count": len([field for field in self.fields if field.tier == "core"]),
+            "medium_field_count": len([field for field in self.fields if field.tier == "medium"]),
+            "low_field_count": len([field for field in self.fields if field.tier == "low"]),
             "contact_method_count": len(self.contact.methods),
             "faq_count": len(self.faq),
             "rag_enabled": self.rag.enabled,

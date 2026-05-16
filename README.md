@@ -48,7 +48,7 @@ The project is organized into eight modules:
 
 ```bash
 cp .env.example .env
-pip install -r requirements.txt
+pip install -e .
 uvicorn main:app --reload
 ```
 
@@ -85,16 +85,21 @@ curl -X POST http://127.0.0.1:8000/api/collection/next-field \
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
 pip install -e ".[dev]"
 pytest
 ruff check .
 ```
 
+Run the terminal chat:
+
+```bash
+t
+```
+
 Docker:
 
 ```bash
-docker compose up --build
+docker compose -f deploy/docker/docker-compose.yml up --build
 ```
 
 ## 配置 / Configuration
@@ -167,5 +172,5 @@ Planned work:
 
 This project is released under the MIT License. See `LICENSE`.
 
-Contributions are welcome. See `CONTRIBUTING.md` for setup and pull request
-guidelines, and `SECURITY.md` for vulnerability reporting.
+Contributions are welcome. See `.github/CONTRIBUTING.md` for setup and pull request
+guidelines, and `.github/SECURITY.md` for vulnerability reporting.

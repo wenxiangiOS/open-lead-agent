@@ -10,9 +10,13 @@ agent:
   welcome_message: "你好，想了解哪个年级或科目的课程？"
 
 conversation:
+  # 单轮回复里最多主动追问几个字段。建议保持 1，避免一次问太多让用户有压力。
   max_questions_per_turn: 1
+  # 用户先问问题时，是否先回答用户问题，再继续收集字段。
   answer_question_before_collection: true
+  # AI 回复的最大字数。设置短一点可以让客服回复更像聊天，而不是长篇说明。
   response_max_chars: 220
+  # 是否允许在对话中提示转人工、预约顾问或后续人工跟进。
   allow_handoff: true
 
 fields:

@@ -34,42 +34,82 @@ Notes:
 - `LLM_MODEL`: model name
 - `LLM_BASE_URL`: model API base URL
 
-## 字段配置 / Template Fields
+## 对话配置 / Conversation
 
-字段配置决定 AI 要收集哪些用户信息。
-
-Field configuration defines what user information the agent should collect.
+`conversation` 控制 AI 每轮怎么回答、怎么追问，以及回复长度。
 
 ```yaml
-fields:
-  - key: age
-    label: Age
-    type: number
-    required: true
-    priority: 20
-    ask_limit: 2
-    ask: "How old are you?"
+conversation:
+  # 单轮回复里最多主动追问几个字段。建议保持 1，避免一次问太多让用户有压力。
+  max_questions_per_turn: 1
+  # 用户先问问题时，是否先回答用户问题，再继续收集字段。
+  answer_question_before_collection: true
+  # AI 回复的最大字数。设置短一点可以让客服回复更像聊天，而不是长篇说明。
+  response_max_chars: 220
+  # 是否允许在对话中提示转人工、预约顾问或后续人工跟进。
+  allow_handoff: true
 ```
+
+字段说明：
+
+- `max_questions_per_turn`：每轮最多主动问几个资料字段。线索收集场景建议为 `1`。
+- `answer_question_before_collection`：用户问价格、流程、服务内容时，是否先回答问题再收集资料。
+- `response_max_chars`：单条回复最大字数，用来控制回复不要太长。
+- `allow_handoff`：是否允许模板或后续逻辑引导人工跟进。
+
+## 字段分层配置 / Tiered Template Fields
+
+字段配置决定 AI 要收集哪些用户信息。推荐使用 `field_groups` 按收集优先级分层。
+
+Field configuration defines what user information the agent should collect. The recommended
+format is `field_groups`, grouped by collection priority.
+
+```yaml
+field_groups:
+  core:
+    - key: age
+      label: 年龄
+      type: number
+      ask: "你今年多大了？"
+
+  medium:
+    - key: monthly_income
+      label: 月收入
+      type: enum
+      options: ["5千以下", "5千-1万", "1万-2万", "2万-5万", "5万以上", "暂不透露"]
+      ask: "如果方便的话，也可以了解一下你的月收入区间。"
+
+  low:
+    - key: height
+      label: 身高
+      type: number
+```
+
+分层含义：
+
+- `core`：核心字段，默认必填，默认最多主动问 2 次
+- `medium`：中等字段，默认选填，默认最多主动问 1 次
+- `low`：低等字段，被动收集，默认不主动问
 
 字段含义：
 
 - `key`：字段唯一标识
 - `label`：展示名称
 - `type`：字段类型，如 `text`、`number`、`enum`、`phone`
-- `required`：是否必填
-- `priority`：收集优先级，数字越小越靠前
-- `ask_limit`：最多主动询问次数
+- `options`：枚举选项
 - `ask`：默认问法
+- `required`、`priority`、`ask_limit`：可选覆盖项，用于单独调整字段行为
 
 Field meanings:
 
 - `key`: unique field identifier
 - `label`: display label
 - `type`: field type, such as `text`, `number`, `enum`, or `phone`
-- `required`: whether the field is required
-- `priority`: collection priority, smaller numbers go first
-- `ask_limit`: maximum ask attempts
+- `options`: enum options
 - `ask`: default question text
+- `required`, `priority`, `ask_limit`: optional overrides for custom field behavior
+
+兼容说明：旧版平铺 `fields` 仍然可用；如果同时配置了 `fields` 和 `field_groups`，运行时优先使用 `fields`。
 
 ## 联系方式配置 / Contact Methods
 

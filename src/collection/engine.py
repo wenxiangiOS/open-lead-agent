@@ -46,6 +46,8 @@ class CollectionEngine:
     ) -> bool:
         if profile.get(field.key):
             return False
+        if field.ask_limit <= 0:
+            return False
         if ask_counts is None:
             return True
         return ask_counts.get(field.key, 0) < field.ask_limit
