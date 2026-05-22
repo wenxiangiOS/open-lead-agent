@@ -1,3 +1,5 @@
+"""按模板配置和询问次数选择下一个联系方式字段。Contact method selection."""
+
 from typing import Any
 
 from src.templates.config import ContactMethodConfig, TemplateConfig

@@ -12,6 +12,7 @@ def test_llm_settings_do_not_bind_to_a_default_model(monkeypatch):
     assert settings.api_key == ""
     assert settings.model == ""
     assert settings.base_url == ""
+    assert settings.max_retries == 0
 
 
 def test_llm_settings_read_external_configuration(monkeypatch):
@@ -24,3 +25,11 @@ def test_llm_settings_read_external_configuration(monkeypatch):
     assert settings.api_key == "test-key"
     assert settings.model == "custom-model"
     assert settings.base_url == "https://example.com/v1"
+
+
+def test_llm_settings_read_retry_configuration(monkeypatch):
+    monkeypatch.setenv("LLM_MAX_RETRIES", "2")
+
+    settings = LLMSettings.from_env()
+
+    assert settings.max_retries == 2

@@ -1,3 +1,5 @@
+"""FastAPI 应用创建与顶层路由注册。FastAPI app factory and top-level routes."""
+
 from fastapi import FastAPI
 
 from src.channels.http import router

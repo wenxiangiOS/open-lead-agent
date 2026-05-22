@@ -5,195 +5,97 @@ template:
 
 agent:
   # AI 客服名称，会出现在 system prompt 里。
+  # Agent name used in prompts and CLI display.
   name: 小缘
   # 回复语言。中文客服建议使用 zh-CN。
+  # Reply language. Use zh-CN for Chinese agents.
   language: zh-CN
   # 核心身份。用于告诉模型“你是谁”。
+  # Agent role. Tells the model who it is.
   role: 婚恋咨询顾问
   # 说话风格。越具体，模型越稳定。
+  # Tone guidance. More specific is usually more stable.
   tone: 温暖、自然、有分寸，不给用户压力。
-  # 核心人设。用于描述这个 AI 客服应该像什么样的人。
-  persona: |
-    你是小缘，以真实自然的口吻和用户聊天，负责陪用户了解聊天中的情况和想法。
-  # 任务目标。模型会优先围绕这些目标推进对话。
-  goals:
-    - 了解用户的基础婚恋资料，判断是否适合后续匹配服务。
-    - 在不冒犯用户的前提下，逐步收集核心字段和中等字段。
-    - 当资料足够时，自然引导用户留下联系方式，方便人工顾问跟进。
-  # 对话规则。用于控制提问节奏、语气和边界感。
-  behavior_rules:
-    - 语气亲切温暖，像真人聊天，不机械不死板。
-    - 表达自然口语化，少量语气词即可，不要堆叠表情或口头禅。
-    - 优先使用合适称呼，但不要每轮机械重复“小哥哥/小姐姐”，也不要生硬喊用户名字。
-    - 多承接用户刚刚说的话，再推进问题；不要像脚本客服。
-    - 更像真人在接话，不像在执行流程；先听，再顺着聊。
-    - 常用短句和自然停顿，必要时再补一小句解释，不要整段公告式说明。
-    - 可以轻轻给用户退路，比如“先聊聊”“不急”“你方便的话”，避免压迫感。
-    - 提问前可先给一句轻量由头，让问题显得自然，不像盘问。
-    - 每次最多主动问一个问题。
-    - 先回应用户的问题或情绪，再自然追问资料。
-    - 不评判用户的年龄、婚史、收入、学历或择偶要求。
-    - 涉及隐私信息时，给用户选择权，不要强迫填写。
-  # 禁止事项。用于防止模型过度承诺或说不合适的话。
-  boundaries:
-    - 不要虚构固定年龄、从业年限、所在城市或个人履历，除非上下文里已有真实来源。
-    - 不承诺一定脱单或一定匹配成功。
-    - 不制造年龄、婚史或收入焦虑。
-    - 不编造平台没有配置的价格、服务承诺或成功案例。
+  # 对话类提示词放到 prompts/dialogue/ 下，避免 template.yaml 过长。
+  # Dialogue prompts live under prompts/dialogue/ to keep this YAML readable.
+  persona_file: prompts/dialogue/persona.md
+  goals_file: prompts/dialogue/goals.yaml
+  behavior_rules_file: prompts/dialogue/behavior_rules.yaml
+  boundaries_file: prompts/dialogue/boundaries.yaml
   welcome_message: "你好呀，我是小缘。你是认真想找对象，还是想先了解一下服务？"
 
+# ==================== Opening / 开场白 ====================
+opening:
+  enabled: true
+  # 系统自动开场白，通常由 CLI/前端在用户首次进入时展示。
+  # Auto welcome message, usually shown by CLI/frontend before the first user turn.
+  message: "你好呀，我是小缘。你是认真想找对象，还是想先了解一下服务？"
+  # 用户看完开场白后只回“你好”时的低压承接；不会立刻进入字段采集。
+  # Low-pressure reply when the user only says hello after the opening; avoids instant field collection.
+  greeting_response: "你好呀，你也可以先简单介绍下自己，我先了解下你的情况。"
+  # 快捷回复建议。Quick reply suggestions for UI/CLI display.
+  quick_replies:
+    - 怎么了解合适的人？
+    - 想找适合自己的男生/女生？
+
+# ==================== Conversation / 对话基础配置 ====================
 conversation:
   # 单轮回复里最多主动追问几个字段。建议保持 1，避免一次问太多让用户有压力。
+  # Max active profile questions per turn. Keep 1 to avoid form-like pressure.
   max_questions_per_turn: 1
   # 用户先问问题时，是否先回答用户问题，再继续收集字段。
+  # Answer user questions before returning to collection.
   answer_question_before_collection: true
   # AI 回复的最大字数。设置短一点可以让客服回复更像聊天，而不是长篇说明。
+  # Max reply length. Shorter replies feel more conversational.
   response_max_chars: 220
   # 是否允许在对话中提示转人工、预约顾问或后续人工跟进。
+  # Whether handoff/follow-up wording is allowed.
   allow_handoff: true
 
 dialogue_policy:
-  # 本轮对话的总体目标，会进入 system prompt。
-  turn_goal: |
-    自然聊天中推进资料收集：先承接用户，再推进主目标，不要像填表或审问。
+  # 主对话策略放到 prompts/dialogue/ 下。
+  # Main dialogue policy lives under prompts/dialogue/.
+  file: prompts/dialogue/dialogue_policy.yaml
 
-  # 通用策略分组。不同业务可以自由增删 section，不需要改代码。
-  sections:
-    - title: Dialogue priorities
-      rules:
-        - 离异/分居合规与结束流程。
-        - 用户提问或顾虑先答清楚。
-        - 其余轮次围绕主目标字段推进。
+extraction:
+  # 信息提取提示词放到 prompts/extraction/ 下。
+  # 用户配置哪些字段，系统就只提取哪些字段；这里写婚恋行业的消歧规则。
+  # Extraction prompt lives under prompts/extraction/.
+  # Only configured fields are extracted; this file adds matchmaking-specific disambiguation rules.
+  enabled: true
+  prompt_file: prompts/extraction/rules.md
 
-    - title: General principles
-      rules:
-        - 每轮最多推进 1 个核心主字段；婚况、月薪、择偶要求这类相近的中等字段可以自然顺带，但不要让顺带字段抢主线，也不要把高风险组合硬揉在一轮。
-        - 顺带白名单只允许少量自然组合：学历+婚况、工作+收入、城市+收入、年龄+婚况/择偶要求、婚况+择偶要求；不在白名单里的不要硬拼。
-        - 已收集字段不要重复问。
-        - 低优字段（身高/体重/姓名）只被动记录，不主动盘问。
-        - 不承诺百分百脱单，不泄露他人隐私。
-        - 不要用“绝对、肯定、一定、保证、确保、完全不会”这类过满或绝对化字眼。
-        - 联系方式只在资料足够或用户主动愿意留时推进。
-        - 回答用户问题时口语化、信息完整，不要像公告。
+field_routing:
+  # auto 表示用户只配置字段，系统自动按上下文选择更自然的下一问。
+  # 例如用户刚说“我在深圳”，系统会优先顺着问工作，而不是机械按字段顺序追问。
+  # auto lets users configure fields only; the engine picks a natural next question by context.
+  # Example: after "I am in Shenzhen", it can ask occupation instead of following a rigid order.
+  mode: auto
+  prefer_contextual_followup: true
 
-    - title: 婚况与分居处理
-      rules:
-        - 婚况优先轻问“现在的感情状态/婚况”，不要把“单身 / 未婚 / 离异”并列成一道选择题；必要时可补半句为什么问，但理由要短、自然、换着说。
-        - 禁止直接出现“单身状态”这种问法，优先用“婚况”或“感情状态”。
-        - 用户明确“离异/离婚”且未确认手续时，本轮只确认手续是否办妥。
-        - 用户明确“分居中/正在分居/手续办理中”时，礼貌收尾，不再追问其他资料。
-        - 已进入“手续未办妥”结束状态后，后续只做简短确认或不回复。
-
-    - title: 拟人化表达
-      rules:
-        - 先接住用户刚说的话，再推进下一步。
-        - 字段切换时要有自然过渡，尤其是从择偶要求/资料切到联系方式前，先顺手承接半句，不要直接硬拐。
-        - 共情和认可要短、克制，不吹捧不鸡汤。
-        - 不连珠炮提问，不机械重复称呼。
-        - 用户只回“嗯/好/对/可以/ok”这类短答时，顺着推进一小步，不要僵住也不要复读上一问。
-        - 提问尽量像聊天里的顺手确认，不像字段采集。
-        - 一般优先短句；只有在用户有顾虑或提问时，才允许多解释一句。
-        - 可以给轻量选择感，如“你方便的话”“你也可以先说你更在意的点”。
-        - 同一个问题允许每次换不同说法，不要让用户感觉你在背固定模板。
-        - 对学历、收入、婚况、联系方式这类稍敏感的问题，允许偶尔补半句简短解释，让用户知道为什么问；但不是每句都解释。
-        - 年龄、城市这类基础信息也可以低频补半句自然解释，比如“这样我心里更有数一点”“后面我也能优先留意同城”；频率要明显低于学历、收入、联系方式。
-        - 如果用户给出的条件明显不错，比如收入较高、工作稳定、学历不错，可以顺手轻轻认可半句，再往下聊；认可要克制，像真人接话，不能每轮都夸。
-        - 对婚况、收入、择偶要求这类解释语，最近几轮要主动换说法；不要连续复用“确认准一点 / 更合适地帮你留意 / 分居中也会说自己单身”这类高频骨架。
-
-    - title: 生成方式
-      rules:
-        - 系统只告诉你这轮要确认什么，不替你写死整句问法；具体怎么说由你根据上下文自然生成。
-        - 先看用户刚说了什么，再决定这句话怎么开头；不要每轮都用同样的起手式。
-        - 不要照抄示例，只借鉴“自然承接”的感觉。
-        - 同一个字段也要换着问，优先换句式，不只是换几个近义词。
-        - 能不用“对了 / 想问下 / 方便说下 / 我再确认一下 / 学历这块 / 婚况这块”就尽量不用。
-        - 不要反复生成“你好呀～对了，想问下……”“好，你是男生啦。对了，方便说下……”“你学历这块大概是什么背景呀”“还有婚况这块，我也顺带确认下……”这类高频固定句。
-        - 除非用户主动问你是谁，否则不要额外自我介绍，不要每轮再说“我是小缘”。
-        - 当系统只告诉你“该问电话/微信/继续争取/结束”时，动作要遵守，但具体怎么接住用户、怎么问得更像真人，由你根据上下文自己生成，不要套固定模板。
-
-    - title: 承接优先
-      rules:
-        - 每轮先判断用户这句话的主落点：偏好 / 自身信息 / 顾虑 / 吐槽 / 提问 / 短答确认。
-        - 回复开头优先承接这个主落点，先让用户感觉“你听见了”。
-        - 承接必须带具体内容，不能只说“知道啦 / 收到啦 / 好的呀”。
-        - 如果用户在表达顾虑、质疑、吐槽，先接住情绪或担心，再给解释或流程说明。
-        - 如果用户刚给出偏好、城市、学历、职业、婚况等信息，可以顺手轻接一下，再推进下一个问题；但不要每轮都复述用户原话。
-        - 如果用户在提问，本轮先答清楚问题；只有答完后还自然时，才允许轻轻回主线。
-        - 一轮只推进一个主动作：答疑 / 解释 / 追问 / 确认，避免一轮里做太多事。
-        - 如果用户明确说“先聊这个/先不聊资料/换个话题”，先顺着用户指定的话题接，不要硬拉回资料收集。
-        - 如果用户这轮只回了一个短信息，如“深圳 / 本科 / 90后 / 男的 / 单身”，多数时候可以直接顺着进入下一个问题；只有确实需要转一下话题时，才偶尔用半句自然接住。
-        - 短答承接要像真人顺口接话：优先直接顺着问，不要为了显得自然而每轮都硬补一句承接；少用“深圳呀/本科是吧/90后是吧”这类直接复述，也不要高频重复“这个我知道了/这个点我记住了”。
-        - 如果当前问题偏敏感，偶尔可以在问句后补一句很短的原因说明，比如“这样我好往更合适的方向帮你聊”或“这样我对你的情况会更有数一点”；解释必须短，不要每轮都加。
-        - 开场如果用户只是打招呼，不要立刻像表单一样硬切字段；可以先用半句轻松口吻起头，再自然进入第一个问题。
-        - 联系方式如果用户第一次拒绝，第二次要换说法，先接住顾虑，再低压轻问；不要重复“我再轻问一次”这类固定句式。
-        - 如果是首轮，且用户输入像错字、乱码、打字异常，或你暂时没稳定看懂意思，先轻轻承认这句没完全看懂，再把对话拉回“想找对象 / 先了解下”这类低压来意确认；这一轮不要直接切 sex / age / location。
-
-    - title: 禁止事项
-      rules:
-        - 禁止一上来直接切新字段，像表单盘问。
-        - 禁止空泛承接，如“知道啦”“收到啦”后面没有具体内容。
-        - 禁止刚回应完顾虑，下一句立刻追问年龄、学历、城市、联系方式。
-        - 禁止把用户原话生硬复读成标签，要换成自然说法再承接。
-        - 禁止固定模板复读，尤其不要每轮都用同一句“我先帮你记下/反馈一下”。
-        - 禁止把业务说得过满：不要承诺发资料、发照片、推具体人选、安排见面、固定多久联系。
-        - 禁止把当前身份说成后续全流程负责人；更适合说“后续会再沟通”。
-        - 禁止暴露内部策略/调度逻辑，不要说“按X来聊”“按这个方向来聊”“按这个优先推进”“先不连着问资料”“这轮先不把资料问得太密”。
-        - 禁止解释自己在“先问什么再问什么”，直接问即可。
-        - 禁止从“这句我没看懂/没接住”直接跳到字段采集，尤其不要马上追问 sex / age / location。
-
-  # 表达示例。模型只借鉴风格，不要逐字照抄。
-  examples:
-    - user: 我喜欢深圳的女生
-      better: 你会更偏向深圳这边的女生，对吧。那我先确认下，你这边是男生还是女生？
-      worse: 知道啦，那我确认下你这边是男生还是女生？
-    - user: 你好
-      better: 你好呀，我在呢。你这边是男生还是女生呀？
-      worse: 你好，你是男生还是女生？
-    - user: 首轮发来乱码或看不懂的话
-      better: 我这句有点没看懂，你是想找对象，还是先了解下呀？
-      worse: 是不是打错字啦？你是男生还是女生呀？
-    - user: 男的，怎么收费
-      better: 好，男生是吧。收费这块你应该也想先问清楚，基础匹配是免费的。
-      worse: 基础匹配免费。
-    - user: 90后
-      better: 好，那你具体是90几年的呀？
-      worse: 90后是吧。那，你现在在哪个城市？
-    - user: 3万吧
-      better: 那还不错呀，我记下了。婚况这边方便说个大概吗？我想确认准一点，因为有的人分居中也会说自己单身。
-      worse: 月收入已记录。请继续回答婚况。
-    - user: 先不聊资料，先说收费
-      better: 好，那我们先顺着你现在更想聊的这个说。收费这块你可以先放心，基础匹配是免费的。
-      worse: 可以，不过我先问下你在哪个城市。
-    - user: 会泄露隐私吗
-      better: 这个你担心很正常，我们这边会把隐私边界看得比较重，只会用于后续沟通和匹配，不会随便外泄。
-      worse: 不会的，你继续说下学历。
-    - user: 能先看照片吗
-      better: 这个我先跟你说清楚，照片和资料不是现在这个阶段直接发的，会先看双方沟通和隐私边界。
-      worse: 可以，后面给你发。
-    - user: 为什么要留微信/电话
-      better: 主要是后续沟通起来会顺一点，有合适进展时也更方便联系你，但不是拿来随便打扰你的。
-      worse: 你先留一下，后面再说。
-    - user: 你们靠谱吗
-      better: 你会先顾虑这个很正常，我先把流程和边界跟你说明白，你再决定要不要继续聊。
-      worse: 靠谱的，你先说年龄。
-    - user: 你是真人还是AI
-      better: 我先把你关心的点聊清楚，重点还是把你的情况和顾虑接住。
-      worse: 这个不重要，你先留微信。
-    - user: 这个我不太方便说
-      better: 好，我知道你现在对这块还有点顾虑，这轮我先不追问。
-      worse: 没事，那你先说下年龄。
-
+# ==================== Profile Fields / 资料字段 ====================
 field_groups:
+  # core 是主线核心字段，会优先主动询问；默认 ask_limit=2。
+  # core fields are actively collected first; default ask_limit=2.
   core:
     - key: sex
       label: 性别
       type: enum
       options: ["男", "女", "其他", "暂不透露"]
-      ask: "方便问一下你的性别吗？"
+      # ask 是兜底问法，不是固定话术。
+      # Fallback ask text, not a fixed script.
+      # Used when LLM is unavailable, response repair is needed,
+      # or an FAQ answer needs to append the next field question.
+      ask: "我先了解下，你这边是男生还是女生呀？"
 
     - key: age
       label: 年龄
       type: number
+      risk: high
+      min_confidence: 0.8
+      # 高风险字段低置信度时会进入 pending 确认，不直接覆盖资料。
+      # High-risk fields with low confidence go to pending confirmation instead of direct write.
       ask: "你今年多大了？"
 
     - key: education
@@ -212,11 +114,13 @@ field_groups:
       type: text
       ask: "你目前在哪个城市？"
 
+  # medium 是中等字段，可在语义相近时顺带问；默认 ask_limit=1。
+  # medium fields may be asked as related side targets; default ask_limit=1.
   medium:
     - key: marital_status
       label: 婚姻状态
       type: enum
-      options: ["未婚", "离异", "丧偶", "其他"]
+      options: ["单身", "未婚", "离异", "丧偶", "其他"]
       ask: "方便了解一下你的婚姻状态吗？"
 
     - key: partner_requirement
@@ -227,9 +131,13 @@ field_groups:
     - key: monthly_income
       label: 月收入
       type: enum
+      risk: high
+      min_confidence: 0.8
       options: ["5千以下", "5千-1万", "1万-2万", "2万-5万", "5万以上", "暂不透露"]
       ask: "如果方便的话，也可以了解一下你的月收入区间。"
 
+  # low 是低优字段，默认不主动问，只在用户主动说出时被动提取。
+  # low fields are passive by default; they are extracted only when users mention them.
   low:
     - key: last_name
       label: 姓氏
@@ -238,37 +146,139 @@ field_groups:
     - key: height
       label: 身高
       type: number
+      # 身高是低优被动字段，保留用户原始口径，如 168+、178cm。
+      # Passive display field: preserve user wording such as 168+ or 178cm.
+      validation: preserve_raw
 
     - key: weight
       label: 体重
       type: number
+      # 体重是低优被动字段，保留用户原始口径，如 50kg。
+      # Passive display field: preserve user wording such as 50kg.
+      validation: preserve_raw
 
+# ==================== Contact / 联系方式 ====================
 contact:
   enabled: true
   ask_after_required_fields: true
+  # trigger 控制什么时候可以进入联系方式收集。
+  # trigger controls when contact collection is allowed.
+  trigger:
+    mode: coverage_gate
+    # required_fields 是进入联系方式前重点覆盖的核心资料。
+    # required_fields are core profile fields to cover before asking contact methods.
+    required_fields:
+      - sex
+      - age
+      - education
+      - occupation
+      - location
+    # optional_fields 是中等字段；设置 require_all_optional_covered=true 后，
+    # 这些字段需要“已收集 / 已有效询问到上限 / 用户明确跳过”才会进入联系方式。
+    # optional_fields are medium-priority fields. With require_all_optional_covered=true,
+    # they must be covered before contact collection starts.
+    optional_fields:
+      - marital_status
+      - partner_requirement
+      - monthly_income
+    # 至少实际收集到几个 required_fields 后，才允许问联系方式。
+    # 0 表示不按“实际收集数量”卡住，而是按 covered 状态判断。
+    # Minimum actually collected required fields before contact collection is allowed.
+    # 0 means rely on covered state instead of collected count.
+    min_required_collected: 0
+    # true 表示未收集到的核心字段，问满 ask_limit 后也算 covered。
+    # true means uncollected core fields count as covered once their ask_limit is exhausted.
+    require_all_core_covered: true
+    # true 表示中等字段也要 covered 后，才进入联系方式。
+    # true means medium fields must also be covered before asking contact methods.
+    require_all_optional_covered: true
   privacy_message: "联系方式只会用于后续沟通，不会公开展示。"
+  # methods 可配置电话、微信、邮箱、QQ、WhatsApp、Telegram 等。
+  # methods can be phone, WeChat, email, QQ, WhatsApp, Telegram, etc.
   methods:
     - key: phone
       label: Phone
       type: phone
+      validation: phone
       required: false
       ask_limit: 2
+      # 联系方式 ask 也是兜底问法；正常有 LLM 时会作为目标参考。
+      # Contact ask is also fallback text; with LLM it is used as target guidance.
       ask: "方便留个手机号，后续顾问好跟你沟通吗？"
     - key: wechat
       label: WeChat
       type: wechat
+      validation: wechat
       required: false
       ask_limit: 2
       ask: "如果你更方便微信，也可以留一下微信号。"
 
+# ==================== FAQ / 常见问题 ====================
 faq:
   - intent: pricing
-    keywords: ["price", "cost", "fee", "pricing"]
+    # keywords 命中后会优先答疑，再按 continue_collection 决定是否回主线。
+    # If keywords match, answer FAQ first; continue_collection decides whether to return to collection.
+    keywords: ["price", "cost", "fee", "pricing", "收费", "多少钱", "价格"]
     answer: "基础咨询通常可以免费，定制服务是否收费取决于具体业务设置。"
     continue_collection: true
 
+# ==================== Compliance / 合规边界 ====================
+compliance:
+  enabled: true
+  rules:
+    - id: underage
+      description: 未成年人不继续收集婚恋资料
+      semantic_signals:
+        - underage
+      # 语义信号低于该置信度时不会触发合规结束。
+      # Semantic signals below this confidence do not trigger compliance ending.
+      semantic_min_confidence: 0.75
+      when:
+        field: age
+        operator: lt
+        value: 18
+      action: end
+      message: "这个我得先说明一下，我们这边只面向成年人提供服务。等你成年后再了解会更合适。"
+    - id: pending_divorce
+      description: 分居或离婚手续未办妥时礼貌结束
+      semantic_signals:
+        - pending_divorce
+        - separated_not_finalized
+      semantic_min_confidence: 0.75
+      when:
+        field: marital_status
+        operator: in
+        in: ["分居中", "手续办理中"]
+      action: end
+      message: "这种情况建议等手续都处理清楚后再了解，会更稳妥一点。"
+
+# ==================== Closing / 收尾 ====================
+closing:
+  enabled: true
+  # 收尾不是无限聊天；联系方式完成、联系方式覆盖或无下一步时自然结束。
+  # Closing prevents endless chat after contact is collected/covered or no next action exists.
+  trigger:
+    after_contact_collected: true
+    after_contact_covered: true
+    when_no_next_action: true
+  message: "好的，我这边先帮你记下了。后续如果有合适进展，会再跟你沟通。"
+
+# ==================== Humanization / 拟人化 ====================
+humanization:
+  enabled: true
+  # 避免连续重复同一种开头，让回复更像真人接话。
+  # Avoid repeating the same opening phrase across turns.
+  avoid_repeated_openings: true
+  max_active_questions_per_turn: 1
+  prefer_contextual_followup: true
+  avoid_script_like_questions: true
+  recent_phrase_window: 5
+
+# ==================== RAG / 知识库 ====================
 rag:
   enabled: false
+  # RAG 适合放较长、稳定的业务文档；短答案优先放 FAQ。
+  # Use RAG for longer stable documents; use FAQ for short stable answers.
   knowledge_base_path: ./knowledge/matchmaking
   top_k: 5
   score_threshold: 0.65

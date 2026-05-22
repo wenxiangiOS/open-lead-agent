@@ -1,6 +1,9 @@
+"""HTTP 渠道接口，暴露聊天、模板配置和字段收集 API。HTTP channel adapter."""
+
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from pydantic import ValidationError
 
 from src.collection import CollectionEngine
 from src.conversation import ChatRequest, ConversationEngine
@@ -18,7 +21,10 @@ def _engine() -> ConversationEngine:
 
 @router.get("/api/config/template", tags=["template"])
 async def template_config() -> dict[str, Any]:
-    template = get_active_template()
+    try:
+        template = get_active_template()
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail="Template configuration error") from exc
     return {"success": True, "template": template.public_dict()}
 
 
@@ -28,8 +34,12 @@ async def chat(payload: dict[str, Any]) -> dict[str, Any]:
         request = ChatRequest(**payload)
         response = await _engine().chat(request)
         return response.model_dump(by_alias=True)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail="Template configuration error") from exc
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="AI response generation failed") from exc
 
 
 @router.post("/api/collection/next-field", tags=["collection"])

@@ -1,3 +1,9 @@
+"""基础字段收集助手。
+
+这个文件负责在兜底顺序流程里判断“下一个可主动询问的配置字段”。
+更拟人化的上下文选字段逻辑放在 src.policy.field_routing。
+"""
+
 from typing import Any
 
 from src.templates.config import FieldConfig, TemplateConfig

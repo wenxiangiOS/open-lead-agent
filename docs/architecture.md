@@ -1,70 +1,201 @@
-# 架构 / Architecture
+# 架构说明 / Architecture
 
-`open-lead-agent` 拆成 8 个小模块。每个模块只负责一件事，方便开源用户理解、替换和扩展。
+`open-lead-agent` 的核心目标是：新用户通过模板配置业务行为，系统内部负责理解、收集、决策和拟人化回复。
 
-`open-lead-agent` is split into eight small modules. Each module owns one responsibility, making it easier to understand, replace, and extend.
+## 主链
 
-## 1. LLM Provider / 大模型模块
+每轮对话按下面顺序执行：
 
-负责模型配置和 OpenAI-compatible 聊天调用。
+```text
+用户消息
+  -> understanding：解释用户原话，产出 TurnSemanticFrame
+  -> field governance：按当前上下文过滤错槽字段
+  -> persistence plan：把字段观察分成 accepted / pending / rejected
+  -> policy：决定答疑、问字段、问联系方式、合规结束或收尾
+  -> humanization：生成表达计划和回复质量检查
+  -> response builder：构建 prompt、调用 LLM、必要时兜底修复
+  -> storage：保存 profile、历史、询问次数和待确认任务
+```
 
-Responsibilities:
+## 模块边界
 
-- 读取 `LLM_PROVIDER / LLM_API_KEY / LLM_MODEL / LLM_BASE_URL`
-- 调用兼容 OpenAI Chat Completions 的模型服务
-- 在未配置 API Key 时提供本地 fallback，方便项目快速启动
+这里按运行时逻辑域归纳模块职责；如果想逐个对照 `src/` 目录，先看 README 里的核心模块表。
 
-Owns model settings, OpenAI-compatible chat calls, and local fallback behavior when no API key is configured.
+| 模块 | 职责 |
+| --- | --- |
+| `understanding` | 唯一正式语义入口。负责解释用户原话，输出字段观察、FAQ 意图、合规信号，并在入档前做字段权限治理。 |
+| `collection` | 字段状态、跳过字段、待确认任务。 |
+| `policy` | 决定本轮动作，不直接解析用户原文。 |
+| `humanization` | 表达计划和回复质量检查，不改 profile。 |
+| `conversation` | 串联一轮流程，尽量只做编排。 |
+| `knowledge` | 聚合 FAQ 与 RAG。 |
+| `templates` | 加载、校验、脚手架和公开配置模型。 |
+| `extraction` | 兼容旧接口的门面。新代码优先使用 `understanding`。 |
 
-## 2. Template System / 模板模块
+## 为什么不直接写 profile
 
-负责从 YAML 加载行业模板。
+LLM 提取结果不能直接写入档案。字段必须先进入 `PersistencePlan`：
 
-模板里可以定义：
+- `accepted`：确定性足够，写入 profile
+- `pending`：需要用户确认，比如低置信度或和旧值冲突
+- `rejected`：模板外字段、格式非法、空值等
+- `provisional`：预留给后续异步补档或临时值机制
 
-- 行业名称
-- Agent 名称和语气
-- 字段收集规则
-- 联系方式规则
-- FAQ
-- RAG 配置
+这样可以避免“模型识别错了就污染档案”。
 
-Loads industry behavior from YAML, including agent tone, fields, contact methods, FAQ, and RAG settings.
+## 字段权限治理
 
-## 3. Conversation Engine / 对话模块
+`understanding` 内部有一层上下文字段治理，位置在 `TurnSemanticFrame` 之后、`PersistencePlan` 之前。
 
-负责把模板、字段收集、联系方式、RAG、存储和 LLM 组合起来，生成一次完整回复。
+它只做一件事：根据当前轮语境判断模型提取出的字段观察能不能继续进入提交计划。
 
-Combines template configuration, field collection, contact collection, RAG context, storage, and LLM response generation.
+默认通用规则包括：
 
-## 4. Collection Engine / 字段收集模块
+- FAQ / 顾虑轮默认不写资料字段，除非同轮明确带有资料意图。
+- 联系方式上下文优先允许联系方式字段，避免把手机号误提成年龄或收入。
+- 短答会优先绑定上一轮实际追问字段，避免“30”被错槽到其它数字字段。
+- 模板没有配置或 `extract: false` 的字段仍由 acceptance 层拒绝。
 
-负责根据模板字段和当前用户画像，找出下一个应该收集的字段。
+行业规则不写死在引擎里。婚恋、教培、招聘等差异通过模板的 `field_permissions.rules` 配置。
 
-Finds the next user profile field to collect from configured fields and the current profile state.
+## 字段风险与仲裁
 
-## 5. Contact Engine / 联系方式模块
+字段通过治理后，还要经过 acceptance 仲裁，决定进入哪个提交状态。
 
-负责在资料收集足够后，推进电话、微信、邮箱等联系方式。
+通用规则：
 
-Finds the next configured contact method after profile collection is sufficiently complete.
+- `accepted`：字段值合法、置信度达标，可以写入 profile。
+- `pending`：需要用户确认，例如高风险字段低置信、`soft_confirm`、和已有稳定值冲突。
+- `provisional`：普通低风险字段置信度不足，先作为临时观察保留，不直接写主档。
+- `rejected`：模板外字段、空值、格式非法、字段权限拦截等。
 
-## 6. RAG Knowledge Base / 知识库模块
+模板字段可以配置 `risk` 和 `min_confidence`。联系方式默认高风险；资料字段默认普通风险。
 
-负责从配置的知识库中检索资料，再提供给对话模块使用。
+高风险字段不会因为规则或弱来源的识别就直接入档，优先进入确认流程。
 
-当前版本是本地 Markdown/TXT 检索骨架，后续可以接向量数据库。
+## Dense Intro 轻量处理
 
-Provides retrieval context from configured knowledge sources. The first implementation is a local Markdown/TXT search interface and can later evolve into vector-store-backed RAG.
+Dense Intro 指用户一轮里同时给出多个资料、需求、联系方式或 FAQ。
 
-## 7. Channel Integrations / 渠道模块
+当前轻量版做三件事：
 
-负责把引擎暴露成 HTTP API。后续其他渠道只需要把各自消息格式适配成统一对话请求。
+- 理解提示词明确要求长句多槽位并行提取，不只挑一个字段。
+- `understanding` 会把高信息量输入标记为 `turn_mode=dense_intro`。
+- `no_reask_fields` 记录本轮已经观察到的字段，供调试和后续路由增强使用。
 
-Exposes the engine through HTTP APIs. Other channels should adapt inbound and outbound payloads into the same conversation request shape.
+这不是异步补全，也不改变当前轮回复时序。它先解决“明明用户已经一口气说了很多，系统还像表单一样回头问”的基础问题。
 
-## 8. Storage & Ops / 存储与运维模块
+## 单轮优先级
 
-负责保存用户画像、对话历史，以及提供健康检查等运维接口。
+`policy.turn_priority` 负责回答“本轮前台应该先处理什么”。它不解析用户原文，也不生成回复，只消费 `TurnSemanticFrame`、FAQ 命中、待确认任务、字段路由结果、联系方式状态和收尾状态。
 
-Provides state storage, chat history, health checks, and operational helpers.
+通用优先级是：
+
+1. 合规边界由 `CompliancePolicy` 最先截停。
+2. 待确认字段优先，避免悬而未决的信息被新的追问淹没。
+3. 用户问题、顾虑和 FAQ 优先回应。
+4. 如果已经满足收尾条件，先收尾，不继续追其它联系方式。
+5. 资料足够但未收联系方式时，进入联系方式。
+6. 普通资料收集最后执行。
+
+关键原则是：字段提取和前台回复动作解耦。用户一大段里同时包含资料、联系方式和 FAQ 时，系统可以并行提取并保存有效字段，但回复要先接住用户的问题或顾虑，再自然推进联系方式或收尾。
+
+## pending 队列
+
+一个用户会话可以有多个待确认任务。系统每次优先确认队列里的第一个字段，确认后再处理下一个。
+
+比如用户说：
+
+```text
+不是29岁，是30岁，学历也改成本科
+```
+
+系统会先确认年龄，再确认学历，不会一次性覆盖多个稳定字段。
+
+## 配置分层
+
+建议模板作者按三层理解配置：
+
+| 层级 | 适合谁 | 主要配置 |
+| --- | --- | --- |
+| Level 1 | 新用户 | `agent`、`field_groups`、`contact.methods`、`faq` |
+| Level 2 | 正式业务 | `contact.trigger`、`compliance.rules`、`closing`、`humanization` |
+| Level 3 | 高级模板 | `dialogue_policy`、`extraction.prompt_file`、`semantic_signals`、字段风险等级 |
+
+默认脚手架应该尽量生成 Level 1/2，不要求新用户理解所有高级配置。
+
+## 字段路由与顺带字段
+
+资料收集不是简单按字段顺序执行。系统会把字段分成三类：
+
+| 分组 | 行为 |
+| --- | --- |
+| `core` | 核心主线字段，系统会优先主动询问 |
+| `medium` | 中等字段，可以在语义相近时轻量顺带 |
+| `low` | 低优字段，原则上只被动提取，不主动追问 |
+
+每轮最多有一个主字段 `main`，以及一个可选顺带字段 `side`：
+
+```text
+main: 本轮真正推进的字段，仍然对应 API 里的 next_field
+side: 相近的中等字段，只给回复生成做自然提示，不改变 next_field 兼容语义
+```
+
+路由原则：
+
+- 如果用户主动提供了一个信息，这个信息会成为上下文锚点。
+- 锚点优先寻找相近的未收集核心字段。
+- 如果没有足够相近的核心字段，且某个中等字段关系足够强，才会顺着问中等字段。
+- 如果用户没有主动提供新信息，则按核心字段主线推进，并尝试找一个相近中等字段作为轻量顺带。
+- 低优字段默认不主动问，只在用户主动说出时被动记录。
+
+例如：
+
+```text
+用户：我在深圳
+系统：优先顺着 location 找核心字段 occupation
+
+主字段：occupation
+顺带字段：无
+```
+
+```text
+用户已有：性别、年龄、学历
+系统下一步：主字段 occupation
+相近中等字段：monthly_income
+```
+
+顺带字段必须保持低压，不能把一轮回复写成两个并列表单问题。如果生成结果不自然，质量检查会优先保证主字段一致性。
+
+## 有效询问计数
+
+`ask_limit` 按“有效询问”消耗，不是 AI 生成一个问题就立即计数。
+
+运行时会保存上一轮用户可见的主字段 `last_target`，下一轮用户回复后再判断：
+
+| 用户下一轮反应 | 是否消耗 `last_target` 的 ask_limit |
+| --- | --- |
+| 回答了该字段 | 不需要消耗，字段已收集 |
+| 明确拒绝或不方便说 | 消耗 1 次，并可能标记 skipped |
+| 敷衍短答，如“嗯 / 好 / ok” | 消耗 1 次 |
+| 回答了其他无关资料 | 消耗 1 次，同时被动收集其他资料 |
+| 插入 FAQ 或业务问题 | 不消耗，先答疑再回主线 |
+| 表达顾虑或问为什么要收集 | 不消耗，先解释再回主线 |
+| pending confirmation 确认轮次 | 不消耗普通字段 ask_limit |
+
+这个规则让对话更像真人：用户问“怎么收费”时，系统不会把刚才的年龄问题当作已经有效追问过一次。
+
+## FAQ、RAG 与理解层
+
+- FAQ 用于稳定短答案，比如收费、隐私、流程。
+- RAG 用于长知识库和非固定答案。
+- `understanding` 可以输出 `faq_intent`，`knowledge` 会优先用语义意图匹配 FAQ，再用关键词兜底。
+
+后续如果接入更强 RAG，可以继续保持这个边界：理解层判断问题类型，知识层提供资料，决策层决定答完是否回到收集主线。
+
+## 开发约束
+
+- 新业务字段必须来自模板配置，不能写死到代码里。
+- 下游模块不要重新解释用户原话，应消费 `TurnSemanticFrame` 和 `PersistencePlan`。
+- `ConversationEngine` 只做编排，新增复杂逻辑优先放入独立模块。
+- `extraction` 只为兼容保留，新功能应落在 `understanding`。

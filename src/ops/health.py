@@ -1,3 +1,5 @@
+"""健康检查响应数据构建。Operational health payload helpers."""
+
 from src.llm import LLMSettings
 from src.templates import get_active_template
 

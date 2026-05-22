@@ -1,3 +1,5 @@
+"""文件型 RAG 检索，作为开源项目的轻量起步实现。File-based RAG starter."""
+
 from dataclasses import dataclass
 from pathlib import Path
 

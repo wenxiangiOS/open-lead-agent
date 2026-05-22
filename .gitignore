@@ -20,3 +20,7 @@ logs/
 *.log
 data/
 vector_store/
+
+# Local/private prompt assets. Keep commercial prompt wording out of public commits.
+# 本地/私有提示词资产。避免把商业提示词正文提交到公开仓库。
+templates/matchmaking/prompts/
